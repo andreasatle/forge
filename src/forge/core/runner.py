@@ -2,13 +2,13 @@ from collections.abc import Awaitable, Callable
 
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.planner import plan_agent
+from forge.agents.worker import work_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
     RequestSource,
     ResponseStatus,
-    WorkSpec,
 )
 
 Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]
@@ -42,13 +42,7 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
 
 def make_work_handler(registry: AdapterRegistry) -> Handler:
     async def work_handler(request: AgentRequest) -> AgentResponse:
-        adapter = registry.get(request.spec.adapter) if isinstance(request.spec, WorkSpec) else registry.get("coding")  # type: ignore[union-attr]
-        print(f"  adapter: {adapter.name} — {adapter.description}")
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta={"result": f"stub result for adapter: {adapter.name}"},
-        )
+        return await work_agent(request, registry)
 
     return work_handler
 

@@ -4,5 +4,5 @@ tools:
   - read_file
   - write_file
 prompt_template: |
-  Complete the following task: {{ objective }}
-  Success condition: {{ success_condition }}
+  Complete the following task: {objective}
+  Success condition: {success_condition}
