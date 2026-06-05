@@ -1,7 +1,6 @@
 import pytest
 
 from forge.core.models import (
-    AdapterType,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -25,7 +24,7 @@ def _make_request(
         spec=WorkSpec(
             objective="do something",
             success_condition="it is done",
-            adapter_type=AdapterType.CODING,
+            adapter="coding",
         ),
         dependencies=dependencies if dependencies is not None else frozenset(),
     )

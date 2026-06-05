@@ -1,7 +1,7 @@
 from collections.abc import Awaitable, Callable
 
+from forge.adapters.registry import AdapterRegistry
 from forge.core.models import (
-    AdapterType,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -39,13 +39,17 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
     )
 
 
-async def stub_work_handler(request: AgentRequest) -> AgentResponse:
-    adapter = request.spec.adapter_type.value if isinstance(request.spec, WorkSpec) else "unknown"
-    return AgentResponse(
-        request_id=request.id,
-        status=ResponseStatus.COMPLETED,
-        delta={"result": f"stub result for adapter: {adapter}"},
-    )
+def make_work_handler(registry: AdapterRegistry) -> Handler:
+    async def work_handler(request: AgentRequest) -> AgentResponse:
+        adapter = registry.get(request.spec.adapter) if isinstance(request.spec, WorkSpec) else registry.get("coding")  # type: ignore[union-attr]
+        print(f"  adapter: {adapter.name} — {adapter.description}")
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta={"result": f"stub result for adapter: {adapter.name}"},
+        )
+
+    return work_handler
 
 
 async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
@@ -66,7 +70,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
         spec=WorkSpec(
             objective="task A",
             success_condition="A done",
-            adapter_type=AdapterType.CODING,
+            adapter="coding",
         ),
     )
     b = AgentRequest(
@@ -75,7 +79,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
         spec=WorkSpec(
             objective="task B",
             success_condition="B done",
-            adapter_type=AdapterType.CODING,
+            adapter="coding",
         ),
         dependencies=frozenset({a.id}),
     )
@@ -85,7 +89,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
         spec=WorkSpec(
             objective="task C",
             success_condition="C done",
-            adapter_type=AdapterType.CODING,
+            adapter="coding",
         ),
         dependencies=frozenset({b.id}),
     )

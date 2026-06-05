@@ -1,7 +1,8 @@
+from pathlib import Path
 from uuid import uuid4
 
+from forge.adapters.registry import AdapterRegistry
 from forge.core.models import (
-    AdapterType,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -15,12 +16,15 @@ from forge.core.models import (
 )
 from forge.core.runner import (
     Runner,
+    make_work_handler,
     scripted_plan_handler,
     stub_integrate_handler,
     stub_plan_handler,
-    stub_work_handler,
 )
 from forge.core.scheduler import Scheduler
+
+_ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
+
 
 # --- Helpers ---
 
@@ -41,7 +45,7 @@ def _work_request() -> AgentRequest:
         spec=WorkSpec(
             objective="do work",
             success_condition="work done",
-            adapter_type=AdapterType.CODING,
+            adapter="coding",
         ),
     )
 
@@ -52,6 +56,12 @@ def _integrate_request() -> AgentRequest:
         source=RequestSource.WORKER,
         spec=IntegrateSpec(source_request_id=uuid4()),
     )
+
+
+def _registry() -> AdapterRegistry:
+    registry = AdapterRegistry()
+    registry.load(_ADAPTERS_DIR)
+    return registry
 
 
 # --- Tests ---
@@ -154,11 +164,12 @@ async def test_stub_plan_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_stub_work_handler_includes_adapter_in_delta() -> None:
-    response = await stub_work_handler(_work_request())
+async def test_work_handler_includes_adapter_in_delta() -> None:
+    handler = make_work_handler(_registry())
+    response = await handler(_work_request())
 
     assert response.delta is not None
-    assert AdapterType.CODING.value in str(response.delta.get("result", ""))
+    assert "coding" in str(response.delta.get("result", ""))
 
 
 async def test_stub_integrate_handler_returns_completed() -> None:
@@ -170,7 +181,7 @@ async def test_stub_integrate_handler_returns_completed() -> None:
 async def test_runner_satisfies_agent_runner_type() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
-    runner.register(AgentType.WORK, stub_work_handler)
+    runner.register(AgentType.WORK, make_work_handler(_registry()))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar="test northstar")
@@ -220,7 +231,7 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
 async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, stub_work_handler)
+    runner.register(AgentType.WORK, make_work_handler(_registry()))
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())

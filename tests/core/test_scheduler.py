@@ -1,7 +1,6 @@
 import asyncio
 
 from forge.core.models import (
-    AdapterType,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -36,7 +35,7 @@ def _work_request(*, deps: frozenset[RequestId] = frozenset()) -> AgentRequest:
         spec=WorkSpec(
             objective="do work",
             success_condition="work done",
-            adapter_type=AdapterType.CODING,
+            adapter="coding",
         ),
         dependencies=deps,
     )

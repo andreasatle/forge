@@ -1,0 +1,7 @@
+name: audit
+description: Audits code or documents for quality
+tools:
+  - read_file
+prompt_template: |
+  Audit the following: {{ objective }}
+  Success condition: {{ success_condition }}

@@ -38,12 +38,6 @@ class ResponseStatus(Enum):
     FAILED = "failed"
 
 
-class AdapterType(Enum):
-    CODING = "coding"
-    DOCUMENT = "document"
-    AUDIT = "audit"
-
-
 class PlanSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -59,7 +53,7 @@ class WorkSpec(BaseModel):
     objective: str
     success_condition: str
     target_entity: str | None = None
-    adapter_type: AdapterType
+    adapter: str
 
 
 class IntegrateSpec(BaseModel):
