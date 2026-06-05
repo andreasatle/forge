@@ -27,6 +27,7 @@ def _make_request(
             objective="do something",
             success_condition="it is done",
             adapter="coding",
+            artifact="codebase",
         ),
         dependencies=dependencies if dependencies is not None else frozenset(),
     )
@@ -142,3 +143,25 @@ def test_agent_request_raises_on_mutation():
     request = _make_request()
     with pytest.raises(Exception):
         request.priority = Priority.HIGH  # type: ignore[misc]
+
+
+# --- WorkSpec.artifact ---
+
+
+def test_work_spec_requires_artifact_field():
+    """WorkSpec raises ValidationError when artifact field is missing."""
+    with pytest.raises(Exception):
+        WorkSpec(objective="do something", success_condition="it is done", adapter="coding")  # type: ignore[call-arg]
+
+
+def test_work_spec_with_artifact_serializes_correctly():
+    """WorkSpec with artifact field round-trips through model_dump and model_validate."""
+    spec = WorkSpec(
+        objective="write parser",
+        success_condition="parser passes tests",
+        adapter="coding",
+        artifact="codebase",
+    )
+    data = spec.model_dump()
+    restored = WorkSpec.model_validate(data)
+    assert restored.artifact == "codebase"

@@ -77,6 +77,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
             objective="task A",
             success_condition="A done",
             adapter="coding",
+            artifact="codebase",
         ),
     )
     b = AgentRequest(
@@ -86,6 +87,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
             objective="task B",
             success_condition="B done",
             adapter="coding",
+            artifact="codebase",
         ),
         dependencies=frozenset({a.id}),
     )
@@ -96,6 +98,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
             objective="task C",
             success_condition="C done",
             adapter="coding",
+            artifact="codebase",
         ),
         dependencies=frozenset({b.id}),
     )

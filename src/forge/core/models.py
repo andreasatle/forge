@@ -70,6 +70,7 @@ class WorkSpec(BaseModel):
     success_condition: str
     target_entity: str | None = None
     adapter: str
+    artifact: str
 
 
 class IntegrateSpec(BaseModel):

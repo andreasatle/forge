@@ -47,6 +47,7 @@ def _work_request() -> AgentRequest:
             objective="do work",
             success_condition="work done",
             adapter="coding",
+            artifact="codebase",
         ),
     )
 
