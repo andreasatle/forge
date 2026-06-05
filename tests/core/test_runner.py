@@ -15,6 +15,7 @@ from forge.core.models import (
 )
 from forge.core.runner import (
     Runner,
+    scripted_plan_handler,
     stub_integrate_handler,
     stub_plan_handler,
     stub_work_handler,
@@ -176,3 +177,73 @@ async def test_runner_satisfies_agent_runner_type() -> None:
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
     assert final is not None
+
+
+async def test_scripted_plan_handler_user_source_emits_three_follow_ups() -> None:
+    response = await scripted_plan_handler(_plan_request())
+
+    assert len(response.follow_up) == 3
+
+
+async def test_scripted_plan_handler_follow_ups_form_valid_chain() -> None:
+    response = await scripted_plan_handler(_plan_request())
+
+    by_id = {r.id: r for r in response.follow_up}
+    work_nodes = [r for r in response.follow_up if r.agent_type == AgentType.WORK]
+    no_deps = [r for r in work_nodes if not r.dependencies]
+    one_dep = [r for r in work_nodes if len(r.dependencies) == 1]
+    two_deps_or_more = [r for r in work_nodes if len(r.dependencies) > 1]
+
+    assert len(no_deps) == 1, "exactly one root node (A)"
+    assert len(one_dep) == 2, "B depends on A, C depends on B"
+    assert len(two_deps_or_more) == 0
+
+    a = no_deps[0]
+    b = next(r for r in one_dep if a.id in r.dependencies)
+    c = next(r for r in one_dep if b.id in r.dependencies)
+
+    assert b.id in by_id
+    assert c.id in by_id
+
+
+async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> None:
+    planner_request = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.PLANNER,
+        spec=PlanSpec(northstar="test northstar"),
+    )
+    response = await scripted_plan_handler(planner_request)
+
+    assert response.follow_up == []
+
+
+async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() -> None:
+    runner = Runner()
+    runner.register(AgentType.PLAN, scripted_plan_handler)
+    runner.register(AgentType.WORK, stub_work_handler)
+
+    state = SchedulerState(northstar="test northstar")
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    completed = [n for n in final.dag.values() if n.node_state.value == "completed"]
+    assert len(completed) == 5
+
+
+async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() -> None:
+    completion_order: list[str] = []
+
+    async def tracking_work_handler(request: AgentRequest) -> AgentResponse:
+        spec = request.spec
+        if isinstance(spec, WorkSpec):
+            completion_order.append(spec.objective)
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    runner = Runner()
+    runner.register(AgentType.PLAN, scripted_plan_handler)
+    runner.register(AgentType.WORK, tracking_work_handler)
+
+    state = SchedulerState(northstar="test northstar")
+    await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert completion_order.index("task A") < completion_order.index("task B")
+    assert completion_order.index("task B") < completion_order.index("task C")

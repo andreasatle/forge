@@ -1,9 +1,11 @@
 from collections.abc import Awaitable, Callable
 
 from forge.core.models import (
+    AdapterType,
     AgentRequest,
     AgentResponse,
     AgentType,
+    RequestSource,
     ResponseStatus,
     WorkSpec,
 )
@@ -51,4 +53,44 @@ async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
         delta={"integrated": True},
+    )
+
+
+async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
+    if request.source != RequestSource.USER:
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+
+    a = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task A",
+            success_condition="A done",
+            adapter_type=AdapterType.CODING,
+        ),
+    )
+    b = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task B",
+            success_condition="B done",
+            adapter_type=AdapterType.CODING,
+        ),
+        dependencies=frozenset({a.id}),
+    )
+    c = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task C",
+            success_condition="C done",
+            adapter_type=AdapterType.CODING,
+        ),
+        dependencies=frozenset({b.id}),
+    )
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.COMPLETED,
+        follow_up=[c, b, a],
     )

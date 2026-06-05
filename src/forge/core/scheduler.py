@@ -10,6 +10,7 @@ from forge.core.models import (
     DAGNode,
     NodeState,
     RequestId,
+    RequestSource,
     SchedulerState,
 )
 
@@ -50,7 +51,7 @@ class Scheduler:
 
             if not ready:
                 self._fire_state(self._callbacks.on_idle, state)
-                new_planner = global_planner.model_copy(update={"id": uuid4()})
+                new_planner = global_planner.model_copy(update={"id": uuid4(), "source": RequestSource.PLANNER})
                 state = state.add_nodes([DAGNode(request=new_planner)])
                 pending_termination_id = new_planner.id
                 continue
