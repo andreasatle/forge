@@ -23,6 +23,7 @@ from forge.core.runner import (
     stub_plan_handler,
 )
 from forge.core.scheduler import Scheduler
+from forge.tools.registry import ToolRegistry
 
 # --- Helpers ---
 
@@ -167,13 +168,13 @@ async def test_stub_plan_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_work_handler_includes_adapter_in_delta(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("forge.llm.client.chat", AsyncMock(return_value="ok"))
-    handler = make_work_handler(_mock_registry())
+async def test_work_handler_returns_result_in_delta(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("forge.llm.client.chat_with_tools", AsyncMock(return_value=("ok", [])))
+    handler = make_work_handler(_mock_registry(), ToolRegistry())
     response = await handler(_work_request())
 
     assert response.delta is not None
-    assert response.delta.get("adapter") == "coding"
+    assert response.delta.get("result") == "ok"
 
 
 async def test_stub_integrate_handler_returns_completed() -> None:
@@ -185,7 +186,7 @@ async def test_stub_integrate_handler_returns_completed() -> None:
 async def test_runner_satisfies_agent_runner_type() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), ToolRegistry()))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar="test northstar")
@@ -236,7 +237,7 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
 async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), ToolRegistry()))
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())

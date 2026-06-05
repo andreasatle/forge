@@ -11,6 +11,7 @@ from forge.core.models import (
     ResponseStatus,
     WorkSpec,
 )
+from forge.tools.registry import ToolRegistry
 
 Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
@@ -41,9 +42,9 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
     )
 
 
-def make_work_handler(registry: AdapterRegistry) -> Handler:
+def make_work_handler(registry: AdapterRegistry, tools: ToolRegistry) -> Handler:
     async def work_handler(request: AgentRequest) -> AgentResponse:
-        return await work_agent(request, registry)
+        return await work_agent(request, registry, tools)
 
     return work_handler
 
