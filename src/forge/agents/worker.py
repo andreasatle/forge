@@ -3,18 +3,19 @@
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, ResponseStatus, WorkSpec
+from forge.core.workspace import Workspace
 from forge.llm import client as llm
-from forge.tools.registry import ToolRegistry
+from forge.tools.builtin import build_default_registry
 
 WORK_MODEL = "gemma4:e4b"
 
 
-async def work_agent(request: AgentRequest, registry: AdapterRegistry, tools: ToolRegistry) -> AgentResponse:
-    """Run the agentic tool loop for a work request using the specified adapter."""
+async def work_agent(request: AgentRequest, registry: AdapterRegistry, workspace: Workspace) -> AgentResponse:
+    """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     async def build(spec: WorkSpec) -> AgentResponse:
         adapter = registry.get(spec.adapter)
-        tool_names = adapter.tools
-        tool_schema = tools.to_ollama_schema(tool_names)
+        tools = build_default_registry(workspace, spec.artifact)
+        tool_schema = tools.to_ollama_schema(adapter.tools)
         prompt = adapter.prompt_template.format(
             objective=spec.objective,
             success_condition=spec.success_condition,

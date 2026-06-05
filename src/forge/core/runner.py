@@ -13,7 +13,7 @@ from forge.core.models import (
     ResponseStatus,
     WorkSpec,
 )
-from forge.tools.registry import ToolRegistry
+from forge.core.workspace import Workspace
 
 Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
@@ -48,10 +48,10 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
     )
 
 
-def make_work_handler(registry: AdapterRegistry, tools: ToolRegistry) -> Handler:
+def make_work_handler(registry: AdapterRegistry, workspace: Workspace) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
     async def work_handler(request: AgentRequest) -> AgentResponse:
-        return await work_agent(request, registry, tools)
+        return await work_agent(request, registry, workspace)
 
     return work_handler
 
@@ -109,11 +109,11 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
     )
 
 
-def make_plan_handler(registry: AdapterRegistry) -> Handler:
+def make_plan_handler(registry: AdapterRegistry, artifact_names: list[str]) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
     async def plan_handler(request: AgentRequest) -> AgentResponse:
         if request.source == RequestSource.PLANNER:
             return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
-        return await plan_agent(request, registry)
+        return await plan_agent(request, registry, artifact_names)
 
     return plan_handler

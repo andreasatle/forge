@@ -23,7 +23,6 @@ from forge.core.runner import (
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.workspace import Workspace
-from forge.tools.builtin import build_default_registry
 
 _ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
 
@@ -52,10 +51,12 @@ def _reset(config: ForgeConfig) -> None:
 
 
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
+    artifact_names = [a.name for a in config.artifacts]
+
     workspace = Workspace(config.workspace)
     workspace.init()
-    for artifact in config.artifacts:
-        workspace.init_artifact(artifact.name)
+    for name in artifact_names:
+        workspace.init_artifact(name)
 
     if workspace.state_path().exists():
         print(f"resuming: {workspace.path}")
@@ -69,11 +70,9 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
 
-    tools = build_default_registry(workspace, config.artifacts[0].name)
-
     runner = Runner()
-    runner.register(AgentType.PLAN, make_plan_handler(registry))
-    runner.register(AgentType.WORK, make_work_handler(registry, tools))
+    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names))
+    runner.register(AgentType.WORK, make_work_handler(registry, workspace))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)

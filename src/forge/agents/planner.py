@@ -18,6 +18,7 @@ Respond with ONLY a JSON object in this exact format:
       "objective": "specific task description",
       "success_condition": "how to know this task is done",
       "adapter": "coding|document|audit",
+      "artifact": "name of the artifact this task writes to",
       "depends_on": []
     }}
   ]
@@ -26,6 +27,7 @@ Respond with ONLY a JSON object in this exact format:
 Rules:
 - depends_on contains indices (0-based) of tasks this task depends on
 - adapter must be one of: coding, document, audit
+- artifact must be one of: {artifact_names}
 - No more than 5 tasks
 - Respond with JSON only — no explanation, no markdown
 
@@ -33,10 +35,13 @@ Goal: {northstar}
 """
 
 
-async def plan_agent(request: AgentRequest, registry: AdapterRegistry) -> AgentResponse:
+async def plan_agent(request: AgentRequest, registry: AdapterRegistry, artifact_names: list[str]) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     async def build(spec: PlanSpec) -> AgentResponse:
-        prompt = PLAN_PROMPT.format(northstar=spec.northstar)
+        prompt = PLAN_PROMPT.format(
+            northstar=spec.northstar,
+            artifact_names=", ".join(artifact_names),
+        )
         raw = await llm.chat(PLANNER_MODEL, prompt)
         return AgentResponse(
             request_id=request.id,

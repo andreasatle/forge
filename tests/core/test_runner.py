@@ -1,5 +1,6 @@
 """Tests for Runner routing, built-in handlers, and scripted_plan_handler."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,13 +20,14 @@ from forge.core.models import (
 )
 from forge.core.runner import (
     Runner,
+    make_plan_handler,
     make_work_handler,
     scripted_plan_handler,
     stub_integrate_handler,
     stub_plan_handler,
 )
 from forge.core.scheduler import Scheduler
-from forge.tools.registry import ToolRegistry
+from forge.core.workspace import Workspace
 
 # --- Helpers ---
 
@@ -69,6 +71,13 @@ def _mock_registry() -> AdapterRegistry:
         prompt_template="do: {objective}",
     )
     return registry
+
+
+def _make_workspace(tmp_path: Path) -> Workspace:
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+    return ws
 
 
 # --- Tests ---
@@ -178,10 +187,10 @@ async def test_stub_plan_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_work_handler_returns_result_in_delta(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_work_handler_returns_result_in_delta(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """make_work_handler returns a handler whose delta contains the LLM text result."""
     monkeypatch.setattr("forge.llm.client.chat_with_tools", AsyncMock(return_value=("ok", [])))
-    handler = make_work_handler(_mock_registry(), ToolRegistry())
+    handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path))
     response = await handler(_work_request())
 
     assert response.delta is not None
@@ -195,17 +204,31 @@ async def test_stub_integrate_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_runner_satisfies_agent_runner_type() -> None:
+async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
     """A fully registered Runner can be used as an AgentRunner in the Scheduler."""
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), ToolRegistry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path)))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
     assert final is not None
+
+
+async def test_make_plan_handler_planner_source_returns_completed() -> None:
+    """make_plan_handler returns empty follow-up for PLANNER-source requests without calling the LLM."""
+    handler = make_plan_handler(_mock_registry(), artifact_names=["codebase"])
+    request = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.PLANNER,
+        spec=PlanSpec(northstar="test northstar"),
+    )
+    response = await handler(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.follow_up == []
 
 
 async def test_scripted_plan_handler_user_source_emits_three_follow_ups() -> None:
@@ -250,11 +273,11 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
 
 
 @pytest.mark.slow
-async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() -> None:
+async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes(tmp_path: Path) -> None:
     """End-to-end run with scripted_plan_handler produces exactly five COMPLETED nodes."""
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), ToolRegistry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path)))
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())

@@ -23,10 +23,13 @@ def parse_plan(response: str, registry: AdapterRegistry) -> list[AgentRequest]:
     known_adapters = set(registry.names())
 
     requests: list[AgentRequest] = []
-    for task in tasks:
+    for i, task in enumerate(tasks):
         adapter = task.get("adapter", "coding")
         if adapter not in known_adapters:
             adapter = "coding"
+        artifact = task.get("artifact")
+        if not artifact:
+            raise ValueError(f"task {i} missing required 'artifact' field")
         requests.append(
             AgentRequest(
                 agent_type=AgentType.WORK,
@@ -35,6 +38,7 @@ def parse_plan(response: str, registry: AdapterRegistry) -> list[AgentRequest]:
                     objective=task["objective"],
                     success_condition=task["success_condition"],
                     adapter=adapter,
+                    artifact=artifact,
                 ),
             )
         )
