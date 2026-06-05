@@ -1,3 +1,5 @@
+"""Blackboard tools for reading and writing shared key-value state in the workspace."""
+
 import json
 
 from forge.core.workspace import Workspace
@@ -5,6 +7,7 @@ from forge.tools.registry import Tool
 
 
 async def read_blackboard(key: str, workspace: Workspace) -> str:
+    """Return the string value for key from the blackboard, or 'empty'/'key not found'."""
     bb_path = workspace.blackboard_path()
     if not bb_path.exists():
         return "empty"
@@ -13,6 +16,7 @@ async def read_blackboard(key: str, workspace: Workspace) -> str:
 
 
 def make_read_blackboard_tool(workspace: Workspace) -> Tool:
+    """Return a Tool that reads a single key from the workspace blackboard."""
     async def fn(key: str) -> str:
         return await read_blackboard(key, workspace)
 
@@ -31,6 +35,7 @@ def make_read_blackboard_tool(workspace: Workspace) -> Tool:
 
 
 def make_write_blackboard_tool(workspace: Workspace) -> Tool:
+    """Return a Tool that writes a single key-value pair to the workspace blackboard."""
     async def write_blackboard(key: str, value: str) -> str:
         import json
 

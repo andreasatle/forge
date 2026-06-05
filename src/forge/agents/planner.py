@@ -1,3 +1,5 @@
+"""Planning agent that decomposes a northstar goal into concrete work tasks."""
+
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, PlanSpec, ResponseStatus
@@ -32,6 +34,7 @@ Goal: {northstar}
 
 
 async def plan_agent(request: AgentRequest, registry: AdapterRegistry) -> AgentResponse:
+    """Send the northstar goal to the planner LLM and return follow-up work requests."""
     async def build(spec: PlanSpec) -> AgentResponse:
         prompt = PLAN_PROMPT.format(northstar=spec.northstar)
         raw = await llm.chat(PLANNER_MODEL, prompt)

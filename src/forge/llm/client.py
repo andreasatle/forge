@@ -1,9 +1,12 @@
+"""Async Ollama HTTP client for single-turn and tool-augmented chat."""
+
 import httpx
 
 OLLAMA_BASE = "http://localhost:11434"
 
 
 async def chat(model: str, prompt: str) -> str:
+    """Send a single-turn prompt to the Ollama model and return the response content."""
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -24,6 +27,7 @@ async def chat_with_tools(
     messages: list[dict],  # type: ignore[type-arg]
     tools: list[dict],  # type: ignore[type-arg]
 ) -> tuple[str | None, list[dict]]:  # type: ignore[type-arg]
+    """Send a multi-turn conversation with tool schemas; return (text, []) or (None, tool_calls)."""
     payload = {
         "model": model,
         "messages": messages,

@@ -1,3 +1,5 @@
+"""Worker agent that executes a task using an adapter and tool registry."""
+
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, ResponseStatus, WorkSpec
@@ -8,6 +10,7 @@ WORK_MODEL = "gemma4:e4b"
 
 
 async def work_agent(request: AgentRequest, registry: AdapterRegistry, tools: ToolRegistry) -> AgentResponse:
+    """Run the agentic tool loop for a work request using the specified adapter."""
     async def build(spec: WorkSpec) -> AgentResponse:
         adapter = registry.get(spec.adapter)
         tool_names = adapter.tools

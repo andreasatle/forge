@@ -1,3 +1,5 @@
+"""Async DAG scheduler that dispatches agent requests up to max_concurrency."""
+
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
@@ -21,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SchedulerCallbacks:
+    """Optional lifecycle callbacks fired by the scheduler at key state transitions."""
+
     on_node_dispatched: Callable[[DAGNode], None] | None = None
     on_node_completed: Callable[[DAGNode], None] | None = None
     on_node_failed: Callable[[DAGNode], None] | None = None
@@ -28,6 +32,8 @@ class SchedulerCallbacks:
 
 
 class Scheduler:
+    """Async scheduler that drives a DAG of agent requests to completion."""
+
     def __init__(
         self,
         runner: AgentRunner,
@@ -41,6 +47,7 @@ class Scheduler:
         state: SchedulerState,
         global_planner: AgentRequest,
     ) -> SchedulerState:
+        """Drive state forward until the global planner returns with no follow-ups."""
         if not state.dag:
             state = state.add_nodes([DAGNode(request=global_planner)])
 

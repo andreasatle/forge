@@ -1,3 +1,5 @@
+"""Runner that routes agent requests to registered handlers, plus built-in handlers."""
+
 from collections.abc import Awaitable, Callable
 
 from forge.adapters.registry import AdapterRegistry
@@ -17,10 +19,13 @@ Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
 
 class Runner:
+    """Dispatcher that routes each AgentRequest to its registered async handler."""
+
     def __init__(self) -> None:
         self._handlers: dict[AgentType, Handler] = {}
 
     def register(self, agent_type: AgentType, handler: Handler) -> None:
+        """Associate handler with agent_type, replacing any previous registration."""
         self._handlers[agent_type] = handler
 
     async def __call__(self, request: AgentRequest) -> AgentResponse:
@@ -35,6 +40,7 @@ class Runner:
 
 
 async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
+    """Return a completed response with a placeholder plan delta, for testing."""
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
@@ -43,6 +49,7 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
 
 
 def make_work_handler(registry: AdapterRegistry, tools: ToolRegistry) -> Handler:
+    """Return a handler that delegates work requests to work_agent."""
     async def work_handler(request: AgentRequest) -> AgentResponse:
         return await work_agent(request, registry, tools)
 
@@ -50,6 +57,7 @@ def make_work_handler(registry: AdapterRegistry, tools: ToolRegistry) -> Handler
 
 
 async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
+    """Return a completed response with a placeholder integration delta, for testing."""
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
@@ -58,6 +66,7 @@ async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
 
 
 async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
+    """Return a hardcoded A→B→C dependency chain for use in integration tests."""
     if request.source == RequestSource.PLANNER:
         return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
 
@@ -98,6 +107,7 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
 
 
 def make_plan_handler(registry: AdapterRegistry) -> Handler:
+    """Return a handler that delegates user-source plan requests to plan_agent."""
     async def plan_handler(request: AgentRequest) -> AgentResponse:
         if request.source == RequestSource.PLANNER:
             return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])

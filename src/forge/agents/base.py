@@ -1,3 +1,5 @@
+"""Base agent runner with shared error handling for all agent types."""
+
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -13,6 +15,7 @@ async def run_agent(
     spec_type: type[S],
     build_response: Callable[[S], Awaitable[AgentResponse]],
 ) -> AgentResponse:
+    """Validate request spec type, call build_response, and wrap any exception as FAILED."""
     try:
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")

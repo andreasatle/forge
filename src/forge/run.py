@@ -1,3 +1,5 @@
+"""CLI entry point for the forge command — start and reset subcommands."""
+
 import argparse
 import asyncio
 from pathlib import Path
@@ -27,6 +29,7 @@ _ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
 
 
 def main() -> None:
+    """Parse CLI arguments and dispatch to start or reset."""
     parser = argparse.ArgumentParser(prog="forge")
     parser.add_argument("command", choices=["start", "reset"])
     parser.add_argument("config", type=Path)

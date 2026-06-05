@@ -1,3 +1,5 @@
+"""Tests for Runner routing, built-in handlers, and scripted_plan_handler."""
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -72,6 +74,7 @@ def _mock_registry() -> AdapterRegistry:
 
 
 async def test_runner_routes_plan_to_plan_handler() -> None:
+    """Runner invokes the registered PLAN handler for a plan request."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -88,6 +91,7 @@ async def test_runner_routes_plan_to_plan_handler() -> None:
 
 
 async def test_runner_routes_work_to_work_handler() -> None:
+    """Runner invokes the registered WORK handler for a work request."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -104,6 +108,7 @@ async def test_runner_routes_work_to_work_handler() -> None:
 
 
 async def test_runner_routes_integrate_to_integrate_handler() -> None:
+    """Runner invokes the registered INTEGRATE handler for an integrate request."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -120,6 +125,7 @@ async def test_runner_routes_integrate_to_integrate_handler() -> None:
 
 
 async def test_handler_receives_original_request_unmodified() -> None:
+    """The handler receives the exact same request object passed to the runner."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -135,6 +141,7 @@ async def test_handler_receives_original_request_unmodified() -> None:
 
 
 async def test_unregistered_agent_type_returns_failed_response() -> None:
+    """Runner returns a FAILED response when no handler is registered for the agent type."""
     runner = Runner()
     request = _plan_request()
     response = await runner(request)
@@ -144,6 +151,7 @@ async def test_unregistered_agent_type_returns_failed_response() -> None:
 
 
 async def test_registering_second_handler_overwrites_first() -> None:
+    """Registering a second handler for the same agent type replaces the first."""
     calls: list[str] = []
 
     async def first(request: AgentRequest) -> AgentResponse:
@@ -163,12 +171,14 @@ async def test_registering_second_handler_overwrites_first() -> None:
 
 
 async def test_stub_plan_handler_returns_completed() -> None:
+    """stub_plan_handler returns a COMPLETED response."""
     response = await stub_plan_handler(_plan_request())
 
     assert response.status == ResponseStatus.COMPLETED
 
 
 async def test_work_handler_returns_result_in_delta(monkeypatch: pytest.MonkeyPatch) -> None:
+    """make_work_handler returns a handler whose delta contains the LLM text result."""
     monkeypatch.setattr("forge.llm.client.chat_with_tools", AsyncMock(return_value=("ok", [])))
     handler = make_work_handler(_mock_registry(), ToolRegistry())
     response = await handler(_work_request())
@@ -178,12 +188,14 @@ async def test_work_handler_returns_result_in_delta(monkeypatch: pytest.MonkeyPa
 
 
 async def test_stub_integrate_handler_returns_completed() -> None:
+    """stub_integrate_handler returns a COMPLETED response."""
     response = await stub_integrate_handler(_integrate_request())
 
     assert response.status == ResponseStatus.COMPLETED
 
 
 async def test_runner_satisfies_agent_runner_type() -> None:
+    """A fully registered Runner can be used as an AgentRunner in the Scheduler."""
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
     runner.register(AgentType.WORK, make_work_handler(_mock_registry(), ToolRegistry()))
@@ -196,12 +208,14 @@ async def test_runner_satisfies_agent_runner_type() -> None:
 
 
 async def test_scripted_plan_handler_user_source_emits_three_follow_ups() -> None:
+    """scripted_plan_handler returns exactly three follow-up requests for a USER source."""
     response = await scripted_plan_handler(_plan_request())
 
     assert len(response.follow_up) == 3
 
 
 async def test_scripted_plan_handler_follow_ups_form_valid_chain() -> None:
+    """scripted_plan_handler follow-ups form a linear A→B→C dependency chain."""
     response = await scripted_plan_handler(_plan_request())
 
     by_id = {r.id: r for r in response.follow_up}
@@ -223,6 +237,7 @@ async def test_scripted_plan_handler_follow_ups_form_valid_chain() -> None:
 
 
 async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> None:
+    """scripted_plan_handler returns an empty follow-up list for a PLANNER source request."""
     planner_request = AgentRequest(
         agent_type=AgentType.PLAN,
         source=RequestSource.PLANNER,
@@ -235,6 +250,7 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
 
 @pytest.mark.slow
 async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() -> None:
+    """End-to-end run with scripted_plan_handler produces exactly five COMPLETED nodes."""
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
     runner.register(AgentType.WORK, make_work_handler(_mock_registry(), ToolRegistry()))
@@ -247,6 +263,7 @@ async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() 
 
 
 async def test_scheduler_reinjects_global_planner_with_planner_source() -> None:
+    """Scheduler re-injects the global planner with PLANNER source when the DAG goes idle."""
     captured_sources: list[RequestSource] = []
 
     async def capturing_plan_handler(request: AgentRequest) -> AgentResponse:
@@ -263,6 +280,7 @@ async def test_scheduler_reinjects_global_planner_with_planner_source() -> None:
 
 
 async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() -> None:
+    """Work nodes produced by scripted_plan_handler complete in A-then-B-then-C order."""
     completion_order: list[str] = []
 
     async def tracking_work_handler(request: AgentRequest) -> AgentResponse:

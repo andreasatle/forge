@@ -1,3 +1,5 @@
+"""Factory function that builds the default tool registry for a workspace."""
+
 from forge.core.workspace import Workspace
 from forge.tools.blackboard import make_read_blackboard_tool, make_write_blackboard_tool
 from forge.tools.file_tools import (
@@ -10,6 +12,7 @@ from forge.tools.registry import ToolRegistry
 
 
 def build_default_registry(workspace: Workspace) -> ToolRegistry:
+    """Create and return a ToolRegistry pre-loaded with all standard workspace tools."""
     registry = ToolRegistry()
     registry.register(make_read_file_tool(workspace))
     registry.register(make_write_file_tool(workspace))

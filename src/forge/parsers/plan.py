@@ -1,3 +1,5 @@
+"""Parser that converts a planner LLM response into a list of AgentRequests."""
+
 import json
 import re
 
@@ -6,6 +8,7 @@ from forge.core.models import AgentRequest, AgentType, RequestSource, WorkSpec
 
 
 def parse_plan(response: str, registry: AdapterRegistry) -> list[AgentRequest]:
+    """Parse a JSON plan from the LLM response string and return ordered AgentRequests with dependencies."""
     text = response.strip()
     match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
     if match:

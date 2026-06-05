@@ -1,3 +1,5 @@
+"""Adapter registry for loading and accessing named adapter configurations."""
+
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6,6 +8,8 @@ import yaml
 
 @dataclass
 class AdapterSpec:
+    """Named adapter configuration loaded from a YAML file."""
+
     name: str
     description: str
     tools: list[str]
@@ -16,10 +20,13 @@ _REQUIRED_FIELDS = ("name", "description", "tools", "prompt_template")
 
 
 class AdapterRegistry:
+    """Registry for loading and retrieving adapter configurations by name."""
+
     def __init__(self) -> None:
         self._adapters: dict[str, AdapterSpec] = {}
 
     def load(self, adapters_dir: Path) -> None:
+        """Load all *.yaml adapter files from the given directory."""
         for path in sorted(adapters_dir.glob("*.yaml")):
             with path.open() as f:
                 data = yaml.safe_load(f)
@@ -36,9 +43,11 @@ class AdapterRegistry:
             print(f"loaded adapter: {spec.name}")
 
     def get(self, name: str) -> AdapterSpec:
+        """Return the adapter spec for the given name, raising KeyError if unknown."""
         if name not in self._adapters:
             raise KeyError(f"unknown adapter: {name}")
         return self._adapters[name]
 
     def names(self) -> list[str]:
+        """Return a sorted list of all registered adapter names."""
         return sorted(self._adapters)

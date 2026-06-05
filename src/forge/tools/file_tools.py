@@ -1,8 +1,11 @@
+"""File tools for reading, writing, listing, and patching files in the workspace outputs."""
+
 from forge.core.workspace import Workspace
 from forge.tools.registry import Tool
 
 
 async def read_file(path: str, workspace: Workspace) -> str:
+    """Read and return the contents of a file from the workspace outputs directory."""
     file_path = workspace.outputs_dir() / path
     if not file_path.exists():
         raise FileNotFoundError(f"file not found in workspace outputs: {path!r}")
@@ -10,6 +13,7 @@ async def read_file(path: str, workspace: Workspace) -> str:
 
 
 async def list_files(directory: str, workspace: Workspace) -> str:
+    """Return newline-separated relative paths of all files under directory, or 'empty'."""
     dir_path = workspace.outputs_dir() / directory
     if not dir_path.exists() or not dir_path.is_dir():
         return "empty"
@@ -18,6 +22,7 @@ async def list_files(directory: str, workspace: Workspace) -> str:
 
 
 def make_read_file_tool(workspace: Workspace) -> Tool:
+    """Return a Tool that reads a file from the workspace outputs directory."""
     async def fn(path: str) -> str:
         return await read_file(path, workspace)
 
@@ -36,6 +41,7 @@ def make_read_file_tool(workspace: Workspace) -> Tool:
 
 
 def make_list_files_tool(workspace: Workspace) -> Tool:
+    """Return a Tool that lists files in a directory within the workspace outputs."""
     async def fn(directory: str) -> str:
         return await list_files(directory, workspace)
 
@@ -57,6 +63,7 @@ def make_list_files_tool(workspace: Workspace) -> Tool:
 
 
 def make_write_file_tool(workspace: Workspace) -> Tool:
+    """Return a Tool that creates or overwrites a file in the workspace outputs directory."""
     async def write_file(path: str, content: str) -> str:
         target = workspace.outputs_dir() / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +86,7 @@ def make_write_file_tool(workspace: Workspace) -> Tool:
 
 
 def make_replace_in_file_tool(workspace: Workspace) -> Tool:
+    """Return a Tool that surgically replaces a unique string in a workspace output file."""
     async def replace_in_file(path: str, old: str, new: str) -> str:
         import re
 

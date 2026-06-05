@@ -1,3 +1,5 @@
+"""Tests for Scheduler DAG execution, concurrency, callbacks, and termination."""
+
 import asyncio
 
 from forge.core.models import (
@@ -61,6 +63,7 @@ def _base_state(max_concurrency: int = 1) -> SchedulerState:
 
 
 async def test_single_work_node_completes() -> None:
+    """A single pre-seeded work node reaches COMPLETED state after the scheduler runs."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
 
@@ -73,6 +76,7 @@ async def test_single_work_node_completes() -> None:
 
 
 async def test_follow_up_requests_added_and_executed() -> None:
+    """Follow-up requests emitted by an agent are added to the DAG and executed."""
     work_a = _work_request()
     work_b = _work_request()
 
@@ -89,6 +93,7 @@ async def test_follow_up_requests_added_and_executed() -> None:
 
 
 async def test_failed_node_cancels_dependents() -> None:
+    """A FAILED node causes all nodes that depend on it to be CANCELLED."""
     work_a = _work_request()
     work_b = _work_request(deps=frozenset({work_a.id}))
 
@@ -105,6 +110,7 @@ async def test_failed_node_cancels_dependents() -> None:
 
 
 async def test_cancelled_nodes_never_dispatched() -> None:
+    """Nodes cancelled due to a failed dependency are never dispatched to the runner."""
     work_a = _work_request()
     work_b = _work_request(deps=frozenset({work_a.id}))
     dispatched: list[RequestId] = []
@@ -122,6 +128,7 @@ async def test_cancelled_nodes_never_dispatched() -> None:
 
 
 async def test_max_concurrency_respected() -> None:
+    """The scheduler never dispatches more simultaneous requests than max_concurrency."""
     works = [_work_request() for _ in range(3)]
     running = 0
     max_running = 0
@@ -143,6 +150,7 @@ async def test_max_concurrency_respected() -> None:
 
 
 async def test_on_node_completed_fires() -> None:
+    """on_node_completed callback is called when a node reaches COMPLETED state."""
     work = _work_request()
     completed: list[DAGNode] = []
 
@@ -158,6 +166,7 @@ async def test_on_node_completed_fires() -> None:
 
 
 async def test_on_node_failed_fires() -> None:
+    """on_node_failed callback is called when a node reaches FAILED state."""
     work = _work_request()
     failed: list[DAGNode] = []
 
@@ -175,6 +184,7 @@ async def test_on_node_failed_fires() -> None:
 
 
 async def test_on_idle_fires() -> None:
+    """on_idle callback is called at least once when the DAG has no ready nodes."""
     idle_calls: list[SchedulerState] = []
     callbacks = SchedulerCallbacks(on_idle=idle_calls.append)
 
@@ -187,6 +197,7 @@ async def test_on_idle_fires() -> None:
 
 
 async def test_global_planner_reinjected_on_idle() -> None:
+    """The global planner is re-dispatched at least twice: once as USER, once as PLANNER."""
     plan_calls = 0
 
     async def runner(request: AgentRequest) -> AgentResponse:
@@ -201,6 +212,7 @@ async def test_global_planner_reinjected_on_idle() -> None:
 
 
 async def test_terminates_when_global_planner_returns_empty_follow_up() -> None:
+    """Scheduler terminates and returns the final state when the PLANNER-source plan returns no follow-ups."""
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
@@ -210,6 +222,7 @@ async def test_terminates_when_global_planner_returns_empty_follow_up() -> None:
 
 
 async def test_callback_exceptions_do_not_crash() -> None:
+    """Exceptions raised by scheduler callbacks are swallowed and do not abort the run."""
     def crashing(node: DAGNode) -> None:
         raise RuntimeError("boom")
 
@@ -224,6 +237,7 @@ async def test_callback_exceptions_do_not_crash() -> None:
 
 
 async def test_final_state_reflects_all_node_updates() -> None:
+    """Final state correctly records COMPLETED, FAILED, and COMPLETED nodes for a mixed run."""
     work_a = _work_request()
     work_b = _work_request()
     work_c = _work_request(deps=frozenset({work_a.id}))

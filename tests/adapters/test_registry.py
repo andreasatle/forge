@@ -1,3 +1,5 @@
+"""Tests for AdapterRegistry loading and retrieval behaviour."""
+
 import pytest
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
@@ -8,6 +10,7 @@ def _write_yaml(tmp_path, filename: str, content: str) -> None:
 
 
 def test_registry_loads_all_yamls_from_directory(tmp_path) -> None:
+    """Registry loads every *.yaml file in the directory and registers each adapter."""
     _write_yaml(tmp_path, "coding.yaml", """
 name: coding
 description: Writes code
@@ -30,6 +33,7 @@ prompt_template: "audit: {{ objective }}"
 
 
 def test_registry_raises_on_unknown_adapter_name(tmp_path) -> None:
+    """get() raises KeyError when the requested adapter name is not registered."""
     _write_yaml(tmp_path, "coding.yaml", """
 name: coding
 description: Writes code
@@ -46,6 +50,7 @@ prompt_template: "do: {{ objective }}"
 
 
 def test_registry_raises_on_malformed_yaml_missing_field(tmp_path) -> None:
+    """load() raises ValueError when a YAML file is missing a required field."""
     _write_yaml(tmp_path, "bad.yaml", """
 name: bad
 description: Missing tools and prompt_template
@@ -58,6 +63,7 @@ description: Missing tools and prompt_template
 
 
 def test_registry_get_returns_correct_adapter_spec(tmp_path) -> None:
+    """get() returns an AdapterSpec with all fields from the loaded YAML."""
     _write_yaml(tmp_path, "coding.yaml", """
 name: coding
 description: Writes and edits code
