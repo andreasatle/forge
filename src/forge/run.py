@@ -11,7 +11,7 @@ from forge.core.models import (
     RequestSource,
     SchedulerState,
 )
-from forge.core.persistence import save_run
+from forge.core.persistence import load_run, save_run
 from forge.core.runner import (
     Runner,
     make_plan_handler,
@@ -25,14 +25,29 @@ _ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Forge scheduler.")
-    parser.add_argument("--northstar", required=True, help="The goal for the scheduler to work toward")
+    parser.add_argument("--northstar", help="The goal for the scheduler to work toward")
+    parser.add_argument("--resume", type=Path, metavar="PATH", help="Path to a previous run JSON file to resume from")
     parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent nodes (default: 1)")
     parser.add_argument("--verbose", action="store_true", help="Print DAG summary after run")
     args = parser.parse_args()
-    asyncio.run(_run(northstar=args.northstar, concurrency=args.concurrency, verbose=args.verbose))
+
+    if args.northstar and args.resume:
+        parser.error("--northstar and --resume are mutually exclusive")
+    if not args.northstar and not args.resume:
+        parser.error("--northstar is required when not resuming")
+
+    if args.resume:
+        print(f"resuming from: {args.resume}")
+        initial_state: SchedulerState | None = load_run(args.resume)
+        northstar = initial_state.northstar
+    else:
+        initial_state = None
+        northstar = args.northstar
+
+    asyncio.run(_run(northstar=northstar, concurrency=args.concurrency, verbose=args.verbose, initial_state=initial_state))
 
 
-async def _run(northstar: str, concurrency: int, verbose: bool) -> None:
+async def _run(northstar: str, concurrency: int, verbose: bool, initial_state: SchedulerState | None = None) -> None:
     registry = AdapterRegistry()
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
@@ -42,7 +57,7 @@ async def _run(northstar: str, concurrency: int, verbose: bool) -> None:
     runner.register(AgentType.WORK, make_work_handler(registry))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
-    state = SchedulerState(northstar=northstar, max_concurrency=concurrency)
+    state = initial_state or SchedulerState(northstar=northstar, max_concurrency=concurrency)
 
     global_planner = AgentRequest(
         agent_type=AgentType.PLAN,
