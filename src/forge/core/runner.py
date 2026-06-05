@@ -57,7 +57,7 @@ async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
 
 
 async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
-    if request.source != RequestSource.USER:
+    if request.source == RequestSource.PLANNER:
         return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
 
     a = AgentRequest(

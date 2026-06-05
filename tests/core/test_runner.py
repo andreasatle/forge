@@ -229,6 +229,22 @@ async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() 
     assert len(completed) == 5
 
 
+async def test_scheduler_reinjects_global_planner_with_planner_source() -> None:
+    captured_sources: list[RequestSource] = []
+
+    async def capturing_plan_handler(request: AgentRequest) -> AgentResponse:
+        captured_sources.append(request.source)
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+
+    runner = Runner()
+    runner.register(AgentType.PLAN, capturing_plan_handler)
+
+    state = SchedulerState(northstar="test northstar")
+    await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert captured_sources[1] == RequestSource.PLANNER
+
+
 async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() -> None:
     completion_order: list[str] = []
 

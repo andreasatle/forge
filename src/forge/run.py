@@ -57,7 +57,7 @@ async def _run() -> None:
     print(f"\nDone — completed: {completed}, failed: {failed}, cancelled: {cancelled}")
 
     print("\nDAG summary:")
-    for node in final.dag.values():
+    for node in sorted(final.dag.values(), key=lambda n: len(n.request.dependencies)):
         short_id = str(node.request.id)[:8]
         agent_type = node.request.agent_type.value
         node_state = node.node_state.value
