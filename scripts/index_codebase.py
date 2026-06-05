@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
-"""Generate compact markdown indexes for src/baps and tests using AST only."""
+"""Generate compact markdown indexes for src/forge and tests using AST only."""
 
 import ast
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-SRC = ROOT / "src" / "baps"
+SRC = ROOT / "src" / "forge"
 TESTS = ROOT / "tests"
 TEST_INDEX = ROOT / "CODEBASE_TEST.md"
 IMPORTANT_FIELD_CLASSES = {
-    "GameSpec",
-    "State",
-    "RuntimeContext",
-    "RunConfig",
-    "RoleConfig",
-    "PlayGameContext",
-    "VerificationResult",
-    "SummarizationContext",
-    "ToolDefinition",
-    "ToolCall",
-    "ToolCallRecord",
+    "AgentRequest",
+    "AgentResponse",
+    "PlanSpec",
+    "WorkSpec",
+    "IntegrateSpec",
+    "DAGNode",
+    "SchedulerState",
+    "ForgeConfig",
+    "Tool",
 }
 
 
@@ -360,7 +358,7 @@ def _collect_protocols(source_files: list[Path]) -> list[tuple[str, str, str | N
 
 
 def _build_dir_index_lines(pkg_name: str, files: list[Path]) -> list[str]:
-    lines: list[str] = [f"# Codebase API Index — src/baps/{pkg_name}", ""]
+    lines: list[str] = [f"# Codebase API Index — src/forge/{pkg_name}", ""]
     for path in sorted(files):
         if not _is_substantive_source_file(path):
             continue
@@ -372,7 +370,7 @@ def _build_dir_index_lines(pkg_name: str, files: list[Path]) -> list[str]:
 def _build_protocols_index_lines(
     protocols: list[tuple[str, str, str | None]],
 ) -> list[str]:
-    lines: list[str] = ["# Protocol Index — src/baps", ""]
+    lines: list[str] = ["# Protocol Index — src/forge", ""]
     for name, rel, doc in protocols:
         entry = f"- **{name}** — `{rel}`"
         if doc:
@@ -440,7 +438,7 @@ def main() -> None:
         out_path = ROOT / f"CODEBASE_API_{pkg_name}.md"
         out_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         print(f"Wrote {out_path.relative_to(ROOT)}")
-        api_entries.append((out_path.name, f"public API surface for src/baps/{pkg_name}/"))
+        api_entries.append((out_path.name, f"public API surface for src/forge/{pkg_name}/"))
 
     protocols = _collect_protocols(source_files)
     proto_lines = _build_protocols_index_lines(protocols)
