@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 
 from forge.core.models import (
@@ -18,21 +19,26 @@ from forge.core.scheduler import Scheduler, SchedulerCallbacks
 
 
 def main() -> None:
-    asyncio.run(_run())
+    parser = argparse.ArgumentParser(description="Run the Forge scheduler.")
+    parser.add_argument("--northstar", required=True, help="The goal for the scheduler to work toward")
+    parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent nodes (default: 1)")
+    parser.add_argument("--verbose", action="store_true", help="Print DAG summary after run")
+    args = parser.parse_args()
+    asyncio.run(_run(northstar=args.northstar, concurrency=args.concurrency, verbose=args.verbose))
 
 
-async def _run() -> None:
+async def _run(northstar: str, concurrency: int, verbose: bool) -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
     runner.register(AgentType.WORK, stub_work_handler)
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
-    state = SchedulerState(northstar="hello world")
+    state = SchedulerState(northstar=northstar, max_concurrency=concurrency)
 
     global_planner = AgentRequest(
         agent_type=AgentType.PLAN,
         source=RequestSource.USER,
-        spec=PlanSpec(northstar="hello world"),
+        spec=PlanSpec(northstar=northstar),
         priority=Priority.HIGH,
     )
 
@@ -56,11 +62,12 @@ async def _run() -> None:
     cancelled = sum(1 for n in final.dag.values() if n.node_state.value == "cancelled")
     print(f"\nDone — completed: {completed}, failed: {failed}, cancelled: {cancelled}")
 
-    print("\nDAG summary:")
-    for node in sorted(final.dag.values(), key=lambda n: len(n.request.dependencies)):
-        short_id = str(node.request.id)[:8]
-        agent_type = node.request.agent_type.value
-        node_state = node.node_state.value
-        n_deps = len(node.request.dependencies)
-        delta = node.response.delta if node.response else None
-        print(f"  {short_id}  {agent_type:<10}  {node_state:<10}  deps={n_deps}  delta={delta}")
+    if verbose:
+        print("\nDAG summary:")
+        for node in sorted(final.dag.values(), key=lambda n: len(n.request.dependencies)):
+            short_id = str(node.request.id)[:8]
+            agent_type = node.request.agent_type.value
+            node_state = node.node_state.value
+            n_deps = len(node.request.dependencies)
+            delta = node.response.delta if node.response else None
+            print(f"  {short_id}  {agent_type:<10}  {node_state:<10}  deps={n_deps}  delta={delta}")
