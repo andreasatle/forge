@@ -47,13 +47,15 @@ def main() -> None:
 def _reset(config: ForgeConfig) -> None:
     workspace = Workspace(config.workspace)
     workspace.init()
-    workspace.reset()
+    workspace.reset([a.name for a in config.artifacts])
     print(f"workspace reset: {config.workspace}")
 
 
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     workspace = Workspace(config.workspace)
     workspace.init()
+    for artifact in config.artifacts:
+        workspace.init_artifact(artifact.name)
 
     if workspace.state_path().exists():
         print(f"resuming: {workspace.path}")
@@ -67,7 +69,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
 
-    tools = build_default_registry(workspace)
+    tools = build_default_registry(workspace, config.artifacts[0].name)
 
     runner = Runner()
     runner.register(AgentType.PLAN, make_plan_handler(registry))

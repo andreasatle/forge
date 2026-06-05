@@ -10,12 +10,12 @@ from forge.tools.file_tools import (
     read_file,
 )
 
-_ARTIFACT = "codebase"
+_ARTIFACT = "test-artifact"
 
 
 @pytest.fixture
 def workspace(tmp_path: pytest.TempPathFactory) -> Workspace:
-    """Return an initialised Workspace with a codebase artifact directory."""
+    """Return an initialised Workspace with a test-artifact directory."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     ws.init()
     ws.init_artifact(_ARTIFACT)
@@ -84,6 +84,16 @@ async def test_write_file_overwrites_existing_file(workspace: Workspace) -> None
     await tool.fn(path="f.txt", content="new")
 
     assert target.read_text() == "new"
+
+
+async def test_write_file_uses_artifact_root_not_outputs_dir(workspace: Workspace) -> None:
+    """write_file tool writes to workspace.path / artifact_name / path, not a generic outputs dir."""
+    tool = make_write_file_tool(workspace, _ARTIFACT)
+
+    await tool.fn(path="main.py", content="# code")
+
+    assert (workspace.path / _ARTIFACT / "main.py").exists()
+    assert not (workspace.path / "outputs" / "main.py").exists()
 
 
 async def test_replace_in_file_replaces_unique_occurrence(workspace: Workspace) -> None:
