@@ -1,6 +1,7 @@
 from collections.abc import Awaitable, Callable
 
 from forge.adapters.registry import AdapterRegistry
+from forge.agents.planner import plan_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -98,3 +99,12 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
         status=ResponseStatus.COMPLETED,
         follow_up=[c, b, a],
     )
+
+
+def make_plan_handler(registry: AdapterRegistry) -> Handler:
+    async def plan_handler(request: AgentRequest) -> AgentResponse:
+        if request.source == RequestSource.PLANNER:
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+        return await plan_agent(request, registry)
+
+    return plan_handler

@@ -14,8 +14,8 @@ from forge.core.models import (
 from forge.core.persistence import save_run
 from forge.core.runner import (
     Runner,
+    make_plan_handler,
     make_work_handler,
-    scripted_plan_handler,
     stub_integrate_handler,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
@@ -38,7 +38,7 @@ async def _run(northstar: str, concurrency: int, verbose: bool) -> None:
     print(f"adapters: {registry.names()}")
 
     runner = Runner()
-    runner.register(AgentType.PLAN, scripted_plan_handler)
+    runner.register(AgentType.PLAN, make_plan_handler(registry))
     runner.register(AgentType.WORK, make_work_handler(registry))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
