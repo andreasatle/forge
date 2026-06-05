@@ -12,3 +12,6 @@ wheels/
 # Generated codebase index files
 CODEBASE_*
 .claude/
+
+# Run output
+runs/

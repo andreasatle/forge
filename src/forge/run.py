@@ -1,6 +1,8 @@
 import argparse
 import asyncio
+from pathlib import Path
 
+from forge.adapters.registry import AdapterRegistry
 from forge.core.models import (
     AgentRequest,
     AgentType,
@@ -9,13 +11,16 @@ from forge.core.models import (
     RequestSource,
     SchedulerState,
 )
+from forge.core.persistence import save_run
 from forge.core.runner import (
     Runner,
+    make_work_handler,
     scripted_plan_handler,
     stub_integrate_handler,
-    stub_work_handler,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
+
+_ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
 
 
 def main() -> None:
@@ -28,9 +33,13 @@ def main() -> None:
 
 
 async def _run(northstar: str, concurrency: int, verbose: bool) -> None:
+    registry = AdapterRegistry()
+    registry.load(_ADAPTERS_DIR)
+    print(f"adapters: {registry.names()}")
+
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, stub_work_handler)
+    runner.register(AgentType.WORK, make_work_handler(registry))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar=northstar, max_concurrency=concurrency)
@@ -56,6 +65,9 @@ async def _run(northstar: str, concurrency: int, verbose: bool) -> None:
     )
 
     final = await Scheduler(runner=runner, callbacks=callbacks).run(state, global_planner)
+
+    path = save_run(final)
+    print(f"run saved: {path}")
 
     completed = sum(1 for n in final.dag.values() if n.node_state.value == "completed")
     failed = sum(1 for n in final.dag.values() if n.node_state.value == "failed")
