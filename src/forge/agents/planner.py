@@ -24,10 +24,20 @@ Respond with ONLY a JSON object in this exact format:
   ]
 }}
 
+Example task:
+{{
+  "objective": "example task",
+  "success_condition": "example done",
+  "adapter": "coding",
+  "artifact": "{first_artifact}",
+  "depends_on": []
+}}
+
 Rules:
+- EVERY task MUST include the "artifact" field — omitting it is an error
+- artifact must be one of: {artifact_names}
 - depends_on contains indices (0-based) of tasks this task depends on
 - adapter must be one of: coding, document, audit
-- artifact must be one of: {artifact_names}
 - No more than 5 tasks
 - Respond with JSON only — no explanation, no markdown
 
@@ -41,6 +51,7 @@ async def plan_agent(request: AgentRequest, registry: AdapterRegistry, artifact_
         prompt = PLAN_PROMPT.format(
             northstar=spec.northstar,
             artifact_names=", ".join(artifact_names),
+            first_artifact=artifact_names[0],
         )
         raw = await llm.chat(PLANNER_MODEL, prompt)
         return AgentResponse(
