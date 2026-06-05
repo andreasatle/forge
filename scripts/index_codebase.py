@@ -2,6 +2,7 @@
 """Generate compact markdown indexes for src/forge and tests using AST only."""
 
 import ast
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -456,6 +457,18 @@ def main() -> None:
     master_path = ROOT / "CODEBASE_INDEX.md"
     master_path.write_text("\n".join(master_lines).rstrip() + "\n", encoding="utf-8")
     print(f"Wrote {master_path.relative_to(ROOT)}")
+
+    missing = [
+        line.strip()
+        for f in sorted(ROOT.glob("CODEBASE_*.md"))
+        for line in f.read_text().splitlines()
+        if "— MISSING" in line
+    ]
+    if missing:
+        print("Insufficient docstrings — fix before continuing:", file=sys.stderr)
+        for line in missing:
+            print(f"  {line}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
