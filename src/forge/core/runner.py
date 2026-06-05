@@ -9,6 +9,7 @@ from forge.core.models import (
     AgentType,
     RequestSource,
     ResponseStatus,
+    WorkSpec,
 )
 
 Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]

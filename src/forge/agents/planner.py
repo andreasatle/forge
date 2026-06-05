@@ -1,4 +1,5 @@
 from forge.adapters.registry import AdapterRegistry
+from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, PlanSpec, ResponseStatus
 from forge.llm import client as llm
 from forge.parsers.plan import parse_plan
@@ -31,21 +32,13 @@ Goal: {northstar}
 
 
 async def plan_agent(request: AgentRequest, registry: AdapterRegistry) -> AgentResponse:
-    try:
-        if not isinstance(request.spec, PlanSpec):
-            raise TypeError(f"expected PlanSpec, got {type(request.spec).__name__}")
-        prompt = PLAN_PROMPT.format(northstar=request.spec.northstar)
+    async def build(spec: PlanSpec) -> AgentResponse:
+        prompt = PLAN_PROMPT.format(northstar=spec.northstar)
         raw = await llm.chat(PLANNER_MODEL, prompt)
-        follow_up = parse_plan(raw, registry)
         return AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            follow_up=follow_up,
+            follow_up=parse_plan(raw, registry),
         )
-    except Exception as e:
-        print(f"planner error: {type(e).__name__}: {e}")
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.FAILED,
-            error=f"{type(e).__name__}: {e}",
-        )
+
+    return await run_agent(request, PlanSpec, build)

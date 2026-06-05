@@ -1,7 +1,8 @@
-from pathlib import Path
-from uuid import uuid4
+from unittest.mock import AsyncMock
 
-from forge.adapters.registry import AdapterRegistry
+import pytest
+
+from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -22,9 +23,6 @@ from forge.core.runner import (
     stub_plan_handler,
 )
 from forge.core.scheduler import Scheduler
-
-_ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
-
 
 # --- Helpers ---
 
@@ -54,13 +52,18 @@ def _integrate_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,
-        spec=IntegrateSpec(source_request_id=uuid4()),
+        spec=IntegrateSpec(source_request_id=_work_request().id),
     )
 
 
-def _registry() -> AdapterRegistry:
+def _mock_registry() -> AdapterRegistry:
     registry = AdapterRegistry()
-    registry.load(_ADAPTERS_DIR)
+    registry._adapters["coding"] = AdapterSpec(
+        name="coding",
+        description="test",
+        tools=[],
+        prompt_template="do: {objective}",
+    )
     return registry
 
 
@@ -164,12 +167,13 @@ async def test_stub_plan_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_work_handler_includes_adapter_in_delta() -> None:
-    handler = make_work_handler(_registry())
+async def test_work_handler_includes_adapter_in_delta(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("forge.llm.client.chat", AsyncMock(return_value="ok"))
+    handler = make_work_handler(_mock_registry())
     response = await handler(_work_request())
 
     assert response.delta is not None
-    assert "coding" in str(response.delta.get("result", ""))
+    assert response.delta.get("adapter") == "coding"
 
 
 async def test_stub_integrate_handler_returns_completed() -> None:
@@ -181,7 +185,7 @@ async def test_stub_integrate_handler_returns_completed() -> None:
 async def test_runner_satisfies_agent_runner_type() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_registry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry()))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar="test northstar")
@@ -228,10 +232,11 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
     assert response.follow_up == []
 
 
+@pytest.mark.slow
 async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_registry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry()))
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())
