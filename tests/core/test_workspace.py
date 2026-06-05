@@ -22,13 +22,6 @@ def test_init_creates_workspace_directory(tmp_path: Path) -> None:
     assert ws.path.is_dir()
 
 
-def test_init_creates_outputs_dir(tmp_path: Path) -> None:
-    """init() creates the outputs subdirectory inside the workspace."""
-    ws = Workspace(tmp_path / "ws")
-    ws.init()
-    assert ws.outputs_dir().is_dir()
-
-
 def test_init_creates_logs_dir(tmp_path: Path) -> None:
     """init() creates the logs subdirectory inside the workspace."""
     ws = Workspace(tmp_path / "ws")
@@ -52,12 +45,34 @@ def test_init_raises_if_path_is_file(tmp_path: Path) -> None:
         ws.init()
 
 
+def test_artifact_dir_returns_workspace_path_slash_name(tmp_path: Path) -> None:
+    """artifact_dir() returns workspace.path / name."""
+    ws = Workspace(tmp_path / "ws")
+    assert ws.artifact_dir("codebase") == ws.path / "codebase"
+
+
+def test_init_artifact_creates_directory(tmp_path: Path) -> None:
+    """init_artifact() creates the artifact directory under the workspace."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+    assert ws.artifact_dir("codebase").is_dir()
+
+
+def test_init_artifact_is_idempotent(tmp_path: Path) -> None:
+    """Calling init_artifact() twice for the same name does not raise."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+    ws.init_artifact("codebase")  # must not raise
+
+
 def test_reset_deletes_state_json(tmp_path: Path) -> None:
     """reset() removes the state.json file if it exists."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
     ws.state_path().write_text("{}")
-    ws.reset()
+    ws.reset([])
     assert not ws.state_path().exists()
 
 
@@ -66,41 +81,47 @@ def test_reset_deletes_blackboard_json(tmp_path: Path) -> None:
     ws = Workspace(tmp_path / "ws")
     ws.init()
     ws.blackboard_path().write_text("{}")
-    ws.reset()
+    ws.reset([])
     assert not ws.blackboard_path().exists()
 
 
-def test_reset_clears_outputs_contents(tmp_path: Path) -> None:
-    """reset() removes all files inside the outputs directory."""
+def test_reset_clears_artifact_directory_contents(tmp_path: Path) -> None:
+    """reset() removes all files inside the named artifact directory."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
-    (ws.outputs_dir() / "artifact.txt").write_text("data")
-    ws.reset()
-    assert list(ws.outputs_dir().iterdir()) == []
+    ws.init_artifact("codebase")
+    (ws.artifact_dir("codebase") / "main.py").write_text("code")
+    ws.reset(["codebase"])
+    assert list(ws.artifact_dir("codebase").iterdir()) == []
 
 
-def test_reset_clears_logs_contents(tmp_path: Path) -> None:
-    """reset() removes all files inside the logs directory."""
+def test_reset_keeps_artifact_directory(tmp_path: Path) -> None:
+    """reset() preserves the artifact directory itself after clearing its contents."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
-    (ws.logs_dir() / "run.log").write_text("log")
-    ws.reset()
-    assert list(ws.logs_dir().iterdir()) == []
+    ws.init_artifact("codebase")
+    ws.reset(["codebase"])
+    assert ws.artifact_dir("codebase").is_dir()
 
 
-def test_reset_keeps_outputs_dir(tmp_path: Path) -> None:
-    """reset() preserves the outputs directory itself after clearing its contents."""
+def test_reset_handles_multiple_artifact_names(tmp_path: Path) -> None:
+    """reset() clears contents of all named artifact directories."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
-    ws.reset()
-    assert ws.outputs_dir().is_dir()
+    ws.init_artifact("codebase")
+    ws.init_artifact("docs")
+    (ws.artifact_dir("codebase") / "main.py").write_text("code")
+    (ws.artifact_dir("docs") / "readme.md").write_text("docs")
+    ws.reset(["codebase", "docs"])
+    assert list(ws.artifact_dir("codebase").iterdir()) == []
+    assert list(ws.artifact_dir("docs").iterdir()) == []
 
 
 def test_reset_keeps_logs_dir(tmp_path: Path) -> None:
     """reset() preserves the logs directory itself after clearing its contents."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
-    ws.reset()
+    ws.reset([])
     assert ws.logs_dir().is_dir()
 
 
@@ -108,7 +129,7 @@ def test_reset_does_not_delete_workspace_dir(tmp_path: Path) -> None:
     """reset() does not remove the workspace root directory."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
-    ws.reset()
+    ws.reset([])
     assert ws.path.is_dir()
 
 

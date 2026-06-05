@@ -1,30 +1,31 @@
-"""File tools for reading, writing, listing, and patching files in the workspace outputs."""
+"""File tools for reading, writing, listing, and patching files in a workspace artifact directory."""
 
 from forge.core.workspace import Workspace
 from forge.tools.registry import Tool
 
 
-async def read_file(path: str, workspace: Workspace) -> str:
-    """Read and return the contents of a file from the workspace outputs directory."""
-    file_path = workspace.outputs_dir() / path
+async def read_file(path: str, workspace: Workspace, artifact_name: str) -> str:
+    """Read and return the contents of a file from the named artifact directory."""
+    file_path = workspace.artifact_dir(artifact_name) / path
     if not file_path.exists():
         raise FileNotFoundError(f"file not found in workspace outputs: {path!r}")
     return file_path.read_text()
 
 
-async def list_files(directory: str, workspace: Workspace) -> str:
+async def list_files(directory: str, workspace: Workspace, artifact_name: str) -> str:
     """Return newline-separated relative paths of all files under directory, or 'empty'."""
-    dir_path = workspace.outputs_dir() / directory
+    root = workspace.artifact_dir(artifact_name)
+    dir_path = root / directory
     if not dir_path.exists() or not dir_path.is_dir():
         return "empty"
-    files = sorted(str(f.relative_to(workspace.outputs_dir())) for f in dir_path.rglob("*") if f.is_file())
+    files = sorted(str(f.relative_to(root)) for f in dir_path.rglob("*") if f.is_file())
     return "\n".join(files) if files else "empty"
 
 
-def make_read_file_tool(workspace: Workspace) -> Tool:
-    """Return a Tool that reads a file from the workspace outputs directory."""
+def make_read_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
+    """Return a Tool that reads a file from the named artifact directory."""
     async def fn(path: str) -> str:
-        return await read_file(path, workspace)
+        return await read_file(path, workspace, artifact_name)
 
     return Tool(
         name="read_file",
@@ -40,10 +41,10 @@ def make_read_file_tool(workspace: Workspace) -> Tool:
     )
 
 
-def make_list_files_tool(workspace: Workspace) -> Tool:
-    """Return a Tool that lists files in a directory within the workspace outputs."""
+def make_list_files_tool(workspace: Workspace, artifact_name: str) -> Tool:
+    """Return a Tool that lists files in a directory within the named artifact directory."""
     async def fn(directory: str) -> str:
-        return await list_files(directory, workspace)
+        return await list_files(directory, workspace, artifact_name)
 
     return Tool(
         name="list_files",
@@ -62,10 +63,10 @@ def make_list_files_tool(workspace: Workspace) -> Tool:
     )
 
 
-def make_write_file_tool(workspace: Workspace) -> Tool:
-    """Return a Tool that creates or overwrites a file in the workspace outputs directory."""
+def make_write_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
+    """Return a Tool that creates or overwrites a file in the named artifact directory."""
     async def write_file(path: str, content: str) -> str:
-        target = workspace.outputs_dir() / path
+        target = workspace.artifact_dir(artifact_name) / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"wrote {path}"
@@ -85,12 +86,12 @@ def make_write_file_tool(workspace: Workspace) -> Tool:
     )
 
 
-def make_replace_in_file_tool(workspace: Workspace) -> Tool:
-    """Return a Tool that surgically replaces a unique string in a workspace output file."""
+def make_replace_in_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
+    """Return a Tool that surgically replaces a unique string in a file in the named artifact directory."""
     async def replace_in_file(path: str, old: str, new: str) -> str:
         import re
 
-        target = workspace.outputs_dir() / path
+        target = workspace.artifact_dir(artifact_name) / path
         if not target.exists():
             raise FileNotFoundError(f"file not found: {path}")
         content = target.read_text(encoding="utf-8")
