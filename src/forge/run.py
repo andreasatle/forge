@@ -1,8 +1,9 @@
-import argparse
 import asyncio
+import sys
 from pathlib import Path
 
 from forge.adapters.registry import AdapterRegistry
+from forge.core.config import ForgeConfig
 from forge.core.models import (
     AgentRequest,
     AgentType,
@@ -19,35 +20,44 @@ from forge.core.runner import (
     stub_integrate_handler,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
+from forge.core.workspace import Workspace
 
 _ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Forge scheduler.")
-    parser.add_argument("--northstar", help="The goal for the scheduler to work toward")
-    parser.add_argument("--resume", type=Path, metavar="PATH", help="Path to a previous run JSON file to resume from")
-    parser.add_argument("--concurrency", type=int, default=1, help="Max concurrent nodes (default: 1)")
-    parser.add_argument("--verbose", action="store_true", help="Print DAG summary after run")
-    args = parser.parse_args()
+    if len(sys.argv) != 3 or sys.argv[1] not in ("start", "reset"):
+        print("usage: forge <start|reset> <config.yaml>")
+        sys.exit(1)
 
-    if args.northstar and args.resume:
-        parser.error("--northstar and --resume are mutually exclusive")
-    if not args.northstar and not args.resume:
-        parser.error("--northstar is required when not resuming")
+    subcommand = sys.argv[1]
+    config = ForgeConfig.load(Path(sys.argv[2]))
 
-    if args.resume:
-        print(f"resuming from: {args.resume}")
-        initial_state: SchedulerState | None = load_run(args.resume)
+    if subcommand == "reset":
+        _reset(config)
+    else:
+        asyncio.run(_start(config))
+
+
+def _reset(config: ForgeConfig) -> None:
+    workspace = Workspace(config.workspace)
+    workspace.init()
+    workspace.reset()
+    print(f"workspace reset: {config.workspace}")
+
+
+async def _start(config: ForgeConfig) -> None:
+    workspace = Workspace(config.workspace)
+    workspace.init()
+
+    if workspace.state_path().exists():
+        print(f"resuming: {workspace.path}")
+        initial_state: SchedulerState | None = load_run(workspace)
         northstar = initial_state.northstar
     else:
         initial_state = None
-        northstar = args.northstar
+        northstar = config.northstar
 
-    asyncio.run(_run(northstar=northstar, concurrency=args.concurrency, verbose=args.verbose, initial_state=initial_state))
-
-
-async def _run(northstar: str, concurrency: int, verbose: bool, initial_state: SchedulerState | None = None) -> None:
     registry = AdapterRegistry()
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
@@ -57,7 +67,7 @@ async def _run(northstar: str, concurrency: int, verbose: bool, initial_state: S
     runner.register(AgentType.WORK, make_work_handler(registry))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
-    state = initial_state or SchedulerState(northstar=northstar, max_concurrency=concurrency)
+    state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)
 
     global_planner = AgentRequest(
         agent_type=AgentType.PLAN,
@@ -81,7 +91,7 @@ async def _run(northstar: str, concurrency: int, verbose: bool, initial_state: S
 
     final = await Scheduler(runner=runner, callbacks=callbacks).run(state, global_planner)
 
-    path = save_run(final)
+    path = save_run(final, workspace)
     print(f"run saved: {path}")
 
     completed = sum(1 for n in final.dag.values() if n.node_state.value == "completed")
@@ -89,7 +99,7 @@ async def _run(northstar: str, concurrency: int, verbose: bool, initial_state: S
     cancelled = sum(1 for n in final.dag.values() if n.node_state.value == "cancelled")
     print(f"\nDone — completed: {completed}, failed: {failed}, cancelled: {cancelled}")
 
-    if verbose:
+    if config.verbose:
         print("\nDAG summary:")
         for node in sorted(final.dag.values(), key=lambda n: len(n.request.dependencies)):
             short_id = str(node.request.id)[:8]

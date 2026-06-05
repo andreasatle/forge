@@ -31,6 +31,7 @@ The core loop:
 - Scheduler tests use mock runners returning canned `AgentResponse`s
 - No test requires a running model instance
 - One logical assertion per test where possible
+- Always run pytest after all changes and fix any failures before reporting done
 
 ## What Claude Code May Do
 - Edit existing files
