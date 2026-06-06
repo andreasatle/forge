@@ -1,5 +1,6 @@
 name: zig
 package_manager: zig build
+init_command: zig init
 test_command: zig build test
 sync_command: zig build
 add_dependency_command: zig fetch {package}

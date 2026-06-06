@@ -1,5 +1,6 @@
 name: python
 package_manager: uv
+init_command: uv init --no-readme --no-workspace --name {artifact_name}
 test_command: uv run pytest
 sync_command: uv sync
 add_dependency_command: uv add {package}

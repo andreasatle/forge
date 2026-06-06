@@ -1,5 +1,6 @@
 name: rust
 package_manager: cargo
+init_command: cargo init --name {artifact_name}
 test_command: cargo test
 sync_command: cargo build
 add_dependency_command: cargo add {package}

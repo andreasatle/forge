@@ -7,12 +7,6 @@ from pathlib import Path
 
 from forge.languages.registry import LanguagePlugin
 
-_INIT_COMMANDS: dict[str, str] = {
-    "python": "uv init --no-readme --no-workspace --name {artifact_name}",
-    "rust": "cargo init",
-    "zig": "zig init",
-}
-
 
 @dataclass
 class Workspace:
@@ -54,10 +48,8 @@ class Workspace:
             return
         if any(artifact_dir.iterdir()):
             return
-        template = _INIT_COMMANDS.get(plugin.name)
-        if template is not None:
-            cmd = template.format(artifact_name=name)
-            subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
+        cmd = plugin.init_command.format(artifact_name=name)
+        subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
         subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
 
     def reset(self, artifact_names: list[str]) -> None:

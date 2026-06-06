@@ -16,6 +16,7 @@ def _make_plugin(name: str = "python") -> LanguagePlugin:
     return LanguagePlugin(
         name=name,
         package_manager="test-pm",
+        init_command="true",
         test_command="test-cmd",
         sync_command="true",
         add_dependency_command="pm add {package}",

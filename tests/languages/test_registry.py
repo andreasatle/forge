@@ -12,6 +12,7 @@ def _write_plugin(dir: Path, name: str) -> None:
     (dir / f"{name}.yaml").write_text(yaml.dump({
         "name": name,
         "package_manager": "test-pm",
+        "init_command": f"init-{name} {{artifact_name}}",
         "test_command": "test-cmd",
         "sync_command": "sync-cmd",
         "add_dependency_command": "pm add {package}",
@@ -77,11 +78,21 @@ def test_language_plugin_has_add_dependency_command(tmp_path: Path) -> None:
     assert plugin.add_dependency_command == "pm add {package}"
 
 
+def test_init_command_loaded_correctly_from_yaml(tmp_path: Path) -> None:
+    """init_command is loaded verbatim from the YAML file."""
+    _write_plugin(tmp_path, "python")
+    reg = LanguageRegistry()
+    reg.load(tmp_path)
+    plugin = reg.get("python")
+    assert plugin.init_command == "init-python {artifact_name}"
+
+
 def test_add_dependency_command_loaded_correctly_from_yaml(tmp_path: Path) -> None:
     """add_dependency_command is loaded verbatim from the YAML file."""
     (tmp_path / "custom.yaml").write_text(yaml.dump({
         "name": "custom",
         "package_manager": "custom-pm",
+        "init_command": "custom init {artifact_name}",
         "test_command": "custom-test",
         "sync_command": "custom-sync",
         "add_dependency_command": "custom install {package}",
