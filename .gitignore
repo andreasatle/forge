@@ -15,3 +15,5 @@ CODEBASE_*
 
 # Run output
 runs/
+.env
+workspaces/
