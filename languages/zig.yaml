@@ -2,6 +2,7 @@ name: zig
 package_manager: zig build
 test_command: zig build test
 sync_command: zig build
+add_dependency_command: zig fetch {package}
 project_structure:
   - build.zig
   - src/
@@ -16,3 +17,4 @@ prompt_supplement: |
   Include test steps in build.zig so `zig build test` runs all tests.
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
+  Use the add_dependency tool to fetch Zig packages.

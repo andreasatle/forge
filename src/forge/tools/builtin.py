@@ -9,10 +9,15 @@ from forge.tools.file_tools import (
     make_write_file_tool,
 )
 from forge.tools.registry import ToolRegistry
-from forge.tools.run_tools import make_run_tests_tool
+from forge.tools.run_tools import make_add_dependency_tool, make_run_tests_tool
 
 
-def build_default_registry(workspace: Workspace, artifact_name: str, test_command: str | None = None) -> ToolRegistry:
+def build_default_registry(
+    workspace: Workspace,
+    artifact_name: str,
+    test_command: str | None = None,
+    add_dependency_command: str | None = None,
+) -> ToolRegistry:
     """Create and return a ToolRegistry pre-loaded with all standard workspace tools for the given artifact."""
     registry = ToolRegistry()
     registry.register(make_read_file_tool(workspace, artifact_name))
@@ -23,4 +28,6 @@ def build_default_registry(workspace: Workspace, artifact_name: str, test_comman
     registry.register(make_write_blackboard_tool(workspace))
     if test_command is not None:
         registry.register(make_run_tests_tool(workspace, artifact_name, test_command))
+    if add_dependency_command is not None:
+        registry.register(make_add_dependency_tool(workspace, artifact_name, add_dependency_command))
     return registry

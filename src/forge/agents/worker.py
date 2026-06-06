@@ -28,7 +28,12 @@ async def work_agent(
 
     adapter = registry.get(spec.adapter)
     plugin = language_registry.get(spec.language) if spec.language else None
-    tools = build_default_registry(workspace, spec.artifact, plugin.test_command if plugin else None)
+    tools = build_default_registry(
+        workspace,
+        spec.artifact,
+        plugin.test_command if plugin else None,
+        plugin.add_dependency_command if plugin else None,
+    )
     tool_schema = tools.to_ollama_schema(adapter.tools)
     prompt = adapter.prompt_template.format(
         objective=spec.objective,

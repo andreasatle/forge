@@ -39,3 +39,42 @@ def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: 
         },
         fn=fn,
     )
+
+
+async def add_dependency(workspace: Workspace, artifact_name: str, add_dependency_command: str, package: str) -> str:
+    """Run add_dependency_command with package substituted in the artifact directory and return combined stdout+stderr."""
+    cwd = workspace.artifact_dir(artifact_name)
+    cmd = add_dependency_command.format(package=package)
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT_SECONDS)
+        return (stdout + stderr).decode(errors="replace")
+    except TimeoutError:
+        return f"add_dependency timed out after {_TIMEOUT_SECONDS} seconds"
+
+
+def make_add_dependency_tool(workspace: Workspace, artifact_name: str, add_dependency_command: str) -> Tool:
+    """Return a Tool that installs a package using add_dependency_command."""
+    async def fn(package: str) -> str:
+        return await add_dependency(workspace, artifact_name, add_dependency_command, package)
+
+    return Tool(
+        name="add_dependency",
+        description=f"Install a package using: {add_dependency_command}. Pass the package name as the argument.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "package": {
+                    "type": "string",
+                    "description": "The package name to install.",
+                },
+            },
+            "required": ["package"],
+        },
+        fn=fn,
+    )

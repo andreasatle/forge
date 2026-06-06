@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forge.core.workspace import Workspace
-from forge.tools.run_tools import make_run_tests_tool, run_tests
+from forge.tools.run_tools import (
+    make_add_dependency_tool,
+    make_run_tests_tool,
+    run_tests,
+)
 
 _ARTIFACT = "test-artifact"
 
@@ -48,3 +52,23 @@ async def test_make_run_tests_tool_returns_tool_with_correct_name(workspace: Wor
     """make_run_tests_tool returns a Tool named 'run_tests'."""
     tool = make_run_tests_tool(workspace, _ARTIFACT, "echo test")
     assert tool.name == "run_tests"
+
+
+async def test_make_add_dependency_tool_returns_tool_with_correct_name(workspace: Workspace) -> None:
+    """make_add_dependency_tool returns a Tool named 'add_dependency'."""
+    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
+    assert tool.name == "add_dependency"
+
+
+async def test_add_dependency_tool_substitutes_package_in_command(workspace: Workspace) -> None:
+    """The add_dependency tool runs the command with the package name substituted."""
+    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
+    result = await tool.fn(package="requests")
+    assert "requests" in result
+
+
+async def test_add_dependency_tool_returns_command_output(workspace: Workspace) -> None:
+    """The add_dependency tool returns combined stdout+stderr output."""
+    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo installed_{package}")
+    result = await tool.fn(package="numpy")
+    assert "installed_numpy" in result

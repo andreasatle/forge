@@ -2,6 +2,7 @@ name: rust
 package_manager: cargo
 test_command: cargo test
 sync_command: cargo build
+add_dependency_command: cargo add {package}
 project_structure:
   - Cargo.toml
   - src/
@@ -16,3 +17,4 @@ prompt_supplement: |
   Always write at least one test per public function.
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
+  Use the add_dependency tool to add crate dependencies (e.g. add_dependency("serde")).

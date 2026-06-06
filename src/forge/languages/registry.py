@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-_REQUIRED_FIELDS = ("name", "package_manager", "test_command", "sync_command", "project_structure", "prompt_supplement")
+_REQUIRED_FIELDS = ("name", "package_manager", "test_command", "sync_command", "add_dependency_command", "project_structure", "prompt_supplement")
 
 
 @dataclass
@@ -16,6 +16,7 @@ class LanguagePlugin:
     package_manager: str
     test_command: str
     sync_command: str
+    add_dependency_command: str
     project_structure: list[str]
     prompt_supplement: str
 
@@ -39,6 +40,7 @@ class LanguageRegistry:
                 package_manager=data["package_manager"],
                 test_command=data["test_command"],
                 sync_command=data["sync_command"],
+                add_dependency_command=data["add_dependency_command"],
                 project_structure=data["project_structure"],
                 prompt_supplement=data["prompt_supplement"],
             )

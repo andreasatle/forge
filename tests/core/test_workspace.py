@@ -18,6 +18,7 @@ def _make_plugin(name: str = "python") -> LanguagePlugin:
         package_manager="test-pm",
         test_command="test-cmd",
         sync_command="true",
+        add_dependency_command="pm add {package}",
         project_structure=["src/", "tests/"],
         prompt_supplement="test",
     )
