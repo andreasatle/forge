@@ -1,4 +1,17 @@
-"""LLM provider Protocol and implementations for Ollama, Claude, and OpenAI."""
+"""LLM provider Protocol and implementations for Ollama, Claude, and OpenAI.
+
+Canonical message format (OpenAI) — used everywhere outside providers:
+  User:        {"role": "user", "content": "..."}
+  Assistant:   {"role": "assistant", "content": "..."}
+  Asst+tools:  {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "...", "type": "function",
+                     "function": {"name": "...", "arguments": "..."}}]}
+  Tool result: {"role": "tool", "tool_call_id": "...", "content": "..."}
+
+Each provider converts canonical → its own wire format before sending and
+converts its wire response → canonical before returning. No conversion happens
+outside of providers.
+"""
 
 import json
 from dataclasses import dataclass
@@ -22,7 +35,80 @@ class LLMProvider(Protocol):
     async def chat_with_tools(
         self, messages: list[dict], tools: list[dict], max_tokens: int
     ) -> tuple[str | None, list[dict]]:
-        """Send a multi-turn conversation with tools; return (text, []) or (None, tool_calls)."""
+        """Send canonical messages with tools; return (text, []) or (None, canonical_tool_calls)."""
+
+
+# --- Ollama wire-format helpers ---
+
+
+def _canonical_to_ollama_messages(messages: list[dict]) -> list[dict]:
+    """Convert canonical (OpenAI) messages to Ollama wire format."""
+    result = []
+    id_to_name: dict[str, str] = {}
+    for m in messages:
+        role = m["role"]
+        if role == "user":
+            result.append({"role": "user", "content": m.get("content", "")})
+        elif role == "assistant" and "tool_calls" not in m:
+            result.append({"role": "assistant", "content": m.get("content") or ""})
+        elif role == "assistant" and "tool_calls" in m:
+            ollama_calls = []
+            for tc in m["tool_calls"]:
+                fn = tc["function"]
+                id_to_name[tc["id"]] = fn["name"]
+                args = json.loads(fn["arguments"]) if isinstance(fn["arguments"], str) else fn["arguments"]
+                ollama_calls.append({"function": {"name": fn["name"], "arguments": args}})
+            result.append({"role": "assistant", "content": "", "tool_calls": ollama_calls})
+        elif role == "tool":
+            name = id_to_name.get(m["tool_call_id"], m["tool_call_id"])
+            result.append({"role": "tool", "name": name, "content": m.get("content", "")})
+    return result
+
+
+# --- Claude wire-format helpers ---
+
+
+def _tools_to_claude_schema(tools: list[dict]) -> list[dict]:
+    """Convert OpenAI-format tool schemas to Claude tool schema format."""
+    result = []
+    for t in tools:
+        fn = t.get("function", t)
+        result.append({
+            "name": fn["name"],
+            "description": fn.get("description", ""),
+            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+        })
+    return result
+
+
+def _canonical_to_claude_messages(messages: list[dict]) -> list[dict]:
+    """Convert canonical (OpenAI) messages to Claude API wire format."""
+    result = []
+    for m in messages:
+        role = m["role"]
+        if role == "user":
+            result.append({"role": "user", "content": m.get("content", "")})
+        elif role == "assistant" and "tool_calls" not in m:
+            result.append({"role": "assistant", "content": m.get("content") or ""})
+        elif role == "assistant" and "tool_calls" in m:
+            content = []
+            for tc in m["tool_calls"]:
+                fn = tc["function"]
+                args = json.loads(fn["arguments"]) if isinstance(fn["arguments"], str) else fn["arguments"]
+                content.append({"type": "tool_use", "id": tc["id"], "name": fn["name"], "input": args})
+            result.append({"role": "assistant", "content": content})
+        elif role == "tool":
+            result.append({
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": m["tool_call_id"], "content": m.get("content", "")}],
+            })
+    return result
+
+
+def _sanitize_args(raw: dict | str) -> str:
+    """Strip trailing '=' from argument keys and return a JSON string."""
+    d = json.loads(raw) if isinstance(raw, str) else raw
+    return json.dumps({k.rstrip("="): v for k, v in d.items()})
 
 
 @dataclass
@@ -46,7 +132,6 @@ class OllamaProvider:
         data = response.json()
         content = data.get("message", {}).get("content", "")
         if not content or not content.strip():
-            print(f"[debug] chat: empty content in response: {data!r}")
             raise ValueError(f"empty content in Ollama response: {data!r}")
         return content.strip()
 
@@ -55,7 +140,7 @@ class OllamaProvider:
     ) -> tuple[str | None, list[dict]]:
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": _canonical_to_ollama_messages(messages),
             "tools": tools,
             "stream": False,
             "options": {"num_predict": max_tokens},
@@ -68,54 +153,20 @@ class OllamaProvider:
         tool_calls_raw = message.get("tool_calls")
         if tool_calls_raw:
             return None, [
-                {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}
-                for tc in tool_calls_raw
+                {
+                    "id": f"call_{tc['function']['name']}_{i}",
+                    "type": "function",
+                    "function": {
+                        "name": tc["function"]["name"],
+                        "arguments": _sanitize_args(tc["function"]["arguments"]),
+                    },
+                }
+                for i, tc in enumerate(tool_calls_raw)
             ]
         content = message.get("content", "")
         if not content or not content.strip():
             raise ValueError(f"empty content in Ollama response: {data!r}")
         return content.strip(), []
-
-
-def _tools_to_claude_schema(tools: list[dict]) -> list[dict]:
-    """Convert Ollama/OpenAI tool schema to Claude tool schema format."""
-    result = []
-    for t in tools:
-        fn = t.get("function", t)
-        result.append({
-            "name": fn["name"],
-            "description": fn.get("description", ""),
-            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-        })
-    return result
-
-
-def _messages_to_claude(messages: list[dict]) -> list[dict]:
-    """Convert Ollama-format message history to Claude API format."""
-    result = []
-    for m in messages:
-        role = m["role"]
-        if role in ("user", "assistant") and "tool_calls" not in m:
-            result.append({"role": role, "content": m.get("content", "")})
-        elif role == "assistant" and "tool_calls" in m:
-            content = [
-                {
-                    "type": "tool_use",
-                    "id": f"tu_{i}",
-                    "name": tc["function"]["name"],
-                    "input": tc["function"]["arguments"]
-                    if isinstance(tc["function"]["arguments"], dict)
-                    else {},
-                }
-                for i, tc in enumerate(m["tool_calls"])
-            ]
-            result.append({"role": "assistant", "content": content})
-        elif role == "tool":
-            result.append({
-                "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": "tu_0", "content": m.get("content", "")}],
-            })
-    return result
 
 
 @dataclass
@@ -159,7 +210,7 @@ class ClaudeProvider:
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "messages": _messages_to_claude(messages),
+            "messages": _canonical_to_claude_messages(messages),
             "tools": _tools_to_claude_schema(tools),
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -168,7 +219,17 @@ class ClaudeProvider:
         data = response.json()
         tool_uses = [b for b in data.get("content", []) if b.get("type") == "tool_use"]
         if tool_uses:
-            return None, [{"name": b["name"], "arguments": b["input"]} for b in tool_uses]
+            return None, [
+                {
+                    "id": tu["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tu["name"],
+                        "arguments": _sanitize_args(tu["input"]),
+                    },
+                }
+                for tu in tool_uses
+            ]
         text = next(
             (b["text"] for b in data.get("content", []) if b.get("type") == "text"), ""
         )
@@ -215,7 +276,7 @@ class OpenAIProvider:
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "messages": messages,
+            "messages": messages,  # canonical IS OpenAI format — no conversion needed
             "tools": openai_tools,
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -227,10 +288,12 @@ class OpenAIProvider:
         if tool_calls_raw:
             return None, [
                 {
-                    "name": tc["function"]["name"],
-                    "arguments": json.loads(tc["function"]["arguments"])
-                    if isinstance(tc["function"]["arguments"], str)
-                    else tc["function"]["arguments"],
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["function"]["name"],
+                        "arguments": _sanitize_args(tc["function"]["arguments"]),
+                    },
                 }
                 for tc in tool_calls_raw
             ]

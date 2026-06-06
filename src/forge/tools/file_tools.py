@@ -66,7 +66,11 @@ def make_list_files_tool(workspace: Workspace, artifact_name: str) -> Tool:
 def make_write_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
     """Return a Tool that creates or overwrites a file in the named artifact directory."""
     async def write_file(path: str, content: str) -> str:
+        if path.endswith("/"):
+            return f"skipped: {path} is a directory"
         target = workspace.artifact_dir(artifact_name) / path
+        if target.exists() and target.is_dir():
+            return f"skipped: {path} is a directory"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"wrote {path}"

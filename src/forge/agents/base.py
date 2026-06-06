@@ -1,5 +1,6 @@
 """Base agent runner — universal engine with retry, tool loop, and error handling."""
 
+import json
 from collections.abc import Callable
 from typing import TypeVar
 
@@ -102,18 +103,14 @@ async def _run_tool_loop(
                 status=ResponseStatus.COMPLETED,
                 delta={"result": text},
             )
-        messages.append({
-            "role": "assistant",
-            "content": "",
-            "tool_calls": [
-                {"function": {"name": c["name"], "arguments": c["arguments"]}}
-                for c in tool_calls
-            ],
-        })
+        messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
         for call in tool_calls:
-            tool = tools.get(call["name"])
-            result = await tool.fn(**call["arguments"])
-            messages.append({"role": "tool", "content": result, "name": call["name"]})
+            name = call["function"]["name"]
+            args = json.loads(call["function"]["arguments"])
+            print(f"[debug] tool call: {name!r} args={args!r}")
+            tool = tools.get(name)
+            result = await tool.fn(**args)
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
 
     raise RuntimeError(
         f"agentic loop exceeded {_MAX_TOOL_ITERATIONS} iterations without a final response"

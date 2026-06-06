@@ -131,3 +131,22 @@ async def test_replace_in_file_fails_on_missing_file(workspace: Workspace) -> No
 
     with pytest.raises(FileNotFoundError, match="file not found"):
         await tool.fn(path="no_such.txt", old="x", new="y")
+
+
+async def test_write_file_skips_trailing_slash_path(workspace: Workspace) -> None:
+    """write_file tool returns a skip message when path ends with '/' (directory path)."""
+    tool = make_write_file_tool(workspace, _ARTIFACT)
+
+    result = await tool.fn(path="src/", content="# code")
+
+    assert result == "skipped: src/ is a directory"
+
+
+async def test_write_file_skips_existing_directory(workspace: Workspace) -> None:
+    """write_file tool returns a skip message when path resolves to an existing directory."""
+    (workspace.artifact_dir(_ARTIFACT) / "src").mkdir()
+    tool = make_write_file_tool(workspace, _ARTIFACT)
+
+    result = await tool.fn(path="src", content="# code")
+
+    assert result == "skipped: src is a directory"

@@ -9,6 +9,10 @@ project_structure:
   - src/
   - tests/
 prompt_supplement: |
+  Always call run_tests before making any changes to understand the current state.
+  Always call run_tests after every file change to verify progress.
+  Never rewrite the same file more than once without calling run_tests in between.
+  If run_tests fails, read the error output carefully and fix the specific error before trying anything else.
   Always place source code under src/.
   Always write tests under tests/.
   Always include a Cargo.toml declaring dependencies.

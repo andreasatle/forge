@@ -1,5 +1,6 @@
 """Tests for LLM provider implementations and the make_provider factory."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,28 @@ def _mock_http_response(data: dict) -> MagicMock:
     resp.raise_for_status = MagicMock()
     resp.json.return_value = data
     return resp
+
+
+# Canonical assistant tool call used across provider wire-format tests.
+_CANONICAL_MESSAGES = [
+    {"role": "user", "content": "go"},
+    {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_read_0",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": '{"path": "/tmp/x"}'},
+            }
+        ],
+    },
+    {"role": "tool", "tool_call_id": "call_read_0", "content": "file contents"},
+]
+
+_TOOLS = [
+    {"type": "function", "function": {"name": "read_file", "description": "reads a file", "parameters": {}}}
+]
 
 
 # --- make_provider factory ---
@@ -94,26 +117,62 @@ async def test_ollama_provider_chat_formats_request_correctly() -> None:
     assert payload["messages"][0] == {"role": "user", "content": "say hello"}
 
 
-async def test_ollama_provider_chat_with_tools_formats_request_correctly() -> None:
-    """OllamaProvider.chat_with_tools sends tools and messages to the Ollama REST API."""
+async def test_ollama_provider_chat_with_tools_converts_canonical_to_ollama_wire() -> None:
+    """OllamaProvider converts canonical messages to Ollama wire format before sending."""
     provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
     captured: list[dict] = []
 
     async def fake_post(url: str, **kwargs: object) -> MagicMock:
-        captured.append({"url": url, "json": kwargs.get("json")})
+        captured.append(kwargs.get("json"))
         return _mock_http_response({"message": {"content": "done"}})
 
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
-        text, calls = await provider.chat_with_tools(
-            [{"role": "user", "content": "go"}], [{"type": "function", "function": {"name": "fn"}}], 512
-        )
+        await provider.chat_with_tools(_CANONICAL_MESSAGES, _TOOLS, 512)
 
-    assert text == "done"
-    assert calls == []
-    payload = captured[0]["json"]
-    assert payload["model"] == "gemma4:e4b"
-    assert payload["stream"] is False
+    sent = captured[0]["messages"]
+    # user message unchanged
+    assert sent[0] == {"role": "user", "content": "go"}
+    # assistant tool call: no id/type, arguments is a dict
+    asst = sent[1]
+    assert asst["role"] == "assistant"
+    tc = asst["tool_calls"][0]
+    assert "id" not in tc
+    assert "type" not in tc
+    assert tc["function"]["name"] == "read_file"
+    assert isinstance(tc["function"]["arguments"], dict)
+    assert tc["function"]["arguments"] == {"path": "/tmp/x"}
+    # tool result: uses name instead of tool_call_id
+    tool_msg = sent[2]
+    assert tool_msg["role"] == "tool"
+    assert "tool_call_id" not in tool_msg
+    assert tool_msg["name"] == "read_file"
+    assert tool_msg["content"] == "file contents"
+
+
+async def test_ollama_provider_chat_with_tools_returns_canonical_tool_calls() -> None:
+    """OllamaProvider converts Ollama tool_calls response to canonical format."""
+    provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
+    ollama_response = {
+        "message": {
+            "tool_calls": [{"function": {"name": "write_file", "arguments": {"path": "/out", "content": "hi"}}}]
+        }
+    }
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_http_response(ollama_response)
+        )
+        text, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 512)
+
+    assert text is None
+    assert len(tool_calls) == 1
+    tc = tool_calls[0]
+    assert tc["id"].startswith("call_")
+    assert tc["type"] == "function"
+    assert tc["function"]["name"] == "write_file"
+    assert isinstance(tc["function"]["arguments"], str)
+    assert json.loads(tc["function"]["arguments"]) == {"path": "/out", "content": "hi"}
 
 
 # --- ClaudeProvider ---
@@ -154,6 +213,62 @@ async def test_claude_provider_chat_raises_on_empty_response() -> None:
             await provider.chat("hello", 1024)
 
 
+async def test_claude_provider_chat_with_tools_converts_canonical_to_claude_wire() -> None:
+    """ClaudeProvider converts canonical messages to Claude API wire format before sending."""
+    provider = ClaudeProvider(model="claude-sonnet-4-20250514", api_key="sk-test", max_tokens=1024)
+    captured: list[dict] = []
+
+    async def fake_post(url: str, **kwargs: object) -> MagicMock:
+        captured.append(kwargs.get("json"))
+        return _mock_http_response({"content": [{"type": "text", "text": "done"}]})
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
+        await provider.chat_with_tools(_CANONICAL_MESSAGES, _TOOLS, 1024)
+
+    sent = captured[0]["messages"]
+    # user message unchanged
+    assert sent[0] == {"role": "user", "content": "go"}
+    # assistant tool call becomes tool_use content block
+    asst = sent[1]
+    assert asst["role"] == "assistant"
+    tu = asst["content"][0]
+    assert tu["type"] == "tool_use"
+    assert tu["id"] == "call_read_0"
+    assert tu["name"] == "read_file"
+    assert tu["input"] == {"path": "/tmp/x"}
+    # tool result becomes user message with tool_result block
+    tool_msg = sent[2]
+    assert tool_msg["role"] == "user"
+    tr = tool_msg["content"][0]
+    assert tr["type"] == "tool_result"
+    assert tr["tool_use_id"] == "call_read_0"
+    assert tr["content"] == "file contents"
+
+
+async def test_claude_provider_chat_with_tools_returns_canonical_tool_calls() -> None:
+    """ClaudeProvider converts Claude tool_use response to canonical format."""
+    provider = ClaudeProvider(model="claude-sonnet-4-20250514", api_key="sk-test", max_tokens=1024)
+    claude_response = {
+        "content": [{"type": "tool_use", "id": "toolu_abc123", "name": "write_file", "input": {"path": "/out"}}]
+    }
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_http_response(claude_response)
+        )
+        text, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 1024)
+
+    assert text is None
+    assert len(tool_calls) == 1
+    tc = tool_calls[0]
+    assert tc["id"] == "toolu_abc123"
+    assert tc["type"] == "function"
+    assert tc["function"]["name"] == "write_file"
+    assert isinstance(tc["function"]["arguments"], str)
+    assert json.loads(tc["function"]["arguments"]) == {"path": "/out"}
+
+
 # --- OpenAIProvider ---
 
 
@@ -191,3 +306,103 @@ async def test_openai_provider_chat_raises_on_empty_response() -> None:
         )
         with pytest.raises(ValueError, match="empty content"):
             await provider.chat("question", 2048)
+
+
+async def test_openai_provider_chat_with_tools_passes_canonical_messages_through() -> None:
+    """OpenAIProvider sends canonical messages unchanged — canonical IS OpenAI format."""
+    provider = OpenAIProvider(model="gpt-4o", api_key="sk-test", max_tokens=2048)
+    captured: list[dict] = []
+
+    async def fake_post(url: str, **kwargs: object) -> MagicMock:
+        captured.append(kwargs.get("json"))
+        return _mock_http_response({"choices": [{"message": {"content": "done", "role": "assistant"}}]})
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
+        await provider.chat_with_tools(_CANONICAL_MESSAGES, _TOOLS, 2048)
+
+    assert captured[0]["messages"] is _CANONICAL_MESSAGES
+
+
+async def test_openai_provider_chat_with_tools_returns_canonical_tool_calls() -> None:
+    """OpenAIProvider returns OpenAI tool_calls response in canonical format."""
+    provider = OpenAIProvider(model="gpt-4o", api_key="sk-test", max_tokens=2048)
+    openai_response = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_xyz", "type": "function", "function": {"name": "write_file", "arguments": '{"path": "/out"}'}}],
+            }
+        }]
+    }
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_http_response(openai_response)
+        )
+        text, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 2048)
+
+    assert text is None
+    assert len(tool_calls) == 1
+    tc = tool_calls[0]
+    assert tc["id"] == "call_xyz"
+    assert tc["type"] == "function"
+    assert tc["function"]["name"] == "write_file"
+    assert json.loads(tc["function"]["arguments"]) == {"path": "/out"}
+
+
+async def test_ollama_provider_sanitizes_trailing_equals_in_argument_keys() -> None:
+    """OllamaProvider strips trailing '=' from argument key names returned by the model."""
+    provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
+    ollama_response = {
+        "message": {
+            "tool_calls": [{"function": {"name": "write_file", "arguments": {"path=": "/out", "content=": "hi"}}}]
+        }
+    }
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_http_response(ollama_response)
+        )
+        _, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 512)
+
+    assert json.loads(tool_calls[0]["function"]["arguments"]) == {"path": "/out", "content": "hi"}
+
+
+async def test_claude_provider_sanitizes_trailing_equals_in_argument_keys() -> None:
+    """ClaudeProvider strips trailing '=' from argument key names returned by the model."""
+    provider = ClaudeProvider(model="claude-sonnet-4-20250514", api_key="sk-test", max_tokens=1024)
+    claude_response = {
+        "content": [{"type": "tool_use", "id": "tu_0", "name": "write_file", "input": {"path=": "/out", "content=": "hi"}}]
+    }
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_http_response(claude_response)
+        )
+        _, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 1024)
+
+    assert json.loads(tool_calls[0]["function"]["arguments"]) == {"path": "/out", "content": "hi"}
+
+
+async def test_openai_provider_sanitizes_trailing_equals_in_argument_keys() -> None:
+    """OpenAIProvider strips trailing '=' from argument key names returned by the model."""
+    provider = OpenAIProvider(model="gpt-4o", api_key="sk-test", max_tokens=2048)
+    openai_response = {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call_0", "type": "function", "function": {"name": "write_file", "arguments": '{"path=": "/out", "content=": "hi"}'}}],
+            }
+        }]
+    }
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_http_response(openai_response)
+        )
+        _, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 2048)
+
+    assert json.loads(tool_calls[0]["function"]["arguments"]) == {"path": "/out", "content": "hi"}

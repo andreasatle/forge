@@ -69,7 +69,7 @@ async def test_run_agent_tool_loop_executes_and_feeds_back():
 
     provider = _mock_provider()
     provider.chat_with_tools = AsyncMock(side_effect=[
-        (None, [{"name": "do_thing", "arguments": {}}]),
+        (None, [{"id": "call_do_thing_0", "type": "function", "function": {"name": "do_thing", "arguments": "{}"}}]),
         ("final answer", []),
     ])
 
