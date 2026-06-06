@@ -71,6 +71,7 @@ class WorkSpec(BaseModel):
     target_entity: str | None = None
     adapter: str
     artifact: str
+    language: str | None = None
 
 
 class IntegrateSpec(BaseModel):

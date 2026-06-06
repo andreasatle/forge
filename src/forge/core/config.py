@@ -8,10 +8,11 @@ import yaml
 
 @dataclass
 class ArtifactConfig:
-    """Named artifact with a type declared in forge.yaml."""
+    """Named artifact with a type and optional language declared in forge.yaml."""
 
     name: str
     type: str  # "coding" | "document" | "audit"
+    language: str | None = None
 
 
 @dataclass
@@ -34,10 +35,19 @@ class ForgeConfig:
             raise ValueError("ForgeConfig: missing required field 'workspace'")
         if "artifacts" not in data or not data["artifacts"]:
             raise ValueError("artifacts is required — declare at least one artifact in forge.yaml")
+        artifacts = [
+            ArtifactConfig(name=a["name"], type=a["type"], language=a.get("language"))
+            for a in data["artifacts"]
+        ]
+        for artifact in artifacts:
+            if artifact.type == "coding" and not artifact.language:
+                raise ValueError(
+                    f"artifact '{artifact.name}' has type 'coding' but no language declared"
+                )
         return ForgeConfig(
             northstar=data["northstar"],
             workspace=Path(data["workspace"]).resolve(),
-            artifacts=[ArtifactConfig(name=a["name"], type=a["type"]) for a in data["artifacts"]],
+            artifacts=artifacts,
             concurrency=data.get("concurrency", 1),
             verbose=data.get("verbose", False),
         )

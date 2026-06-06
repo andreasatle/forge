@@ -13,7 +13,7 @@ def _write_yaml(tmp_path: Path, content: str) -> Path:
     return p
 
 
-_ARTIFACTS_YAML = "artifacts:\n  - name: codebase\n    type: coding\n"
+_ARTIFACTS_YAML = "artifacts:\n  - name: codebase\n    type: coding\n    language: python\n"
 
 
 def test_load_parses_valid_yaml(tmp_path: Path) -> None:
@@ -61,12 +61,13 @@ def test_load_parses_artifacts_list(tmp_path: Path) -> None:
     """load() parses multiple artifacts into ArtifactConfig instances."""
     p = _write_yaml(
         tmp_path,
-        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: codebase\n    type: coding\n  - name: docs\n    type: document\n",
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: codebase\n    type: coding\n    language: python\n  - name: docs\n    type: document\n",
     )
     config = ForgeConfig.load(p)
     assert len(config.artifacts) == 2
     assert config.artifacts[0].name == "codebase"
     assert config.artifacts[0].type == "coding"
+    assert config.artifacts[0].language == "python"
     assert config.artifacts[1].name == "docs"
     assert config.artifacts[1].type == "document"
 
@@ -90,3 +91,30 @@ def test_artifact_config_has_name_and_type_fields() -> None:
     artifact = ArtifactConfig(name="codebase", type="coding")
     assert artifact.name == "codebase"
     assert artifact.type == "coding"
+
+
+def test_coding_artifact_without_language_raises(tmp_path: Path) -> None:
+    """load() raises ValueError when a coding artifact has no language declared."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: codebase\n    type: coding\n",
+    )
+    with pytest.raises(ValueError, match="artifact 'codebase' has type 'coding' but no language declared"):
+        ForgeConfig.load(p)
+
+
+def test_non_coding_artifact_without_language_is_valid(tmp_path: Path) -> None:
+    """load() succeeds when a non-coding artifact has no language declared."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: docs\n    type: document\n",
+    )
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].language is None
+
+
+def test_language_is_parsed_correctly_from_yaml(tmp_path: Path) -> None:
+    """load() sets language on ArtifactConfig when declared in YAML."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].language == "python"

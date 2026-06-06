@@ -4,13 +4,19 @@ from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, ResponseStatus, WorkSpec
 from forge.core.workspace import Workspace
+from forge.languages.registry import LanguageRegistry
 from forge.llm import client as llm
 from forge.tools.builtin import build_default_registry
 
 WORK_MODEL = "gemma4:e4b"
 
 
-async def work_agent(request: AgentRequest, registry: AdapterRegistry, workspace: Workspace) -> AgentResponse:
+async def work_agent(
+    request: AgentRequest,
+    registry: AdapterRegistry,
+    workspace: Workspace,
+    language_registry: LanguageRegistry,
+) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     async def build(spec: WorkSpec) -> AgentResponse:
         adapter = registry.get(spec.adapter)
@@ -20,6 +26,10 @@ async def work_agent(request: AgentRequest, registry: AdapterRegistry, workspace
             objective=spec.objective,
             success_condition=spec.success_condition,
         )
+
+        if spec.language:
+            plugin = language_registry.get(spec.language)
+            prompt += f"\n\n{plugin.prompt_supplement}"
 
         messages: list[dict] = [{"role": "user", "content": prompt}]  # type: ignore[type-arg]
         files: dict[str, str] = {}

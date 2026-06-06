@@ -39,6 +39,7 @@ def parse_plan(response: str, registry: AdapterRegistry) -> list[AgentRequest]:
                     success_condition=task["success_condition"],
                     adapter=adapter,
                     artifact=artifact,
+                    language=task.get("language"),
                 ),
             )
         )

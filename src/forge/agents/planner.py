@@ -19,6 +19,7 @@ Respond with ONLY a JSON object in this exact format:
       "success_condition": "how to know this task is done",
       "adapter": "coding|document|audit",
       "artifact": "name of the artifact this task writes to",
+      "language": "language name for coding tasks, or null for non-coding tasks",
       "depends_on": []
     }}
   ]
@@ -30,8 +31,14 @@ Example task:
   "success_condition": "example done",
   "adapter": "coding",
   "artifact": "{first_artifact}",
+  "language": "python",
   "depends_on": []
 }}
+
+Available artifacts and their languages:
+{artifact_language_list}
+
+Each coding task must declare the correct language for its artifact.
 
 Rules:
 - EVERY task MUST include the "artifact" field — omitting it is an error
@@ -45,13 +52,22 @@ Goal: {northstar}
 """
 
 
-async def plan_agent(request: AgentRequest, registry: AdapterRegistry, artifact_names: list[str]) -> AgentResponse:
+async def plan_agent(
+    request: AgentRequest,
+    registry: AdapterRegistry,
+    artifact_names: list[str],
+    artifact_languages: dict[str, str],
+) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     async def build(spec: PlanSpec) -> AgentResponse:
+        artifact_language_list = "\n".join(
+            f"  {name}: {lang}" for name, lang in artifact_languages.items()
+        ) or "  (no languages declared)"
         prompt = PLAN_PROMPT.format(
             northstar=spec.northstar,
             artifact_names=", ".join(artifact_names),
             first_artifact=artifact_names[0],
+            artifact_language_list=artifact_language_list,
         )
         raw = await llm.chat(PLANNER_MODEL, prompt)
         return AgentResponse(

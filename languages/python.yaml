@@ -1,0 +1,12 @@
+name: python
+package_manager: uv
+test_command: uv run pytest
+project_structure:
+  - pyproject.toml
+  - src/
+  - tests/
+prompt_supplement: |
+  Always place source code under src/.
+  Always write tests under tests/ using pytest.
+  Always include a pyproject.toml declaring dependencies and requiring Python >=3.12.
+  Use uv as the package manager — never requirements.txt.

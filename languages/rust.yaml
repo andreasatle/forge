@@ -1,0 +1,12 @@
+name: rust
+package_manager: cargo
+test_command: cargo test
+project_structure:
+  - Cargo.toml
+  - src/
+  - tests/
+prompt_supplement: |
+  Always place source code under src/.
+  Always write tests under tests/.
+  Always include a Cargo.toml declaring dependencies.
+  Use cargo as the package manager.

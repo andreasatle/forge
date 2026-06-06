@@ -23,8 +23,10 @@ from forge.core.runner import (
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.workspace import Workspace
+from forge.languages.registry import LanguageRegistry
 
 _ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
+_LANGUAGES_DIR = Path(__file__).parent.parent.parent / "languages"
 
 
 def main() -> None:
@@ -52,6 +54,7 @@ def _reset(config: ForgeConfig) -> None:
 
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     artifact_names = [a.name for a in config.artifacts]
+    artifact_languages = {a.name: a.language for a in config.artifacts if a.language}
 
     workspace = Workspace(config.workspace)
     workspace.init()
@@ -70,9 +73,13 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
 
+    language_registry = LanguageRegistry()
+    language_registry.load(_LANGUAGES_DIR)
+    print(f"languages: {language_registry.names()}")
+
     runner = Runner()
-    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names))
-    runner.register(AgentType.WORK, make_work_handler(registry, workspace))
+    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages))
+    runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)

@@ -1,0 +1,12 @@
+name: zig
+package_manager: zig build
+test_command: zig build test
+project_structure:
+  - build.zig
+  - src/
+  - tests/
+prompt_supplement: |
+  Always place source code under src/.
+  Always write tests under tests/.
+  Always include a build.zig build file.
+  Use zig build as the build tool.
