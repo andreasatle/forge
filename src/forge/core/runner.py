@@ -118,11 +118,12 @@ def make_plan_handler(
     registry: AdapterRegistry,
     artifact_names: list[str],
     artifact_languages: dict[str, str],
+    max_retries: int = 3,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
     async def plan_handler(request: AgentRequest) -> AgentResponse:
         if request.source == RequestSource.PLANNER:
             return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
-        return await plan_agent(request, registry, artifact_names, artifact_languages)
+        return await plan_agent(request, registry, artifact_names, artifact_languages, max_retries)
 
     return plan_handler

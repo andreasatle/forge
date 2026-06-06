@@ -2,6 +2,7 @@ northstar: "build a web scraper in Python"
 workspace: ./workspaces/scraper
 concurrency: 1
 verbose: false
+max_retries: 3
 artifacts:
   - name: codebase
     type: coding

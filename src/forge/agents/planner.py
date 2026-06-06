@@ -8,6 +8,18 @@ from forge.parsers.plan import parse_plan
 
 PLANNER_MODEL = "gemma4:e4b"
 
+CORRECTION_PROMPT = """
+Your previous response could not be parsed. Error: {error}
+
+Your previous response was:
+{bad_response}
+
+Original instructions:
+{original_prompt}
+
+Fix the error and return corrected JSON only — no explanation, no markdown.
+"""
+
 PLAN_PROMPT = """
 You are a planning agent. Given a goal, decompose it into at most 5 concrete tasks.
 
@@ -57,6 +69,7 @@ async def plan_agent(
     registry: AdapterRegistry,
     artifact_names: list[str],
     artifact_languages: dict[str, str],
+    max_retries: int = 3,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     async def build(spec: PlanSpec) -> AgentResponse:
@@ -69,11 +82,32 @@ async def plan_agent(
             first_artifact=artifact_names[0],
             artifact_language_list=artifact_language_list,
         )
-        raw = await llm.chat(PLANNER_MODEL, prompt)
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            follow_up=parse_plan(raw, registry),
+        last_error: Exception | None = None
+        bad_response: str | None = None
+
+        for attempt in range(1, max_retries + 1):
+            if attempt == 1:
+                current_prompt = prompt
+            else:
+                print(f"  planner retry {attempt - 1}/{max_retries - 1}: {last_error}")
+                current_prompt = CORRECTION_PROMPT.format(
+                    original_prompt=prompt,
+                    bad_response=bad_response,
+                    error=last_error,
+                )
+            try:
+                bad_response = await llm.chat(PLANNER_MODEL, current_prompt)
+                follow_up = parse_plan(bad_response, registry)
+                return AgentResponse(
+                    request_id=request.id,
+                    status=ResponseStatus.COMPLETED,
+                    follow_up=follow_up,
+                )
+            except Exception as e:
+                last_error = e
+
+        raise RuntimeError(
+            f"planner failed after {max_retries} attempts. Last error: {last_error}"
         )
 
     return await run_agent(request, PlanSpec, build)

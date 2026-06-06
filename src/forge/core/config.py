@@ -24,6 +24,7 @@ class ForgeConfig:
     artifacts: list[ArtifactConfig]
     concurrency: int = 1
     verbose: bool = False
+    max_retries: int = 3
 
     @staticmethod
     def load(path: Path) -> "ForgeConfig":
@@ -50,4 +51,5 @@ class ForgeConfig:
             artifacts=artifacts,
             concurrency=data.get("concurrency", 1),
             verbose=data.get("verbose", False),
+            max_retries=data.get("max_retries", 3),
         )

@@ -10,3 +10,6 @@ prompt_supplement: |
   Always write tests under tests/.
   Always include a Cargo.toml declaring dependencies.
   Use cargo as the package manager.
+  Always include dev-dependencies in Cargo.toml for testing utilities if needed.
+  The built-in #[cfg(test)] module is sufficient for unit tests — always use it.
+  Always write at least one test per public function.

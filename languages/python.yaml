@@ -10,3 +10,9 @@ prompt_supplement: |
   Always write tests under tests/ using pytest.
   Always include a pyproject.toml declaring dependencies and requiring Python >=3.12.
   Use uv as the package manager — never requirements.txt.
+  Always include pytest as a dev dependency in pyproject.toml:
+    [project.optional-dependencies]
+    dev = ["pytest"]
+  Always add a [tool.pytest.ini_options] section:
+    [tool.pytest.ini_options]
+    testpaths = ["tests"]

@@ -118,3 +118,17 @@ def test_language_is_parsed_correctly_from_yaml(tmp_path: Path) -> None:
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
     assert config.artifacts[0].language == "python"
+
+
+def test_max_retries_defaults_to_three(tmp_path: Path) -> None:
+    """load() defaults max_retries to 3 when not present in YAML."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.max_retries == 3
+
+
+def test_max_retries_parsed_from_yaml(tmp_path: Path) -> None:
+    """load() reads max_retries from YAML when explicitly declared."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_retries: 5\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.max_retries == 5

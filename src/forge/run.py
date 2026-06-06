@@ -78,7 +78,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     print(f"languages: {language_registry.names()}")
 
     runner = Runner()
-    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages))
+    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, config.max_retries))
     runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
