@@ -1,39 +1,64 @@
-"""Tests for the LLM client content extraction."""
+"""Tests for the Ollama LLM client content extraction."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from forge.llm.client import _extract_content
+from forge.llm.client import chat
 
 
-def test_extract_content_returns_first_nonempty_string():
-    """_extract_content returns the first non-empty string value in the message dict."""
-    assert _extract_content({"content": "hello world"}) == "hello world"
+def _mock_response(data: dict) -> MagicMock:
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = data
+    return response
 
 
-def test_extract_content_works_with_any_field_name():
-    """_extract_content extracts content regardless of the key name used by the model."""
-    assert _extract_content({"text": "model response"}) == "model response"
-    assert _extract_content({"response": "another format"}) == "another format"
+async def test_chat_returns_content_field():
+    """chat returns the content field from the message."""
+    with patch("forge.llm.client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_response({"message": {"role": "assistant", "content": "hello world"}})
+        )
+        result = await chat("model", "prompt")
+    assert result == "hello world"
 
 
-def test_extract_content_raises_on_empty_message():
-    """_extract_content raises ValueError when the message dict has no string values."""
-    with pytest.raises(ValueError):
-        _extract_content({})
+async def test_chat_strips_whitespace_from_content():
+    """chat strips leading and trailing whitespace from the content field."""
+    with patch("forge.llm.client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_response({"message": {"content": "  response text  "}})
+        )
+        result = await chat("model", "prompt")
+    assert result == "response text"
 
 
-def test_extract_content_raises_when_content_is_empty_string():
-    """_extract_content raises ValueError when all string values in the message are empty."""
-    with pytest.raises(ValueError):
-        _extract_content({"content": ""})
+async def test_chat_raises_on_empty_content():
+    """chat raises ValueError when the content field is an empty string."""
+    with patch("forge.llm.client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_response({"message": {"content": ""}})
+        )
+        with pytest.raises(ValueError):
+            await chat("model", "prompt")
 
 
-def test_extract_content_raises_when_all_strings_empty():
-    """_extract_content raises ValueError when every string value is empty."""
-    with pytest.raises(ValueError):
-        _extract_content({"content": "", "text": ""})
+async def test_chat_raises_on_whitespace_only_content():
+    """chat raises ValueError when the content field contains only whitespace."""
+    with patch("forge.llm.client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_response({"message": {"content": "   "}})
+        )
+        with pytest.raises(ValueError):
+            await chat("model", "prompt")
 
 
-def test_extract_content_skips_non_string_values():
-    """_extract_content ignores non-string values and finds the string among mixed types."""
-    assert _extract_content({"count": 42, "content": "found it"}) == "found it"
+async def test_chat_raises_on_missing_content():
+    """chat raises ValueError when the message has no content field."""
+    with patch("forge.llm.client.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_mock_response({"message": {}})
+        )
+        with pytest.raises(ValueError):
+            await chat("model", "prompt")

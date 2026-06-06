@@ -97,6 +97,7 @@ async def plan_agent(
         )
 
     def process_response(raw_text: str) -> AgentResponse:
+        print(f"[debug] plan_agent raw LLM response ({len(raw_text)} chars): {raw_text!r}")
         try:
             follow_up = parse_plan(raw_text, registry)
         except Exception as e:
