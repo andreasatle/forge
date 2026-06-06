@@ -1,6 +1,7 @@
 name: rust
 package_manager: cargo
 test_command: cargo test
+sync_command: cargo build
 project_structure:
   - Cargo.toml
   - src/

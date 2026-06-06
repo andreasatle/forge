@@ -1,6 +1,7 @@
 name: zig
 package_manager: zig build
 test_command: zig build test
+sync_command: zig build
 project_structure:
   - build.zig
   - src/

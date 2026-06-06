@@ -9,6 +9,18 @@ from forge.core.models import (
 )
 from forge.core.persistence import load_run, save_run
 from forge.core.workspace import Workspace
+from forge.languages.registry import LanguagePlugin
+
+
+def _make_plugin(name: str = "python") -> LanguagePlugin:
+    return LanguagePlugin(
+        name=name,
+        package_manager="test-pm",
+        test_command="test-cmd",
+        sync_command="true",
+        project_structure=["src/", "tests/"],
+        prompt_supplement="test",
+    )
 
 
 def _make_state() -> SchedulerState:
@@ -160,15 +172,15 @@ def test_init_artifact_skips_init_when_directory_is_not_empty(tmp_path: Path) ->
     ws.init_artifact("codebase")
     sentinel = ws.artifact_dir("codebase") / "existing.txt"
     sentinel.write_text("already here")
-    ws.init_artifact("codebase", language="python")
+    ws.init_artifact("codebase", _make_plugin())
     assert sentinel.exists()
     assert len(list(ws.artifact_dir("codebase").iterdir())) == 1
 
 
-def test_init_artifact_skips_init_when_language_is_none(tmp_path: Path) -> None:
-    """init_artifact does not run any command when language is None."""
+def test_init_artifact_skips_init_when_plugin_is_none(tmp_path: Path) -> None:
+    """init_artifact does not run any command when plugin is None."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
-    ws.init_artifact("codebase", language=None)
+    ws.init_artifact("codebase")
     assert ws.artifact_dir("codebase").is_dir()
     assert list(ws.artifact_dir("codebase").iterdir()) == []

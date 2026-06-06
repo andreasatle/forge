@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from forge.languages.registry import LanguagePlugin
+
 _INIT_COMMANDS: dict[str, str] = {
     "python": "uv init --no-readme --no-workspace --name {artifact_name}",
     "rust": "cargo init",
@@ -44,19 +46,19 @@ class Workspace:
         self.path.mkdir(parents=True, exist_ok=True)
         self.logs_dir().mkdir(exist_ok=True)
 
-    def init_artifact(self, name: str, language: str | None = None) -> None:
-        """Create the artifact root directory and run the language init command if the directory is empty."""
+    def init_artifact(self, name: str, plugin: LanguagePlugin | None = None) -> None:
+        """Create the artifact root directory and run the language init and sync commands if the directory is empty."""
         artifact_dir = self.artifact_dir(name)
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        if language is None:
+        if plugin is None:
             return
         if any(artifact_dir.iterdir()):
             return
-        template = _INIT_COMMANDS.get(language)
-        if template is None:
-            return
-        cmd = template.format(artifact_name=name)
-        subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
+        template = _INIT_COMMANDS.get(plugin.name)
+        if template is not None:
+            cmd = template.format(artifact_name=name)
+            subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
+        subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
 
     def reset(self, artifact_names: list[str]) -> None:
         """Delete state, blackboard, and all contents of artifact directories."""

@@ -13,6 +13,7 @@ def _write_plugin(dir: Path, name: str) -> None:
         "name": name,
         "package_manager": "test-pm",
         "test_command": "test-cmd",
+        "sync_command": "sync-cmd",
         "project_structure": ["src/", "tests/"],
         "prompt_supplement": f"Use {name} conventions.",
     }))
@@ -61,5 +62,6 @@ def test_language_plugin_has_all_required_fields(tmp_path: Path) -> None:
     plugin = reg.get("rust")
     assert plugin.package_manager == "test-pm"
     assert plugin.test_command == "test-cmd"
+    assert plugin.sync_command == "sync-cmd"
     assert plugin.project_structure == ["src/", "tests/"]
     assert "rust" in plugin.prompt_supplement

@@ -58,10 +58,15 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     artifact_names = [a.name for a in config.artifacts]
     artifact_languages = {a.name: a.language for a in config.artifacts if a.language}
 
+    language_registry = LanguageRegistry()
+    language_registry.load(_LANGUAGES_DIR)
+    print(f"languages: {language_registry.names()}")
+
     workspace = Workspace(config.workspace)
     workspace.init()
     for artifact in config.artifacts:
-        workspace.init_artifact(artifact.name, artifact.language)
+        plugin = language_registry.get(artifact.language) if artifact.language else None
+        workspace.init_artifact(artifact.name, plugin)
 
     if workspace.state_path().exists():
         print(f"resuming: {workspace.path}")
@@ -74,10 +79,6 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     registry = AdapterRegistry()
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
-
-    language_registry = LanguageRegistry()
-    language_registry.load(_LANGUAGES_DIR)
-    print(f"languages: {language_registry.names()}")
 
     runner = Runner()
     runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, config.max_retries))

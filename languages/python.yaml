@@ -1,6 +1,7 @@
 name: python
 package_manager: uv
 test_command: uv run pytest
+sync_command: uv sync
 project_structure:
   - pyproject.toml
   - src/
