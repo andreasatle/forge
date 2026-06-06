@@ -20,15 +20,15 @@ async def work_agent(
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     async def build(spec: WorkSpec) -> AgentResponse:
         adapter = registry.get(spec.adapter)
-        tools = build_default_registry(workspace, spec.artifact)
+        plugin = language_registry.get(spec.language) if spec.language else None
+        tools = build_default_registry(workspace, spec.artifact, plugin.test_command if plugin else None)
         tool_schema = tools.to_ollama_schema(adapter.tools)
         prompt = adapter.prompt_template.format(
             objective=spec.objective,
             success_condition=spec.success_condition,
         )
 
-        if spec.language:
-            plugin = language_registry.get(spec.language)
+        if plugin:
             prompt += f"\n\n{plugin.prompt_supplement}"
 
         messages: list[dict] = [{"role": "user", "content": prompt}]  # type: ignore[type-arg]

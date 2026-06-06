@@ -16,3 +16,6 @@ prompt_supplement: |
   Always add a [tool.pytest.ini_options] section:
     [tool.pytest.ini_options]
     testpaths = ["tests"]
+  A run_tests tool is available — use it after writing or modifying code.
+  Always iterate until run_tests returns a passing result.
+  Run `uv add --dev pytest` to add pytest as a dev dependency.

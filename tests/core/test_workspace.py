@@ -151,3 +151,24 @@ def test_load_run_reads_from_state_path(tmp_path: Path) -> None:
     save_run(state, ws)
     loaded = load_run(ws)
     assert loaded.northstar == state.northstar
+
+
+def test_init_artifact_skips_init_when_directory_is_not_empty(tmp_path: Path) -> None:
+    """init_artifact does not run the language init command when the artifact directory already has content."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+    sentinel = ws.artifact_dir("codebase") / "existing.txt"
+    sentinel.write_text("already here")
+    ws.init_artifact("codebase", language="python")
+    assert sentinel.exists()
+    assert len(list(ws.artifact_dir("codebase").iterdir())) == 1
+
+
+def test_init_artifact_skips_init_when_language_is_none(tmp_path: Path) -> None:
+    """init_artifact does not run any command when language is None."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase", language=None)
+    assert ws.artifact_dir("codebase").is_dir()
+    assert list(ws.artifact_dir("codebase").iterdir()) == []

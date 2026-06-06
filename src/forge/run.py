@@ -58,8 +58,8 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
 
     workspace = Workspace(config.workspace)
     workspace.init()
-    for name in artifact_names:
-        workspace.init_artifact(name)
+    for artifact in config.artifacts:
+        workspace.init_artifact(artifact.name, artifact.language)
 
     if workspace.state_path().exists():
         print(f"resuming: {workspace.path}")

@@ -13,3 +13,5 @@ prompt_supplement: |
   Always include dev-dependencies in Cargo.toml for testing utilities if needed.
   The built-in #[cfg(test)] module is sufficient for unit tests — always use it.
   Always write at least one test per public function.
+  A run_tests tool is available — use it after writing or modifying code.
+  Always iterate until run_tests returns a passing result.

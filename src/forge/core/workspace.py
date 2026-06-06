@@ -1,8 +1,15 @@
 """Workspace dataclass for managing the on-disk layout of a forge run."""
 
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+_INIT_COMMANDS: dict[str, str] = {
+    "python": "uv init --no-readme --name {artifact_name}",
+    "rust": "cargo init",
+    "zig": "zig init",
+}
 
 
 @dataclass
@@ -37,9 +44,19 @@ class Workspace:
         self.path.mkdir(parents=True, exist_ok=True)
         self.logs_dir().mkdir(exist_ok=True)
 
-    def init_artifact(self, name: str) -> None:
-        """Create the artifact root directory if it does not exist."""
-        self.artifact_dir(name).mkdir(parents=True, exist_ok=True)
+    def init_artifact(self, name: str, language: str | None = None) -> None:
+        """Create the artifact root directory and run the language init command if the directory is empty."""
+        artifact_dir = self.artifact_dir(name)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        if language is None:
+            return
+        if any(artifact_dir.iterdir()):
+            return
+        template = _INIT_COMMANDS.get(language)
+        if template is None:
+            return
+        cmd = template.format(artifact_name=name)
+        subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
 
     def reset(self, artifact_names: list[str]) -> None:
         """Delete state, blackboard, and all contents of artifact directories."""

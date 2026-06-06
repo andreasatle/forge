@@ -13,3 +13,5 @@ prompt_supplement: |
   Always write tests using the built-in std.testing module.
   Always write at least one test per public function.
   Include test steps in build.zig so `zig build test` runs all tests.
+  A run_tests tool is available — use it after writing or modifying code.
+  Always iterate until run_tests returns a passing result.
