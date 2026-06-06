@@ -25,6 +25,7 @@ The core loop:
 - **Single edit rule** — always add imports and the code that uses them in one edit, never separately, or ruff will strip them
 - Fail loudly on missing config — no silent defaults
 - One parser per agent type — pure functions, no inline parsing
+- **Fix at the right abstraction level** — if a fix applies to a class of problems, implement it at the base level, not in each instance. Example: retry logic belongs in `run_agent`, not in each agent. Tool loops belong in `run_agent`, not in `work_agent`. Before fixing something specific, ask: "where is the right place for this fix to live?"
 
 ## Testing
 - Every module has a corresponding test file mirroring source structure
