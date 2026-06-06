@@ -3,7 +3,6 @@
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, PlanSpec, ResponseStatus
-from forge.llm import client as llm
 from forge.parsers.plan import parse_plan
 
 PLANNER_MODEL = "gemma4:e4b"
@@ -72,42 +71,48 @@ async def plan_agent(
     max_retries: int = 3,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
-    async def build(spec: PlanSpec) -> AgentResponse:
-        artifact_language_list = "\n".join(
-            f"  {name}: {lang}" for name, lang in artifact_languages.items()
-        ) or "  (no languages declared)"
-        prompt = PLAN_PROMPT.format(
-            northstar=spec.northstar,
-            artifact_names=", ".join(artifact_names),
-            first_artifact=artifact_names[0],
-            artifact_language_list=artifact_language_list,
-        )
-        last_error: Exception | None = None
-        bad_response: str | None = None
-
-        for attempt in range(1, max_retries + 1):
-            if attempt == 1:
-                current_prompt = prompt
-            else:
-                print(f"  planner retry {attempt - 1}/{max_retries - 1}: {last_error}")
-                current_prompt = CORRECTION_PROMPT.format(
-                    original_prompt=prompt,
-                    bad_response=bad_response,
-                    error=last_error,
-                )
-            try:
-                bad_response = await llm.chat(PLANNER_MODEL, current_prompt)
-                follow_up = parse_plan(bad_response, registry)
-                return AgentResponse(
-                    request_id=request.id,
-                    status=ResponseStatus.COMPLETED,
-                    follow_up=follow_up,
-                )
-            except Exception as e:
-                last_error = e
-
-        raise RuntimeError(
-            f"planner failed after {max_retries} attempts. Last error: {last_error}"
+    spec = request.spec
+    if not isinstance(spec, PlanSpec):
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            error=f"expected PlanSpec, got {type(spec).__name__}",
         )
 
-    return await run_agent(request, PlanSpec, build)
+    artifact_language_list = "\n".join(
+        f"  {name}: {lang}" for name, lang in artifact_languages.items()
+    ) or "  (no languages declared)"
+    prompt = PLAN_PROMPT.format(
+        northstar=spec.northstar,
+        artifact_names=", ".join(artifact_names),
+        first_artifact=artifact_names[0],
+        artifact_language_list=artifact_language_list,
+    )
+
+    def correction_fn(error: Exception, bad_response: str) -> str:
+        return CORRECTION_PROMPT.format(
+            original_prompt=prompt,
+            bad_response=bad_response,
+            error=error,
+        )
+
+    def process_response(raw_text: str) -> AgentResponse:
+        try:
+            follow_up = parse_plan(raw_text, registry)
+        except Exception as e:
+            raise ValueError(f"parse failed: {type(e).__name__}: {e}") from e
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            follow_up=follow_up,
+        )
+
+    return await run_agent(
+        request,
+        PlanSpec,
+        PLANNER_MODEL,
+        prompt,
+        max_retries=max_retries,
+        correction_prompt_fn=correction_fn,
+        response_fn=process_response,
+    )

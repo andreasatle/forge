@@ -5,6 +5,14 @@ import httpx
 OLLAMA_BASE = "http://localhost:11434"
 
 
+def _extract_content(message: dict) -> str:  # type: ignore[type-arg]
+    """Return the first non-empty string value found in message, raising ValueError if none exist."""
+    for value in message.values():
+        if isinstance(value, str) and value:
+            return value
+    raise ValueError(f"no non-empty string in message: {message!r}")
+
+
 async def chat(model: str, prompt: str) -> str:
     """Send a single-turn prompt to the Ollama model and return the response content."""
     payload = {
@@ -16,10 +24,7 @@ async def chat(model: str, prompt: str) -> str:
         response = await client.post(f"{OLLAMA_BASE}/api/chat", json=payload)
         response.raise_for_status()
     data = response.json()
-    content = data.get("message", {}).get("content")
-    if not content:
-        raise ValueError(f"no content in Ollama response: {data!r}")
-    return content
+    return _extract_content(data.get("message", {}))
 
 
 async def chat_with_tools(
@@ -46,7 +51,4 @@ async def chat_with_tools(
             for tc in tool_calls_raw
         ]
         return None, tool_calls
-    content = message.get("content")
-    if not content:
-        raise ValueError(f"no content in Ollama response: {data!r}")
-    return content, []
+    return _extract_content(message), []

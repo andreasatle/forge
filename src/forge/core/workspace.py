@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _INIT_COMMANDS: dict[str, str] = {
-    "python": "uv init --no-readme --name {artifact_name}",
+    "python": "uv init --no-readme --no-workspace --name {artifact_name}",
     "rust": "cargo init",
     "zig": "zig init",
 }
