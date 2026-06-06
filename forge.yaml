@@ -4,6 +4,10 @@ concurrency: 1
 verbose: false
 max_retries: 3
 max_tokens: 8192
+models:
+  planner: ollama/gemma4:e4b
+  worker: ollama/qwen2.5-coder:14b
+  integrator: ollama/gemma4:e4b
 artifacts:
   - name: codebase
     type: coding

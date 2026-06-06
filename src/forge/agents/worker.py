@@ -5,9 +5,8 @@ from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, ResponseStatus, WorkSpec
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
+from forge.llm.providers import LLMProvider
 from forge.tools.builtin import build_default_registry
-
-WORK_MODEL = "gemma4:e4b"
 
 
 async def work_agent(
@@ -15,6 +14,7 @@ async def work_agent(
     registry: AdapterRegistry,
     workspace: Workspace,
     language_registry: LanguageRegistry,
+    provider: LLMProvider,
     max_retries: int = 3,
 ) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
@@ -45,7 +45,7 @@ async def work_agent(
     return await run_agent(
         request,
         WorkSpec,
-        WORK_MODEL,
+        provider,
         prompt,
         tools=tools,
         tool_schema=tool_schema,

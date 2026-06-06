@@ -3,9 +3,8 @@
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
 from forge.core.models import AgentRequest, AgentResponse, PlanSpec, ResponseStatus
+from forge.llm.providers import LLMProvider
 from forge.parsers.plan import parse_plan
-
-PLANNER_MODEL = "gemma4:e4b"
 
 CORRECTION_PROMPT = """
 Your previous response could not be parsed. Error: {error}
@@ -68,6 +67,7 @@ async def plan_agent(
     registry: AdapterRegistry,
     artifact_names: list[str],
     artifact_languages: dict[str, str],
+    provider: LLMProvider,
     max_retries: int = 3,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
@@ -111,7 +111,7 @@ async def plan_agent(
     return await run_agent(
         request,
         PlanSpec,
-        PLANNER_MODEL,
+        provider,
         prompt,
         max_retries=max_retries,
         correction_prompt_fn=correction_fn,

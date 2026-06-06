@@ -1,7 +1,7 @@
 """Tests for Runner routing, built-in handlers, and scripted_plan_handler."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -79,6 +79,14 @@ def _make_workspace(tmp_path: Path) -> Workspace:
     ws.init()
     ws.init_artifact("codebase")
     return ws
+
+
+def _mock_provider(chat_with_tools_return: tuple = ("ok", [])) -> MagicMock:
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    provider.chat = AsyncMock(return_value="ok")
+    provider.chat_with_tools = AsyncMock(return_value=chat_with_tools_return)
+    return provider
 
 
 # --- Tests ---
@@ -188,10 +196,10 @@ async def test_stub_plan_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_work_handler_returns_result_in_delta(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_work_handler_returns_result_in_delta(tmp_path: Path) -> None:
     """make_work_handler returns a handler whose delta contains the LLM text result."""
-    monkeypatch.setattr("forge.llm.client.chat_with_tools", AsyncMock(return_value=("ok", [])))
-    handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry())
+    provider = _mock_provider(("ok", []))
+    handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
     response = await handler(_work_request())
 
     assert response.delta is not None
@@ -209,7 +217,7 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
     """A fully registered Runner can be used as an AgentRunner in the Scheduler."""
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar="test northstar")
@@ -220,7 +228,7 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
 
 async def test_make_plan_handler_planner_source_returns_completed() -> None:
     """make_plan_handler returns empty follow-up for PLANNER-source requests without calling the LLM."""
-    handler = make_plan_handler(_mock_registry(), artifact_names=["codebase"], artifact_languages={})
+    handler = make_plan_handler(_mock_registry(), artifact_names=["codebase"], artifact_languages={}, provider=_mock_provider())
     request = AgentRequest(
         agent_type=AgentType.PLAN,
         source=RequestSource.PLANNER,
@@ -278,7 +286,7 @@ async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes(tm
     """End-to-end run with scripted_plan_handler produces exactly five COMPLETED nodes."""
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry()))
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()))
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())

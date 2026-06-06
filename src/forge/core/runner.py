@@ -15,6 +15,7 @@ from forge.core.models import (
 )
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
+from forge.llm.providers import LLMProvider
 
 Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
@@ -53,10 +54,12 @@ def make_work_handler(
     registry: AdapterRegistry,
     workspace: Workspace,
     language_registry: LanguageRegistry,
+    provider: LLMProvider,
 ) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
+
     async def work_handler(request: AgentRequest) -> AgentResponse:
-        return await work_agent(request, registry, workspace, language_registry)
+        return await work_agent(request, registry, workspace, language_registry, provider)
 
     return work_handler
 
@@ -118,12 +121,14 @@ def make_plan_handler(
     registry: AdapterRegistry,
     artifact_names: list[str],
     artifact_languages: dict[str, str],
+    provider: LLMProvider,
     max_retries: int = 3,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
+
     async def plan_handler(request: AgentRequest) -> AgentResponse:
         if request.source == RequestSource.PLANNER:
             return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
-        return await plan_agent(request, registry, artifact_names, artifact_languages, max_retries)
+        return await plan_agent(request, registry, artifact_names, artifact_languages, provider, max_retries)
 
     return plan_handler

@@ -6,7 +6,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from forge.core.models import AgentRequest, AgentResponse, ResponseStatus
-from forge.llm import client as llm
+from forge.llm.providers import LLMProvider
 from forge.tools.registry import ToolRegistry
 
 S = TypeVar("S", bound=BaseModel)
@@ -17,7 +17,7 @@ _MAX_TOOL_ITERATIONS = 10
 async def run_agent(
     request: AgentRequest,
     spec_type: type[S],
-    model: str,
+    provider: LLMProvider,
     prompt: str,
     tools: ToolRegistry | None = None,
     tool_schema: list[dict] | None = None,  # type: ignore[type-arg]
@@ -30,9 +30,9 @@ async def run_agent(
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
         if tools is not None:
-            return await _run_tool_loop(request, model, prompt, tools, tool_schema or [])
+            return await _run_tool_loop(request, provider, prompt, tools, tool_schema or [])
         return await _run_with_retries(
-            request, model, prompt, max_retries, correction_prompt_fn, response_fn
+            request, provider, prompt, max_retries, correction_prompt_fn, response_fn
         )
     except Exception as e:
         print(f"agent error: {type(e).__name__}: {e}")
@@ -45,7 +45,7 @@ async def run_agent(
 
 async def _run_with_retries(
     request: AgentRequest,
-    model: str,
+    provider: LLMProvider,
     prompt: str,
     max_retries: int,
     correction_prompt_fn: Callable[[Exception, str], str] | None,
@@ -61,7 +61,7 @@ async def _run_with_retries(
             if correction_prompt_fn is not None:
                 current_prompt = correction_prompt_fn(last_error, last_text)  # type: ignore[arg-type]
         try:
-            last_text = await llm.chat(model, current_prompt)
+            last_text = await provider.chat(current_prompt, provider.max_tokens)
             if response_fn is not None:
                 return response_fn(last_text)
             return AgentResponse(
@@ -87,7 +87,7 @@ async def _run_with_retries(
 
 async def _run_tool_loop(
     request: AgentRequest,
-    model: str,
+    provider: LLMProvider,
     prompt: str,
     tools: ToolRegistry,
     tool_schema: list[dict],  # type: ignore[type-arg]
@@ -95,7 +95,7 @@ async def _run_tool_loop(
     messages: list[dict] = [{"role": "user", "content": prompt}]  # type: ignore[type-arg]
 
     for _ in range(_MAX_TOOL_ITERATIONS):
-        text, tool_calls = await llm.chat_with_tools(model, messages, tool_schema)
+        text, tool_calls = await provider.chat_with_tools(messages, tool_schema, provider.max_tokens)
         if text is not None:
             return AgentResponse(
                 request_id=request.id,

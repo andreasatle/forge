@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from forge.core.config import ArtifactConfig, ForgeConfig
+from forge.core.config import ArtifactConfig, ForgeConfig, ModelsConfig
 
 
 def _write_yaml(tmp_path: Path, content: str) -> Path:
@@ -146,3 +146,34 @@ def test_max_tokens_parsed_from_yaml(tmp_path: Path) -> None:
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tokens: 4096\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
     assert config.max_tokens == 4096
+
+
+def test_models_defaults_to_ollama_when_absent(tmp_path: Path) -> None:
+    """load() defaults all model strings to ollama/gemma4:e4b when models section is absent."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.models.planner == "ollama/gemma4:e4b"
+    assert config.models.worker == "ollama/gemma4:e4b"
+    assert config.models.integrator == "ollama/gemma4:e4b"
+
+
+def test_models_section_parsed_correctly(tmp_path: Path) -> None:
+    """load() reads model strings from the models section when declared."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n  planner: claude/claude-sonnet-4-20250514\n  worker: openai/gpt-4o\n  integrator: ollama/gemma4:e4b\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.planner == "claude/claude-sonnet-4-20250514"
+    assert config.models.worker == "openai/gpt-4o"
+    assert config.models.integrator == "ollama/gemma4:e4b"
+
+
+def test_models_config_defaults() -> None:
+    """ModelsConfig defaults all fields to ollama/gemma4:e4b when constructed without args."""
+    m = ModelsConfig()
+    assert m.planner == "ollama/gemma4:e4b"
+    assert m.worker == "ollama/gemma4:e4b"
+    assert m.integrator == "ollama/gemma4:e4b"

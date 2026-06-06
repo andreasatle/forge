@@ -4,7 +4,6 @@ import argparse
 import asyncio
 from pathlib import Path
 
-import forge.llm.client as llm_client
 from forge.adapters.registry import AdapterRegistry
 from forge.core.config import ForgeConfig
 from forge.core.models import (
@@ -25,6 +24,7 @@ from forge.core.runner import (
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
+from forge.llm.factory import make_provider
 
 _ADAPTERS_DIR = Path(__file__).parent.parent.parent / "adapters"
 _LANGUAGES_DIR = Path(__file__).parent.parent.parent / "languages"
@@ -54,7 +54,6 @@ def _reset(config: ForgeConfig) -> None:
 
 
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
-    llm_client.DEFAULT_MAX_TOKENS = config.max_tokens
     artifact_names = [a.name for a in config.artifacts]
     artifact_languages = {a.name: a.language for a in config.artifacts if a.language}
 
@@ -80,9 +79,12 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
 
+    planner_provider = make_provider(config.models.planner, config.max_tokens)
+    worker_provider = make_provider(config.models.worker, config.max_tokens)
+
     runner = Runner()
-    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, config.max_retries))
-    runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry))
+    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, planner_provider, config.max_retries))
+    runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)
