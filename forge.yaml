@@ -3,6 +3,7 @@ workspace: ./workspaces/scraper
 concurrency: 1
 verbose: false
 max_retries: 3
+max_tokens: 8192
 artifacts:
   - name: codebase
     type: coding

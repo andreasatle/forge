@@ -132,3 +132,17 @@ def test_max_retries_parsed_from_yaml(tmp_path: Path) -> None:
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_retries: 5\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
     assert config.max_retries == 5
+
+
+def test_max_tokens_defaults_to_8192(tmp_path: Path) -> None:
+    """load() defaults max_tokens to 8192 when not present in YAML."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.max_tokens == 8192
+
+
+def test_max_tokens_parsed_from_yaml(tmp_path: Path) -> None:
+    """load() reads max_tokens from YAML when explicitly declared."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tokens: 4096\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.max_tokens == 4096

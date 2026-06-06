@@ -25,6 +25,7 @@ class ForgeConfig:
     concurrency: int = 1
     verbose: bool = False
     max_retries: int = 3
+    max_tokens: int = 8192
 
     @staticmethod
     def load(path: Path) -> "ForgeConfig":
@@ -52,4 +53,5 @@ class ForgeConfig:
             concurrency=data.get("concurrency", 1),
             verbose=data.get("verbose", False),
             max_retries=data.get("max_retries", 3),
+            max_tokens=data.get("max_tokens", 8192),
         )

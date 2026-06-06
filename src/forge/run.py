@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
+import forge.llm.client as llm_client
 from forge.adapters.registry import AdapterRegistry
 from forge.core.config import ForgeConfig
 from forge.core.models import (
@@ -53,6 +54,7 @@ def _reset(config: ForgeConfig) -> None:
 
 
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
+    llm_client.DEFAULT_MAX_TOKENS = config.max_tokens
     artifact_names = [a.name for a in config.artifacts]
     artifact_languages = {a.name: a.language for a in config.artifacts if a.language}
 
