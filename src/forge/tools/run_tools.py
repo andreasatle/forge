@@ -41,10 +41,10 @@ def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: 
     )
 
 
-async def add_dependency(workspace: Workspace, artifact_name: str, add_dependency_command: str, package: str) -> str:
-    """Run add_dependency_command with package substituted in the artifact directory and return combined stdout+stderr."""
+async def add_dependency(workspace: Workspace, artifact_name: str, add_dependency_command: str, package_name: str) -> str:
+    """Run add_dependency_command with package_name substituted in the artifact directory and return combined stdout+stderr."""
     cwd = workspace.artifact_dir(artifact_name)
-    cmd = add_dependency_command.format(package=package)
+    cmd = add_dependency_command.format(package=package_name)
     try:
         proc = await asyncio.create_subprocess_shell(
             cmd,
@@ -60,8 +60,8 @@ async def add_dependency(workspace: Workspace, artifact_name: str, add_dependenc
 
 def make_add_dependency_tool(workspace: Workspace, artifact_name: str, add_dependency_command: str) -> Tool:
     """Return a Tool that installs a package using add_dependency_command."""
-    async def fn(package: str) -> str:
-        return await add_dependency(workspace, artifact_name, add_dependency_command, package)
+    async def fn(package_name: str) -> str:
+        return await add_dependency(workspace, artifact_name, add_dependency_command, package_name)
 
     return Tool(
         name="add_dependency",
@@ -69,12 +69,12 @@ def make_add_dependency_tool(workspace: Workspace, artifact_name: str, add_depen
         parameters={
             "type": "object",
             "properties": {
-                "package": {
+                "package_name": {
                     "type": "string",
                     "description": "The package name to install.",
                 },
             },
-            "required": ["package"],
+            "required": ["package_name"],
         },
         fn=fn,
     )
