@@ -108,7 +108,7 @@ async def test_ollama_provider_chat_formats_request_correctly() -> None:
 
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
-        result = await provider.chat("say hello", 512)
+        result = await provider.chat([{"role": "user", "content": "say hello"}])
 
     assert result == "hello"
     assert captured[0]["url"] == "http://localhost:11434/api/chat"
@@ -190,7 +190,7 @@ async def test_claude_provider_chat_formats_request_correctly() -> None:
 
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
-        result = await provider.chat("hello", 1024)
+        result = await provider.chat([{"role": "user", "content": "hello"}])
 
     assert result == "response"
     assert captured[0]["url"] == "https://api.anthropic.com/v1/messages"
@@ -211,7 +211,7 @@ async def test_claude_provider_chat_raises_on_empty_response() -> None:
             return_value=_mock_http_response({"content": []})
         )
         with pytest.raises(ValueError, match="empty content"):
-            await provider.chat("hello", 1024)
+            await provider.chat([{"role": "user", "content": "hello"}])
 
 
 async def test_claude_provider_chat_with_tools_converts_canonical_to_claude_wire() -> None:
@@ -286,7 +286,7 @@ async def test_openai_provider_chat_formats_request_correctly() -> None:
 
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
-        result = await provider.chat("question", 2048)
+        result = await provider.chat([{"role": "user", "content": "question"}])
 
     assert result == "answer"
     assert captured[0]["url"] == "https://api.openai.com/v1/chat/completions"
@@ -306,7 +306,7 @@ async def test_openai_provider_chat_raises_on_empty_response() -> None:
             return_value=_mock_http_response({"choices": [{"message": {"content": ""}}]})
         )
         with pytest.raises(ValueError, match="empty content"):
-            await provider.chat("question", 2048)
+            await provider.chat([{"role": "user", "content": "question"}])
 
 
 async def test_openai_provider_chat_with_tools_passes_canonical_messages_through() -> None:
@@ -434,7 +434,7 @@ async def test_provider_retries_on_429_then_succeeds() -> None:
             side_effect=[_error_response(429), _mock_http_response({"message": {"content": "ok"}})]
         )
         with patch("forge.llm.providers.asyncio.sleep") as mock_sleep:
-            result = await provider.chat("hi", 512)
+            result = await provider.chat([{"role": "user", "content": "hi"}])
 
     assert result == "ok"
     mock_sleep.assert_called_once_with(1.0)
@@ -449,7 +449,7 @@ async def test_provider_retries_on_503_then_succeeds() -> None:
             side_effect=[_error_response(503), _mock_http_response({"message": {"content": "ok"}})]
         )
         with patch("forge.llm.providers.asyncio.sleep"):
-            result = await provider.chat("hi", 512)
+            result = await provider.chat([{"role": "user", "content": "hi"}])
 
     assert result == "ok"
 
@@ -464,7 +464,7 @@ async def test_provider_does_not_retry_on_401() -> None:
         )
         with patch("forge.llm.providers.asyncio.sleep") as mock_sleep:
             with pytest.raises(httpx.HTTPStatusError):
-                await provider.chat("hi", 512)
+                await provider.chat([{"role": "user", "content": "hi"}])
 
     mock_sleep.assert_not_called()
 
@@ -479,4 +479,4 @@ async def test_provider_reraises_after_max_retries_exhausted() -> None:
         )
         with patch("forge.llm.providers.asyncio.sleep"):
             with pytest.raises(httpx.HTTPStatusError):
-                await provider.chat("hi", 512)
+                await provider.chat([{"role": "user", "content": "hi"}])

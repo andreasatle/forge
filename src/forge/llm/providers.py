@@ -49,23 +49,23 @@ async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: object
 
 
 class LLMProvider(Protocol):
-    """Protocol for LLM providers — single-turn chat and tool-augmented chat."""
+    """Protocol for LLM providers — multi-turn chat and tool-augmented chat."""
 
     max_tokens: int
 
-    async def chat(self, prompt: str, max_tokens: int) -> str:
-        """Send a single-turn prompt and return the response text."""
+    async def chat(self, messages: list[dict]) -> str:  # type: ignore[type-arg]
+        """Send a multi-turn message list and return the response text."""
 
     async def chat_with_tools(
-        self, messages: list[dict], tools: list[dict], max_tokens: int
-    ) -> tuple[str | None, list[dict]]:
+        self, messages: list[dict], tools: list[dict], max_tokens: int  # type: ignore[type-arg]
+    ) -> tuple[str | None, list[dict]]:  # type: ignore[type-arg]
         """Send canonical messages with tools; return (text, []) or (None, canonical_tool_calls)."""
 
 
 # --- Ollama wire-format helpers ---
 
 
-def _canonical_to_ollama_messages(messages: list[dict]) -> list[dict]:
+def _canonical_to_ollama_messages(messages: list[dict]) -> list[dict]:  # type: ignore[type-arg]
     """Convert canonical (OpenAI) messages to Ollama wire format."""
     result = []
     id_to_name: dict[str, str] = {}
@@ -92,7 +92,7 @@ def _canonical_to_ollama_messages(messages: list[dict]) -> list[dict]:
 # --- Claude wire-format helpers ---
 
 
-def _tools_to_claude_schema(tools: list[dict]) -> list[dict]:
+def _tools_to_claude_schema(tools: list[dict]) -> list[dict]:  # type: ignore[type-arg]
     """Convert OpenAI-format tool schemas to Claude tool schema format."""
     result = []
     for t in tools:
@@ -105,7 +105,7 @@ def _tools_to_claude_schema(tools: list[dict]) -> list[dict]:
     return result
 
 
-def _canonical_to_claude_messages(messages: list[dict]) -> list[dict]:
+def _canonical_to_claude_messages(messages: list[dict]) -> list[dict]:  # type: ignore[type-arg]
     """Convert canonical (OpenAI) messages to Claude API wire format."""
     result = []
     for m in messages:
@@ -143,12 +143,12 @@ class OllamaProvider:
     max_tokens: int
     base_url: str = "http://localhost:11434"
 
-    async def chat(self, prompt: str, max_tokens: int) -> str:
+    async def chat(self, messages: list[dict]) -> str:  # type: ignore[type-arg]
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             "stream": False,
-            "options": {"num_predict": max_tokens},
+            "options": {"num_predict": self.max_tokens},
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, f"{self.base_url}/api/chat", json=payload)
@@ -159,8 +159,8 @@ class OllamaProvider:
         return content.strip()
 
     async def chat_with_tools(
-        self, messages: list[dict], tools: list[dict], max_tokens: int
-    ) -> tuple[str | None, list[dict]]:
+        self, messages: list[dict], tools: list[dict], max_tokens: int  # type: ignore[type-arg]
+    ) -> tuple[str | None, list[dict]]:  # type: ignore[type-arg]
         payload = {
             "model": self.model,
             "messages": _canonical_to_ollama_messages(messages),
@@ -199,17 +199,21 @@ class ClaudeProvider:
     api_key: str
     max_tokens: int
 
-    async def chat(self, prompt: str, max_tokens: int) -> str:
+    async def chat(self, messages: list[dict]) -> str:  # type: ignore[type-arg]
+        system = next((m["content"] for m in messages if m["role"] == "system"), None)
+        non_system = [m for m in messages if m["role"] != "system"]
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
             "content-type": "application/json",
         }
-        payload = {
+        payload: dict = {  # type: ignore[type-arg]
             "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.max_tokens,
+            "messages": non_system,
         }
+        if system:
+            payload["system"] = system
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, _ANTHROPIC_API, headers=headers, json=payload)
         data = response.json()
@@ -221,8 +225,8 @@ class ClaudeProvider:
         return content.strip()
 
     async def chat_with_tools(
-        self, messages: list[dict], tools: list[dict], max_tokens: int
-    ) -> tuple[str | None, list[dict]]:
+        self, messages: list[dict], tools: list[dict], max_tokens: int  # type: ignore[type-arg]
+    ) -> tuple[str | None, list[dict]]:  # type: ignore[type-arg]
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": _ANTHROPIC_VERSION,
@@ -266,15 +270,15 @@ class OpenAIProvider:
     api_key: str
     max_tokens: int
 
-    async def chat(self, prompt: str, max_tokens: int) -> str:
+    async def chat(self, messages: list[dict]) -> str:  # type: ignore[type-arg]
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",
         }
         payload = {
             "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.max_tokens,
+            "messages": messages,
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, _OPENAI_API, headers=headers, json=payload)
@@ -285,8 +289,8 @@ class OpenAIProvider:
         return content.strip()
 
     async def chat_with_tools(
-        self, messages: list[dict], tools: list[dict], max_tokens: int
-    ) -> tuple[str | None, list[dict]]:
+        self, messages: list[dict], tools: list[dict], max_tokens: int  # type: ignore[type-arg]
+    ) -> tuple[str | None, list[dict]]:  # type: ignore[type-arg]
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",

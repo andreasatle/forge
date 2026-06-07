@@ -162,7 +162,7 @@ class TaskSpec(BaseModel, frozen=True):
 class PlanResponse(BaseModel, frozen=True):
     """The planner's final output — a list of tasks to execute."""
 
-    kind: Literal["plan"]
+    kind: Literal["plan"] = "plan"
     tasks: list[TaskSpec]
 
 

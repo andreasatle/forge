@@ -35,7 +35,6 @@ async def work_agent(
         plugin.test_command if plugin else None,
         plugin.add_dependency_command if plugin else None,
     )
-    tool_schema = tools.to_tool_schema(adapter.tools)
     prompt = adapter.prompt_template.format(
         objective=spec.objective,
         success_condition=spec.success_condition,
@@ -49,7 +48,6 @@ async def work_agent(
         provider,
         prompt,
         tools=tools,
-        tool_schema=tool_schema,
         max_retries=max_retries,
         max_tool_iterations=max_tool_iterations,
     )

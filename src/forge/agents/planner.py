@@ -1,10 +1,8 @@
 """Planning agent that decomposes a northstar goal into concrete work tasks."""
 
-from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
-from forge.core.models import AgentRequest, AgentResponse, PlanSpec, ResponseStatus
+from forge.core.models import AgentRequest, AgentResponse, PlanResponse, PlanSpec, ResponseStatus
 from forge.llm.providers import LLMProvider
-from forge.parsers.plan import parse_plan
 
 CORRECTION_PROMPT = """
 Your previous response could not be parsed. Error: {error}
@@ -23,6 +21,7 @@ You are a planning agent. Given a goal, decompose it into at most 5 concrete tas
 
 Respond with ONLY a JSON object in this exact format:
 {{
+  "kind": "plan",
   "tasks": [
     {{
       "objective": "specific task description",
@@ -64,7 +63,6 @@ Goal: {northstar}
 
 async def plan_agent(
     request: AgentRequest,
-    registry: AdapterRegistry,
     artifact_names: list[str],
     artifact_languages: dict[str, str],
     provider: LLMProvider,
@@ -96,18 +94,6 @@ async def plan_agent(
             error=error,
         )
 
-    def process_response(raw_text: str) -> AgentResponse:
-        print(f"[debug] plan_agent raw LLM response ({len(raw_text)} chars): {raw_text!r}")
-        try:
-            follow_up = parse_plan(raw_text, registry)
-        except Exception as e:
-            raise ValueError(f"parse failed: {type(e).__name__}: {e}") from e
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            follow_up=follow_up,
-        )
-
     return await run_agent(
         request,
         PlanSpec,
@@ -115,5 +101,5 @@ async def plan_agent(
         prompt,
         max_retries=max_retries,
         correction_prompt_fn=correction_fn,
-        response_fn=process_response,
+        final_response_type=PlanResponse,
     )

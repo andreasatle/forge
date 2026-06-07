@@ -130,6 +130,6 @@ def make_plan_handler(
     async def plan_handler(request: AgentRequest) -> AgentResponse:
         if request.source == RequestSource.PLANNER:
             return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
-        return await plan_agent(request, registry, artifact_names, artifact_languages, provider, max_retries)
+        return await plan_agent(request, artifact_names, artifact_languages, provider, max_retries)
 
     return plan_handler

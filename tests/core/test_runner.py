@@ -84,7 +84,7 @@ def _make_workspace(tmp_path: Path) -> Workspace:
 def _mock_provider(chat_with_tools_return: tuple = ("ok", [])) -> MagicMock:
     provider = MagicMock()
     provider.max_tokens = 8192
-    provider.chat = AsyncMock(return_value="ok")
+    provider.chat = AsyncMock(return_value="{}")
     provider.chat_with_tools = AsyncMock(return_value=chat_with_tools_return)
     return provider
 
