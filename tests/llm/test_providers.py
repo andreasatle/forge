@@ -437,7 +437,7 @@ async def test_provider_retries_on_429_then_succeeds() -> None:
             result = await provider.chat([{"role": "user", "content": "hi"}])
 
     assert result == "ok"
-    mock_sleep.assert_called_once_with(1.0)
+    mock_sleep.assert_called_once_with(10.0)
 
 
 async def test_provider_retries_on_503_then_succeeds() -> None:

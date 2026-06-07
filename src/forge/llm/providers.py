@@ -25,8 +25,8 @@ _OPENAI_API = "https://api.openai.com/v1/chat/completions"
 _ANTHROPIC_VERSION = "2023-06-01"
 
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-_MAX_RETRIES = 3
-_RETRY_BASE_DELAY = 1.0
+_MAX_RETRIES = 5
+_RETRY_BASE_DELAY = 10.0
 
 
 async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: object) -> httpx.Response:
@@ -43,7 +43,7 @@ async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: object
             last_exc = e
             if attempt < _MAX_RETRIES - 1:
                 wait = _RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"[debug] HTTP {e.response.status_code} — retry {attempt + 1}/3, waiting {wait}s")
+                print(f"[debug] HTTP {e.response.status_code} — retry {attempt + 1}/{_MAX_RETRIES - 1}, waiting {wait}s")
                 await asyncio.sleep(wait)
     raise last_exc
 
