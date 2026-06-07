@@ -10,6 +10,12 @@ from forge.tools.run_tools import (
     make_run_tests_tool,
     run_tests,
 )
+from forge.tools.schemas import (
+    AddDependencyRequest,
+    AddDependencyResponse,
+    RunTestsRequest,
+    RunTestsResponse,
+)
 
 _ARTIFACT = "test-artifact"
 
@@ -54,6 +60,53 @@ async def test_make_run_tests_tool_returns_tool_with_correct_name(workspace: Wor
     assert tool.name == "run_tests"
 
 
+async def test_run_tests_tool_returns_run_tests_response(workspace: Workspace) -> None:
+    """make_run_tests_tool fn returns a RunTestsResponse."""
+    tool = make_run_tests_tool(workspace, _ARTIFACT, "echo hello")
+
+    result = await tool.fn(RunTestsRequest())
+
+    assert isinstance(result, RunTestsResponse)
+
+
+async def test_run_tests_tool_parses_passing_pytest_output(workspace: Workspace) -> None:
+    """make_run_tests_tool fn sets passed=True when output contains '1 passed'."""
+    tool = make_run_tests_tool(workspace, _ARTIFACT, "echo '1 passed in 0.1s'")
+
+    result = await tool.fn(RunTestsRequest())
+
+    assert isinstance(result, RunTestsResponse)
+    assert result.passed is True
+    assert result.failures == []
+
+
+async def test_run_tests_tool_parses_failing_pytest_output(workspace: Workspace) -> None:
+    """make_run_tests_tool fn sets passed=False and extracts FAILED lines when tests fail."""
+    cmd = "printf 'FAILED tests/foo.py::bar\\n1 failed in 0.1s\\n'"
+    tool = make_run_tests_tool(workspace, _ARTIFACT, cmd)
+
+    result = await tool.fn(RunTestsRequest())
+
+    assert isinstance(result, RunTestsResponse)
+    assert result.passed is False
+    assert any("FAILED tests/foo.py::bar" in f for f in result.failures)
+
+
+async def test_run_tests_tool_marks_timeout_as_failed(workspace: Workspace) -> None:
+    """make_run_tests_tool fn sets passed=False and records timeout in failures."""
+    mock_proc = MagicMock()
+    with (
+        patch("asyncio.create_subprocess_shell", new_callable=AsyncMock, return_value=mock_proc),
+        patch("asyncio.wait_for", side_effect=TimeoutError()),
+    ):
+        tool = make_run_tests_tool(workspace, _ARTIFACT, "sleep 100")
+        result = await tool.fn(RunTestsRequest())
+
+    assert isinstance(result, RunTestsResponse)
+    assert result.passed is False
+    assert "timed out" in result.failures
+
+
 async def test_make_add_dependency_tool_returns_tool_with_correct_name(workspace: Workspace) -> None:
     """make_add_dependency_tool returns a Tool named 'add_dependency'."""
     tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
@@ -63,12 +116,36 @@ async def test_make_add_dependency_tool_returns_tool_with_correct_name(workspace
 async def test_add_dependency_tool_substitutes_package_in_command(workspace: Workspace) -> None:
     """The add_dependency tool runs the command with the package name substituted."""
     tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
-    result = await tool.fn(package_name="requests")
-    assert "requests" in result
+
+    result = await tool.fn(AddDependencyRequest(package="requests"))
+
+    assert isinstance(result, AddDependencyResponse)
+    assert "requests" in result.output
 
 
 async def test_add_dependency_tool_returns_command_output(workspace: Workspace) -> None:
-    """The add_dependency tool returns combined stdout+stderr output."""
+    """The add_dependency tool returns combined stdout+stderr output in the response."""
     tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo installed_{package}")
-    result = await tool.fn(package_name="numpy")
-    assert "installed_numpy" in result
+
+    result = await tool.fn(AddDependencyRequest(package="numpy"))
+
+    assert isinstance(result, AddDependencyResponse)
+    assert "installed_numpy" in result.output
+
+
+async def test_add_dependency_tool_sets_success_true_on_normal_output(workspace: Workspace) -> None:
+    """The add_dependency tool sets success=True when the command completes without timing out."""
+    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
+
+    result = await tool.fn(AddDependencyRequest(package="requests"))
+
+    assert result.success is True
+
+
+async def test_add_dependency_tool_sets_package_field(workspace: Workspace) -> None:
+    """The add_dependency tool response includes the package name that was installed."""
+    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
+
+    result = await tool.fn(AddDependencyRequest(package="numpy"))
+
+    assert result.package == "numpy"

@@ -1,19 +1,29 @@
 """Tests for Tool dataclass and ToolRegistry register, get, and schema methods."""
 
 import pytest
+from pydantic import BaseModel
 
 from forge.tools.registry import Tool, ToolRegistry
 
 
-async def _noop(**kwargs: str) -> str:
-    return "noop"
+class _SimpleRequest(BaseModel):
+    x: str
+
+
+class _SimpleResponse(BaseModel):
+    result: str
+
+
+async def _noop(req: BaseModel) -> BaseModel:
+    return _SimpleResponse(result="noop")
 
 
 def _make_tool(name: str) -> Tool:
     return Tool(
         name=name,
         description=f"tool {name}",
-        parameters={"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]},
+        request_type=_SimpleRequest,
+        response_type=_SimpleResponse,
         fn=_noop,
     )
 
@@ -56,7 +66,7 @@ def test_to_tool_schema_skips_unregistered_tools() -> None:
 
 
 def test_to_tool_schema_produces_correct_format() -> None:
-    """to_tool_schema() returns a list of Ollama function-tool dicts for the named tools."""
+    """to_tool_schema() returns a list of function-tool dicts with schema from request_type."""
     registry = ToolRegistry()
     tool = _make_tool("alpha")
     registry.register(tool)
@@ -69,7 +79,7 @@ def test_to_tool_schema_produces_correct_format() -> None:
             "function": {
                 "name": "alpha",
                 "description": "tool alpha",
-                "parameters": tool.parameters,
+                "parameters": _SimpleRequest.model_json_schema(),
             },
         }
     ]

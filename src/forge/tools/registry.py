@@ -3,15 +3,18 @@
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from pydantic import BaseModel
 
-@dataclass
+
+@dataclass(frozen=True)
 class Tool:
-    """A named async callable with a JSON schema description for LLM tool use."""
+    """A named async callable with typed request/response Pydantic models for LLM tool use."""
 
     name: str
     description: str
-    parameters: dict  # type: ignore[type-arg]  # JSON schema
-    fn: Callable[..., Awaitable[str]]
+    request_type: type[BaseModel]
+    response_type: type[BaseModel]
+    fn: Callable[[BaseModel], Awaitable[BaseModel]]
 
 
 class ToolRegistry:
@@ -42,7 +45,7 @@ class ToolRegistry:
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.parameters,
+                    "parameters": tool.request_type.model_json_schema(),
                 },
             }
             for name in names

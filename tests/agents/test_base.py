@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+from pydantic import BaseModel
+
 from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
@@ -12,6 +14,14 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.tools.registry import Tool, ToolRegistry
+
+
+class _DoThingRequest(BaseModel):
+    pass
+
+
+class _DoThingResponse(BaseModel):
+    result: str
 
 
 def _plan_request() -> AgentRequest:
@@ -63,8 +73,14 @@ async def test_run_agent_tool_loop_executes_and_feeds_back():
     """run_agent executes tool calls and feeds results back until a text response arrives."""
     request = _work_request()
     registry = ToolRegistry()
-    mock_fn = AsyncMock(return_value="tool_result")
-    registry.register(Tool(name="do_thing", description="does thing", parameters={}, fn=mock_fn))
+    mock_fn = AsyncMock(return_value=_DoThingResponse(result="tool_result"))
+    registry.register(Tool(
+        name="do_thing",
+        description="does thing",
+        request_type=_DoThingRequest,
+        response_type=_DoThingResponse,
+        fn=mock_fn,
+    ))
     schema = registry.to_tool_schema(["do_thing"])
 
     provider = _mock_provider()

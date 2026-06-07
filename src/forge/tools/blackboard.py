@@ -4,6 +4,12 @@ import json
 
 from forge.core.workspace import Workspace
 from forge.tools.registry import Tool
+from forge.tools.schemas import (
+    ReadBlackboardRequest,
+    ReadBlackboardResponse,
+    WriteBlackboardRequest,
+    WriteBlackboardResponse,
+)
 
 
 async def read_blackboard(key: str, workspace: Workspace) -> str:
@@ -17,44 +23,33 @@ async def read_blackboard(key: str, workspace: Workspace) -> str:
 
 def make_read_blackboard_tool(workspace: Workspace) -> Tool:
     """Return a Tool that reads a single key from the workspace blackboard."""
-    async def fn(key: str) -> str:
-        return await read_blackboard(key, workspace)
+    async def fn(req: ReadBlackboardRequest) -> ReadBlackboardResponse:  # type: ignore[misc]
+        raw = await read_blackboard(req.key, workspace)
+        value = None if raw in ("empty", "key not found") else raw
+        return ReadBlackboardResponse(key=req.key, value=value)
 
     return Tool(
         name="read_blackboard",
         description="Read a value from the shared blackboard by key",
-        parameters={
-            "type": "object",
-            "properties": {
-                "key": {"type": "string", "description": "The blackboard key to read"},
-            },
-            "required": ["key"],
-        },
-        fn=fn,
+        request_type=ReadBlackboardRequest,
+        response_type=ReadBlackboardResponse,
+        fn=fn,  # type: ignore[arg-type]
     )
 
 
 def make_write_blackboard_tool(workspace: Workspace) -> Tool:
     """Return a Tool that writes a single key-value pair to the workspace blackboard."""
-    async def write_blackboard(key: str, value: str) -> str:
-        import json
-
+    async def fn(req: WriteBlackboardRequest) -> WriteBlackboardResponse:  # type: ignore[misc]
         path = workspace.blackboard_path()
         data = json.loads(path.read_text()) if path.exists() else {}
-        data[key] = value
+        data[req.key] = req.value
         path.write_text(json.dumps(data, indent=2))
-        return f"wrote blackboard key: {key}"
+        return WriteBlackboardResponse(key=req.key)
 
     return Tool(
         name="write_blackboard",
         description="Write a value to the shared blackboard by key.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "key": {"type": "string", "description": "Blackboard key"},
-                "value": {"type": "string", "description": "Value to store"},
-            },
-            "required": ["key", "value"],
-        },
-        fn=write_blackboard,
+        request_type=WriteBlackboardRequest,
+        response_type=WriteBlackboardResponse,
+        fn=fn,  # type: ignore[arg-type]
     )

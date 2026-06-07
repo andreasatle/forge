@@ -113,8 +113,16 @@ async def _run_tool_loop(
             args = json.loads(call["function"]["arguments"])
             print(f"[debug] tool call: {name!r} args={args!r}")
             tool = tools.get(name)
-            result = await tool.fn(**args)
-            messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
+            try:
+                request_obj = tool.request_type.model_validate(args)
+            except Exception as e:
+                raise ValueError(f"tool {name!r} request validation failed: {e}") from e
+            result = await tool.fn(request_obj)  # type: ignore[arg-type]
+            if not isinstance(result, tool.response_type):
+                raise ValueError(
+                    f"tool {name!r} returned {type(result).__name__}, expected {tool.response_type.__name__}"
+                )
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": result.model_dump_json()})
 
     raise RuntimeError(
         f"agentic loop exceeded {max_tool_iterations} iterations without a final response"

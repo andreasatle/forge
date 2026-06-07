@@ -6,6 +6,7 @@ import pytest
 
 from forge.core.workspace import Workspace
 from forge.tools.blackboard import make_write_blackboard_tool, read_blackboard
+from forge.tools.schemas import WriteBlackboardRequest, WriteBlackboardResponse
 
 
 @pytest.fixture
@@ -47,9 +48,10 @@ async def test_write_blackboard_creates_file_if_missing(workspace: Workspace) ->
     """write_blackboard tool creates the blackboard file and stores the key when it is missing."""
     tool = make_write_blackboard_tool(workspace)
 
-    result = await tool.fn(key="k", value="v")
+    result = await tool.fn(WriteBlackboardRequest(key="k", value="v"))
 
-    assert result == "wrote blackboard key: k"
+    assert isinstance(result, WriteBlackboardResponse)
+    assert result.key == "k"
     data = json.loads(workspace.blackboard_path().read_text())
     assert data["k"] == "v"
 
@@ -59,7 +61,7 @@ async def test_write_blackboard_updates_existing_key(workspace: Workspace) -> No
     workspace.blackboard_path().write_text(json.dumps({"k": "old"}))
     tool = make_write_blackboard_tool(workspace)
 
-    await tool.fn(key="k", value="new")
+    await tool.fn(WriteBlackboardRequest(key="k", value="new"))
 
     data = json.loads(workspace.blackboard_path().read_text())
     assert data["k"] == "new"
@@ -70,7 +72,7 @@ async def test_write_blackboard_preserves_other_keys(workspace: Workspace) -> No
     workspace.blackboard_path().write_text(json.dumps({"a": "1", "b": "2"}))
     tool = make_write_blackboard_tool(workspace)
 
-    await tool.fn(key="a", value="updated")
+    await tool.fn(WriteBlackboardRequest(key="a", value="updated"))
 
     data = json.loads(workspace.blackboard_path().read_text())
     assert data["b"] == "2"
@@ -79,7 +81,7 @@ async def test_write_blackboard_preserves_other_keys(workspace: Workspace) -> No
 async def test_write_then_read_blackboard_round_trip(workspace: Workspace) -> None:
     """A write followed by a read returns the value that was written."""
     write_tool = make_write_blackboard_tool(workspace)
-    await write_tool.fn(key="x", value="42")
+    await write_tool.fn(WriteBlackboardRequest(key="x", value="42"))
 
     result = await read_blackboard("x", workspace)
 
