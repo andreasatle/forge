@@ -65,7 +65,7 @@ async def test_run_agent_tool_loop_executes_and_feeds_back():
     registry = ToolRegistry()
     mock_fn = AsyncMock(return_value="tool_result")
     registry.register(Tool(name="do_thing", description="does thing", parameters={}, fn=mock_fn))
-    schema = registry.to_ollama_schema(["do_thing"])
+    schema = registry.to_tool_schema(["do_thing"])
 
     provider = _mock_provider()
     provider.chat_with_tools = AsyncMock(side_effect=[

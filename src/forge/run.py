@@ -84,7 +84,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
 
     runner = Runner()
     runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, planner_provider, config.max_retries))
-    runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider))
+    runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider, max_tool_iterations=config.max_tool_iterations))
     runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)

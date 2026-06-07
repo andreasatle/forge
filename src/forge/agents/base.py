@@ -12,7 +12,7 @@ from forge.tools.registry import ToolRegistry
 
 S = TypeVar("S", bound=BaseModel)
 
-_MAX_TOOL_ITERATIONS = 10
+_MAX_TOOL_ITERATIONS = 25
 
 
 async def run_agent(
@@ -23,6 +23,7 @@ async def run_agent(
     tools: ToolRegistry | None = None,
     tool_schema: list[dict] | None = None,  # type: ignore[type-arg]
     max_retries: int = 3,
+    max_tool_iterations: int = _MAX_TOOL_ITERATIONS,
     correction_prompt_fn: Callable[[Exception, str], str] | None = None,
     response_fn: Callable[[str], AgentResponse] | None = None,
 ) -> AgentResponse:
@@ -31,7 +32,7 @@ async def run_agent(
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
         if tools is not None:
-            return await _run_tool_loop(request, provider, prompt, tools, tool_schema or [])
+            return await _run_tool_loop(request, provider, prompt, tools, tool_schema or [], max_tool_iterations)
         return await _run_with_retries(
             request, provider, prompt, max_retries, correction_prompt_fn, response_fn
         )
@@ -92,10 +93,13 @@ async def _run_tool_loop(
     prompt: str,
     tools: ToolRegistry,
     tool_schema: list[dict],  # type: ignore[type-arg]
+    max_tool_iterations: int,
 ) -> AgentResponse:
     messages: list[dict] = [{"role": "user", "content": prompt}]  # type: ignore[type-arg]
+    tool_names = ", ".join(t["function"]["name"] for t in tool_schema)
+    print(f"[debug] tools available: {tool_names}")
 
-    for _ in range(_MAX_TOOL_ITERATIONS):
+    for _ in range(max_tool_iterations):
         text, tool_calls = await provider.chat_with_tools(messages, tool_schema, provider.max_tokens)
         if text is not None:
             return AgentResponse(
@@ -113,5 +117,5 @@ async def _run_tool_loop(
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
 
     raise RuntimeError(
-        f"agentic loop exceeded {_MAX_TOOL_ITERATIONS} iterations without a final response"
+        f"agentic loop exceeded {max_tool_iterations} iterations without a final response"
     )

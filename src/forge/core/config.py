@@ -36,6 +36,7 @@ class ForgeConfig:
     verbose: bool = False
     max_retries: int = 3
     max_tokens: int = 8192
+    max_tool_iterations: int = 25
 
     @staticmethod
     def load(path: Path) -> "ForgeConfig":
@@ -71,4 +72,5 @@ class ForgeConfig:
             verbose=data.get("verbose", False),
             max_retries=data.get("max_retries", 3),
             max_tokens=data.get("max_tokens", 8192),
+            max_tool_iterations=data.get("max_tool_iterations", 25),
         )

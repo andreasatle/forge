@@ -20,9 +20,14 @@ prompt_supplement: |
   Always include pytest as a dev dependency in pyproject.toml:
     [project.optional-dependencies]
     dev = ["pytest"]
-  Always add a [tool.pytest.ini_options] section:
+  Always include pythonpath = ["src"] in [tool.pytest.ini_options] so pytest can find modules without the src. prefix:
     [tool.pytest.ini_options]
     testpaths = ["tests"]
+    pythonpath = ["src"]
+
+  Import modules directly by name, not with src. prefix:
+    correct:   from scraper import WebScraper
+    incorrect: from src.scraper import WebScraper
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
   Run `uv add --dev pytest` to add pytest as a dev dependency.

@@ -34,8 +34,8 @@ class ToolRegistry:
         """Return a list of tools for the given names in order, raising KeyError for any missing."""
         return [self.get(name) for name in names]
 
-    def to_ollama_schema(self, names: list[str]) -> list[dict]:  # type: ignore[type-arg]
-        """Return the Ollama function-tool schema for the named tools."""
+    def to_tool_schema(self, names: list[str]) -> list[dict]:  # type: ignore[type-arg]
+        """Return the canonical tool schema for registered names; silently skips unknown ones."""
         return [
             {
                 "type": "function",
@@ -45,5 +45,6 @@ class ToolRegistry:
                     "parameters": tool.parameters,
                 },
             }
-            for tool in self.get_many(names)
+            for name in names
+            if (tool := self._tools.get(name)) is not None
         ]

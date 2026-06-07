@@ -31,10 +31,13 @@ async def test_read_file_returns_contents(workspace: Workspace) -> None:
     assert result == "world"
 
 
-async def test_read_file_fails_clearly_on_missing_file(workspace: Workspace) -> None:
-    """read_file() raises FileNotFoundError with a clear message for a missing file."""
-    with pytest.raises(FileNotFoundError, match="file not found in workspace outputs"):
-        await read_file("no_such_file.txt", workspace, _ARTIFACT)
+async def test_read_file_returns_helpful_message_for_missing_file(workspace: Workspace) -> None:
+    """read_file() returns a recovery hint instead of raising when the file does not exist."""
+    result = await read_file("no_such_file.txt", workspace, _ARTIFACT)
+
+    assert "file not found: no_such_file.txt" in result
+    assert "list_files" in result
+    assert "write_file" in result
 
 
 async def test_list_files_returns_newline_separated_paths(workspace: Workspace) -> None:

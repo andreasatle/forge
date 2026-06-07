@@ -13,6 +13,7 @@ converts its wire response → canonical before returning. No conversion happens
 outside of providers.
 """
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Protocol
@@ -22,6 +23,29 @@ import httpx
 _ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
 _OPENAI_API = "https://api.openai.com/v1/chat/completions"
 _ANTHROPIC_VERSION = "2023-06-01"
+
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 1.0
+
+
+async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: object) -> httpx.Response:
+    """POST to url, retrying on 429/5xx with exponential backoff; raises immediately on other errors."""
+    last_exc: httpx.HTTPStatusError
+    for attempt in range(_MAX_RETRIES):
+        response = await client.post(url, **kwargs)  # type: ignore[arg-type]
+        try:
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in _RETRY_STATUSES:
+                raise
+            last_exc = e
+            if attempt < _MAX_RETRIES - 1:
+                wait = _RETRY_BASE_DELAY * (2 ** attempt)
+                print(f"[debug] HTTP {e.response.status_code} — retry {attempt + 1}/3, waiting {wait}s")
+                await asyncio.sleep(wait)
+    raise last_exc
 
 
 class LLMProvider(Protocol):
@@ -127,8 +151,7 @@ class OllamaProvider:
             "options": {"num_predict": max_tokens},
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(f"{self.base_url}/api/chat", json=payload)
-            response.raise_for_status()
+            response = await _post_with_retry(client, f"{self.base_url}/api/chat", json=payload)
         data = response.json()
         content = data.get("message", {}).get("content", "")
         if not content or not content.strip():
@@ -146,8 +169,7 @@ class OllamaProvider:
             "options": {"num_predict": max_tokens},
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(f"{self.base_url}/api/chat", json=payload)
-            response.raise_for_status()
+            response = await _post_with_retry(client, f"{self.base_url}/api/chat", json=payload)
         data = response.json()
         message = data.get("message", {})
         tool_calls_raw = message.get("tool_calls")
@@ -189,8 +211,7 @@ class ClaudeProvider:
             "messages": [{"role": "user", "content": prompt}],
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(_ANTHROPIC_API, headers=headers, json=payload)
-            response.raise_for_status()
+            response = await _post_with_retry(client, _ANTHROPIC_API, headers=headers, json=payload)
         data = response.json()
         content = next(
             (b["text"] for b in data.get("content", []) if b.get("type") == "text"), ""
@@ -214,8 +235,7 @@ class ClaudeProvider:
             "tools": _tools_to_claude_schema(tools),
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(_ANTHROPIC_API, headers=headers, json=payload)
-            response.raise_for_status()
+            response = await _post_with_retry(client, _ANTHROPIC_API, headers=headers, json=payload)
         data = response.json()
         tool_uses = [b for b in data.get("content", []) if b.get("type") == "tool_use"]
         if tool_uses:
@@ -257,8 +277,7 @@ class OpenAIProvider:
             "messages": [{"role": "user", "content": prompt}],
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(_OPENAI_API, headers=headers, json=payload)
-            response.raise_for_status()
+            response = await _post_with_retry(client, _OPENAI_API, headers=headers, json=payload)
         data = response.json()
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not content or not content.strip():
@@ -280,8 +299,7 @@ class OpenAIProvider:
             "tools": openai_tools,
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(_OPENAI_API, headers=headers, json=payload)
-            response.raise_for_status()
+            response = await _post_with_retry(client, _OPENAI_API, headers=headers, json=payload)
         data = response.json()
         message = data.get("choices", [{}])[0].get("message", {})
         tool_calls_raw = message.get("tool_calls")

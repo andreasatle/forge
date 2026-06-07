@@ -3,6 +3,7 @@
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from forge.llm.factory import make_provider
@@ -406,3 +407,76 @@ async def test_openai_provider_sanitizes_trailing_equals_in_argument_keys() -> N
         _, tool_calls = await provider.chat_with_tools([{"role": "user", "content": "go"}], [], 2048)
 
     assert json.loads(tool_calls[0]["function"]["arguments"]) == {"path": "/out", "content": "hi"}
+
+
+# --- Retry behaviour (shared _post_with_retry helper) ---
+
+
+def _make_http_error(status_code: int) -> httpx.HTTPStatusError:
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    return httpx.HTTPStatusError("error", request=MagicMock(), response=mock_response)
+
+
+def _error_response(status_code: int) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.raise_for_status.side_effect = _make_http_error(status_code)
+    return resp
+
+
+async def test_provider_retries_on_429_then_succeeds() -> None:
+    """Provider retries on 429 and returns the result when a subsequent attempt succeeds."""
+    provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            side_effect=[_error_response(429), _mock_http_response({"message": {"content": "ok"}})]
+        )
+        with patch("forge.llm.providers.asyncio.sleep") as mock_sleep:
+            result = await provider.chat("hi", 512)
+
+    assert result == "ok"
+    mock_sleep.assert_called_once_with(1.0)
+
+
+async def test_provider_retries_on_503_then_succeeds() -> None:
+    """Provider retries on 503 and returns the result when a subsequent attempt succeeds."""
+    provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            side_effect=[_error_response(503), _mock_http_response({"message": {"content": "ok"}})]
+        )
+        with patch("forge.llm.providers.asyncio.sleep"):
+            result = await provider.chat("hi", 512)
+
+    assert result == "ok"
+
+
+async def test_provider_does_not_retry_on_401() -> None:
+    """Provider raises immediately on 401 without retrying."""
+    provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_error_response(401)
+        )
+        with patch("forge.llm.providers.asyncio.sleep") as mock_sleep:
+            with pytest.raises(httpx.HTTPStatusError):
+                await provider.chat("hi", 512)
+
+    mock_sleep.assert_not_called()
+
+
+async def test_provider_reraises_after_max_retries_exhausted() -> None:
+    """Provider re-raises the last HTTPStatusError after all retry attempts are exhausted."""
+    provider = OllamaProvider(model="gemma4:e4b", max_tokens=512)
+
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+            return_value=_error_response(429)
+        )
+        with patch("forge.llm.providers.asyncio.sleep"):
+            with pytest.raises(httpx.HTTPStatusError):
+                await provider.chat("hi", 512)

@@ -16,6 +16,7 @@ async def work_agent(
     language_registry: LanguageRegistry,
     provider: LLMProvider,
     max_retries: int = 3,
+    max_tool_iterations: int = 25,
 ) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     spec = request.spec
@@ -34,7 +35,7 @@ async def work_agent(
         plugin.test_command if plugin else None,
         plugin.add_dependency_command if plugin else None,
     )
-    tool_schema = tools.to_ollama_schema(adapter.tools)
+    tool_schema = tools.to_tool_schema(adapter.tools)
     prompt = adapter.prompt_template.format(
         objective=spec.objective,
         success_condition=spec.success_condition,
@@ -50,4 +51,5 @@ async def work_agent(
         tools=tools,
         tool_schema=tool_schema,
         max_retries=max_retries,
+        max_tool_iterations=max_tool_iterations,
     )

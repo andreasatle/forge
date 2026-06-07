@@ -177,3 +177,17 @@ def test_models_config_defaults() -> None:
     assert m.planner == "ollama/gemma4:e4b"
     assert m.worker == "ollama/gemma4:e4b"
     assert m.integrator == "ollama/gemma4:e4b"
+
+
+def test_max_tool_iterations_defaults_to_25(tmp_path: Path) -> None:
+    """load() defaults max_tool_iterations to 25 when not present in YAML."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.max_tool_iterations == 25
+
+
+def test_max_tool_iterations_parsed_from_yaml(tmp_path: Path) -> None:
+    """load() reads max_tool_iterations from YAML when explicitly declared."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tool_iterations: 50\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.max_tool_iterations == 50

@@ -31,7 +31,7 @@ def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: 
 
     return Tool(
         name="run_tests",
-        description=f"Run tests with: {test_command}. Use after writing or modifying code. Iterate until tests pass.",
+        description="Run the test suite by calling this tool directly. Do NOT try to read a file called 'run_tests' — call this tool instead. Returns test output.",
         parameters={
             "type": "object",
             "properties": {},

@@ -55,11 +55,12 @@ def make_work_handler(
     workspace: Workspace,
     language_registry: LanguageRegistry,
     provider: LLMProvider,
+    max_tool_iterations: int = 25,
 ) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
 
     async def work_handler(request: AgentRequest) -> AgentResponse:
-        return await work_agent(request, registry, workspace, language_registry, provider)
+        return await work_agent(request, registry, workspace, language_registry, provider, max_tool_iterations=max_tool_iterations)
 
     return work_handler
 

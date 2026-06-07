@@ -8,7 +8,7 @@ async def read_file(path: str, workspace: Workspace, artifact_name: str) -> str:
     """Read and return the contents of a file from the named artifact directory."""
     file_path = workspace.artifact_dir(artifact_name) / path
     if not file_path.exists():
-        raise FileNotFoundError(f"file not found in workspace outputs: {path!r}")
+        return f'file not found: {path} — use list_files("") to see what files exist, or write_file to create it'
     return file_path.read_text()
 
 
@@ -48,7 +48,7 @@ def make_list_files_tool(workspace: Workspace, artifact_name: str) -> Tool:
 
     return Tool(
         name="list_files",
-        description="List files in a directory within the workspace outputs",
+        description="List all files in a directory. Always call this before read_file to discover what files exist.",
         parameters={
             "type": "object",
             "properties": {
