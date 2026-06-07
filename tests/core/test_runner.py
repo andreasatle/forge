@@ -196,14 +196,13 @@ async def test_stub_plan_handler_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_work_handler_returns_result_in_delta(tmp_path: Path) -> None:
-    """make_work_handler returns a handler whose delta contains the LLM text result."""
+async def test_work_handler_returns_completed(tmp_path: Path) -> None:
+    """make_work_handler returns a COMPLETED response on success."""
     provider = _mock_provider(("ok", []))
     handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
     response = await handler(_work_request())
 
-    assert response.delta is not None
-    assert response.delta.get("result") == "ok"
+    assert response.status == ResponseStatus.COMPLETED
 
 
 async def test_stub_integrate_handler_returns_completed() -> None:

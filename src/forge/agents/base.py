@@ -69,7 +69,6 @@ async def _run_with_retries(
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                delta={"result": last_text},
             )
         except ValueError as e:
             last_error = e
@@ -105,7 +104,6 @@ async def _run_tool_loop(
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                delta={"result": text},
             )
         messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
         for call in tool_calls:

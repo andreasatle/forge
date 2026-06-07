@@ -1,7 +1,7 @@
 """Core Pydantic models and enums shared across all forge components."""
 
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -103,6 +103,29 @@ class AgentRequest(BaseModel):
     priority: Priority = Priority.NORMAL
 
 
+class Edit(BaseModel, frozen=True):
+    """A surgical edit to an existing file — old must be unique in the file."""
+
+    path: str
+    old: str
+    new: str
+
+
+class FileWrite(BaseModel, frozen=True):
+    """A new file to be written to the artifact directory."""
+
+    path: str
+    content: str
+
+
+class DeltaState(BaseModel, frozen=True):
+    """The state change produced by a worker or integrator agent."""
+
+    edits: list[Edit] = []
+    new_files: list[FileWrite] = []
+    dependencies: list[str] = []
+
+
 class AgentResponse(BaseModel):
     """Immutable result returned by an agent after processing a request."""
 
@@ -110,8 +133,54 @@ class AgentResponse(BaseModel):
 
     request_id: RequestId
     status: ResponseStatus
-    delta: dict | None = None  # type: ignore[type-arg]
+    delta: DeltaState | None = None
     follow_up: list[AgentRequest] = Field(default_factory=list)
+    error: str | None = None
+
+
+class StateView(BaseModel, frozen=True):
+    """A high-level projection of the current artifact state for LLM context."""
+
+    artifact_name: str
+    language: str | None
+    files: list[str]
+    dependencies: list[str]
+    test_summary: str | None = None
+
+
+class TaskSpec(BaseModel, frozen=True):
+    """A single task emitted by the planner."""
+
+    objective: str
+    success_condition: str
+    adapter: str
+    artifact: str
+    language: str | None
+    depends_on: list[int] = []
+
+
+class PlanResponse(BaseModel, frozen=True):
+    """The planner's final output — a list of tasks to execute."""
+
+    kind: Literal["plan"]
+    tasks: list[TaskSpec]
+
+
+class ToolCallRequest(BaseModel, frozen=True):
+    """LLM requests a tool to be executed."""
+
+    kind: Literal["tool_call"]
+    name: str
+    arguments: dict[str, Any]
+
+
+class ToolCallResponse(BaseModel, frozen=True):
+    """Framework response to a tool call — fed back to the LLM."""
+
+    kind: Literal["tool_response"]
+    name: str
+    success: bool
+    result: Any
     error: str | None = None
 
 

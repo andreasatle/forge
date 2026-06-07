@@ -7,11 +7,18 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DeltaState,
+    Edit,
     NodeState,
+    PlanResponse,
     Priority,
     RequestSource,
     ResponseStatus,
     SchedulerState,
+    StateView,
+    TaskSpec,
+    ToolCallRequest,
+    ToolCallResponse,
     WorkSpec,
 )
 
@@ -165,3 +172,89 @@ def test_work_spec_with_artifact_serializes_correctly():
     data = spec.model_dump()
     restored = WorkSpec.model_validate(data)
     assert restored.artifact == "codebase"
+
+
+# --- Edit ---
+
+
+def test_edit_is_frozen():
+    """Edit raises on direct field mutation."""
+    edit = Edit(path="a.py", old="foo", new="bar")
+    with pytest.raises(Exception):
+        edit.path = "b.py"  # type: ignore[misc]
+
+
+# --- DeltaState ---
+
+
+def test_delta_state_defaults_to_empty_lists():
+    """DeltaState fields all default to empty lists."""
+    delta = DeltaState()
+    assert delta.edits == []
+    assert delta.new_files == []
+    assert delta.dependencies == []
+
+
+# --- StateView ---
+
+
+def test_state_view_stores_files_as_paths():
+    """StateView accepts a list of string paths for the files field."""
+    view = StateView(
+        artifact_name="myapp",
+        language="python",
+        files=["src/main.py", "src/utils.py"],
+        dependencies=["requests"],
+    )
+    assert view.files == ["src/main.py", "src/utils.py"]
+
+
+# --- PlanResponse ---
+
+
+def test_plan_response_kind_discriminator():
+    """PlanResponse requires kind to be 'plan'."""
+    pr = PlanResponse(
+        kind="plan",
+        tasks=[],
+    )
+    assert pr.kind == "plan"
+
+
+# --- TaskSpec ---
+
+
+def test_task_spec_defaults_depends_on_to_empty_list():
+    """TaskSpec.depends_on defaults to an empty list."""
+    ts = TaskSpec(
+        objective="write tests",
+        success_condition="tests pass",
+        adapter="coding",
+        artifact="codebase",
+        language=None,
+    )
+    assert ts.depends_on == []
+
+
+# --- ToolCallRequest ---
+
+
+def test_tool_call_request_kind_discriminator():
+    """ToolCallRequest requires kind to be 'tool_call'."""
+    req = ToolCallRequest(kind="tool_call", name="read_file", arguments={"path": "a.py"})
+    assert req.kind == "tool_call"
+
+
+# --- ToolCallResponse ---
+
+
+def test_tool_call_response_kind_discriminator():
+    """ToolCallResponse requires kind to be 'tool_response'."""
+    resp = ToolCallResponse(kind="tool_response", name="read_file", success=True, result="content")
+    assert resp.kind == "tool_response"
+
+
+def test_tool_call_response_error_defaults_to_none():
+    """ToolCallResponse.error defaults to None when not provided."""
+    resp = ToolCallResponse(kind="tool_response", name="read_file", success=True, result="ok")
+    assert resp.error is None

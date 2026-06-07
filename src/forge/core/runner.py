@@ -46,7 +46,7 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        delta={"plan": "stub plan"},
+        delta=None,
     )
 
 
@@ -70,7 +70,7 @@ async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        delta={"integrated": True},
+        delta=None,
     )
 
 

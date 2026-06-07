@@ -144,9 +144,8 @@ async def test_run_agent_exhausted_retries_returns_failed():
 
 
 async def test_run_agent_success_returns_completed():
-    """run_agent returns COMPLETED with the result text in delta on success."""
+    """run_agent returns COMPLETED status on success."""
     provider = _mock_provider("great result")
     response = await run_agent(_plan_request(), PlanSpec, provider, "prompt")
 
     assert response.status == ResponseStatus.COMPLETED
-    assert response.delta == {"result": "great result"}
