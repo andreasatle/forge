@@ -52,34 +52,3 @@ def test_get_many_raises_if_any_tool_missing() -> None:
 
     with pytest.raises(KeyError, match="unknown tool"):
         registry.get_many(["alpha", "missing"])
-
-
-def test_to_tool_schema_skips_unregistered_tools() -> None:
-    """to_tool_schema() silently omits names not in the registry (e.g. optional conditional tools)."""
-    registry = ToolRegistry()
-    registry.register(_make_tool("alpha"))
-
-    schema = registry.to_tool_schema(["alpha", "not_registered"])
-
-    assert len(schema) == 1
-    assert schema[0]["function"]["name"] == "alpha"
-
-
-def test_to_tool_schema_produces_correct_format() -> None:
-    """to_tool_schema() returns a list of function-tool dicts with schema from request_type."""
-    registry = ToolRegistry()
-    tool = _make_tool("alpha")
-    registry.register(tool)
-
-    schema = registry.to_tool_schema(["alpha"])
-
-    assert schema == [
-        {
-            "type": "function",
-            "function": {
-                "name": "alpha",
-                "description": "tool alpha",
-                "parameters": _SimpleRequest.model_json_schema(),
-            },
-        }
-    ]

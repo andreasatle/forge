@@ -81,11 +81,10 @@ def _make_workspace(tmp_path: Path) -> Workspace:
     return ws
 
 
-def _mock_provider(chat_with_tools_return: tuple = ("ok", [])) -> MagicMock:
+def _mock_provider() -> MagicMock:
     provider = MagicMock()
     provider.max_tokens = 8192
     provider.chat = AsyncMock(return_value="{}")
-    provider.chat_with_tools = AsyncMock(return_value=chat_with_tools_return)
     return provider
 
 
@@ -198,7 +197,7 @@ async def test_stub_plan_handler_returns_completed() -> None:
 
 async def test_work_handler_returns_completed(tmp_path: Path) -> None:
     """make_work_handler returns a COMPLETED response on success."""
-    provider = _mock_provider(("ok", []))
+    provider = _mock_provider()
     handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
     response = await handler(_work_request())
 

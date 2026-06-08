@@ -36,18 +36,3 @@ class ToolRegistry:
     def get_many(self, names: list[str]) -> list[Tool]:
         """Return a list of tools for the given names in order, raising KeyError for any missing."""
         return [self.get(name) for name in names]
-
-    def to_tool_schema(self, names: list[str]) -> list[dict]:  # type: ignore[type-arg]
-        """Return the canonical tool schema for registered names; silently skips unknown ones."""
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.request_type.model_json_schema(),
-                },
-            }
-            for name in names
-            if (tool := self._tools.get(name)) is not None
-        ]
