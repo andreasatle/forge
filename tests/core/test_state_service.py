@@ -95,6 +95,26 @@ def test_apply_delta_raises_on_old_string_not_found(tmp_path):
         )
 
 
+def test_build_state_view_excludes_noise_files(tmp_path):
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    artifact_dir = ws.artifact_dir("app")
+    (artifact_dir / "src").mkdir()
+    (artifact_dir / "src" / "main.py").write_text("x = 1")
+    (artifact_dir / ".venv").mkdir()
+    (artifact_dir / ".venv" / "lib.py").write_text("x")
+    (artifact_dir / "__pycache__").mkdir()
+    (artifact_dir / "__pycache__" / "main.cpython-312.pyc").write_text("x")
+    (artifact_dir / "uv.lock").write_text("x")
+    (artifact_dir / "src" / "compiled.pyc").write_text("x")
+    (artifact_dir / "CACHEDIR.TAG").write_text("x")
+    (artifact_dir / "pyvenv.cfg").write_text("x")
+
+    view = StateService(ws, "app").build_state_view()
+
+    assert view.files == ["src/main.py"]
+
+
 def test_apply_delta_is_single_write_boundary(tmp_path):
     """build_state_view must not write any files — only apply_delta may mutate disk."""
     ws = _ws(tmp_path)

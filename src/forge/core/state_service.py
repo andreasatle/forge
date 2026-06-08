@@ -9,6 +9,19 @@ from forge.core.models import DeltaState, StateView
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
+_EXCLUDED_DIR_NAMES = frozenset({".venv", "__pycache__", ".git"})
+_EXCLUDED_FILE_NAMES = frozenset({"CACHEDIR.TAG", "pyvenv.cfg"})
+_EXCLUDED_SUFFIXES = frozenset({".pyc", ".lock"})
+
+
+def _is_noise(path: Path, root: Path) -> bool:
+    parts = path.relative_to(root).parts
+    return (
+        any(p in _EXCLUDED_DIR_NAMES for p in parts)
+        or path.name in _EXCLUDED_FILE_NAMES
+        or path.suffix in _EXCLUDED_SUFFIXES
+    )
+
 
 def _read_python_deps(artifact_dir: Path) -> list[str]:
     manifest = artifact_dir / "pyproject.toml"
@@ -53,7 +66,7 @@ class StateService:
         files = sorted(
             str(f.relative_to(artifact_dir))
             for f in artifact_dir.rglob("*")
-            if f.is_file()
+            if f.is_file() and not _is_noise(f, artifact_dir)
         )
 
         reader = _DEPS_READERS.get(self._plugin.name) if self._plugin else None

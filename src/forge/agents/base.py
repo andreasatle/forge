@@ -12,6 +12,8 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DeltaState,
+    Edit,
+    FileWrite,
     PlanResponse,
     RequestSource,
     ResponseStatus,
@@ -26,25 +28,37 @@ S = TypeVar("S", bound=BaseModel)
 
 
 def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel]) -> str:
-    lines = [
+    has_tools = tools is not None and bool(tools._tools)
+    step2 = "2. " if has_tools else ""
+    lines: list[str] = [
         "You must respond with JSON only — no markdown, no explanation.",
         "",
-        "You have two valid response formats:",
-        "",
-        "1. To call a tool — use this exact format:",
-        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
-        "",
-        "Available tools:",
     ]
-    if tools is not None:
+    if has_tools:
+        lines += [
+            "You have two valid response formats:",
+            "",
+            "1. To call a tool — use this exact format:",
+            '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
+            "",
+            "Available tools:",
+        ]
         for tool in tools._tools.values():
             lines.append(f"  {tool.name}: {tool.description}")
             lines.append(f"    input schema: {json.dumps(tool.request_type.model_json_schema())}")
             lines.append(f"    response schema: {json.dumps(tool.response_type.model_json_schema())}")
             lines.append("")
+        lines += [
+            "IMPORTANT: You must use tools to do your work. Do NOT skip straight to the final response.",
+            "  - Use write_file to create files",
+            "  - Use add_dependency to install packages",
+            "  - Use run_tests to verify your work",
+            "  - Only return the final JSON response after you have completed ALL work using tools",
+            "",
+        ]
     if final_response_type is DeltaState:
         lines += [
-            "2. When ALL your work is done, respond with this exact JSON structure:",
+            f"{step2}When ALL your work is done, respond with this exact JSON structure:",
             "{",
             '  "new_files": [',
             '    {"path": "src/example.py", "content": "# complete file content here\\n"}',
@@ -62,10 +76,30 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
             "  - NEVER return empty new_files and edits if you created or modified any files",
             "  - Include the COMPLETE content of every file — do not truncate or abbreviate",
         ]
+    elif final_response_type is PlanResponse:
+        lines += [
+            f"{step2}When you have completed your task, respond with this exact JSON structure:",
+            json.dumps(
+                {
+                    "kind": "plan",
+                    "tasks": [
+                        {
+                            "objective": "<task description>",
+                            "success_condition": "<how to verify it is done>",
+                            "adapter": "coding",
+                            "artifact": "<artifact-name>",
+                            "language": "python",
+                            "depends_on": [],
+                        }
+                    ],
+                },
+                indent=2,
+            ),
+        ]
     else:
         lines += [
-            "2. When you have completed your task:",
-            json.dumps(final_response_type.model_json_schema()),
+            f"{step2}When you have completed your task:",
+            json.dumps(final_response_type.model_json_schema(), indent=2),
         ]
     lines += ["", "Respond with JSON only."]
     return "\n".join(lines)
@@ -93,28 +127,64 @@ def _parse_response(
         raise ValueError(f"response does not match {final_response_type.__name__}: {e}") from e
 
 
-async def _execute_tool(request: ToolCallRequest, tools: ToolRegistry | None) -> ToolCallResponse:
+async def _execute_tool(
+    request: ToolCallRequest,
+    tools: ToolRegistry | None,
+    tracked_delta: DeltaState,
+) -> tuple[ToolCallResponse, DeltaState]:
     if tools is None:
-        return ToolCallResponse(
-            kind="tool_response", name=request.name, success=False, result=None, error="no tools registered"
+        return (
+            ToolCallResponse(
+                kind="tool_response", name=request.name, success=False, result=None, error="no tools registered"
+            ),
+            tracked_delta,
         )
     try:
         tool = tools.get(request.name)
     except KeyError as e:
-        return ToolCallResponse(
-            kind="tool_response", name=request.name, success=False, result=None, error=str(e)
+        return (
+            ToolCallResponse(
+                kind="tool_response", name=request.name, success=False, result=None, error=str(e)
+            ),
+            tracked_delta,
         )
     try:
         request_obj = tool.request_type.model_validate(request.arguments)
         result = await tool.fn(request_obj)
         if not isinstance(result, tool.response_type):
             raise ValueError(f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}")
-        return ToolCallResponse(
-            kind="tool_response", name=request.name, success=True, result=result.model_dump()
+        updated = tracked_delta
+        if request.name == "write_file":
+            fw = FileWrite(path=request.arguments["path"], content=request.arguments["content"])
+            new_files = [f for f in updated.new_files if f.path != fw.path] + [fw]
+            updated = updated.model_copy(update={"new_files": new_files})
+        elif request.name == "replace_in_file":
+            edit = Edit(
+                path=request.arguments["path"],
+                old=request.arguments["old"],
+                new=request.arguments["new"],
+            )
+            updated = updated.model_copy(update={"edits": list(updated.edits) + [edit]})
+        elif request.name == "add_dependency":
+            pkg = request.arguments["package"]
+            if pkg not in updated.dependencies:
+                updated = updated.model_copy(update={"dependencies": list(updated.dependencies) + [pkg]})
+        print(
+            f"[debug] tracked: tool={request.name}"
+            f" delta_files={len(updated.new_files)}"
+            f" delta_edits={len(updated.edits)}"
+            f" delta_deps={len(updated.dependencies)}"
+        )
+        return (
+            ToolCallResponse(kind="tool_response", name=request.name, success=True, result=result.model_dump()),
+            updated,
         )
     except Exception as e:
-        return ToolCallResponse(
-            kind="tool_response", name=request.name, success=False, result=None, error=str(e)
+        return (
+            ToolCallResponse(
+                kind="tool_response", name=request.name, success=False, result=None, error=str(e)
+            ),
+            tracked_delta,
         )
 
 
@@ -142,6 +212,21 @@ def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentReques
     ]
 
 
+def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
+    """Merge tracked (framework-observed) and reported (LLM-declared) deltas; tracked wins on conflict."""
+    files: dict[str, FileWrite] = {fw.path: fw for fw in reported.new_files}
+    files.update({fw.path: fw for fw in tracked.new_files})
+    edits: dict[str, Edit] = {e.path: e for e in reported.edits}
+    edits.update({e.path: e for e in tracked.edits})
+    seen: set[str] = set()
+    deps: list[str] = []
+    for d in [*tracked.dependencies, *reported.dependencies]:
+        if d not in seen:
+            seen.add(d)
+            deps.append(d)
+    return DeltaState(new_files=list(files.values()), edits=list(edits.values()), dependencies=deps)
+
+
 async def run_agent(
     request: AgentRequest,
     spec_type: type[S],
@@ -159,11 +244,14 @@ async def run_agent(
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
 
         system_prompt = _build_system_prompt(tools, final_response_type)
+        print(f"[debug] system prompt:\n{system_prompt}")
+        print(f"[debug] user prompt:\n{prompt}")
         messages: list[dict] = [  # type: ignore[type-arg]
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
 
+        tracked_delta = DeltaState()
         retry_count = 0
 
         for _ in range(max_tool_iterations):
@@ -190,7 +278,7 @@ async def run_agent(
                 continue
 
             if isinstance(parsed, ToolCallRequest):
-                tool_response = await _execute_tool(parsed, tools)
+                tool_response, tracked_delta = await _execute_tool(parsed, tools, tracked_delta)
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 continue
@@ -198,7 +286,7 @@ async def run_agent(
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                delta=parsed if isinstance(parsed, DeltaState) else None,
+                delta=_merge_delta(tracked_delta, parsed) if isinstance(parsed, DeltaState) else None,
                 follow_up=_to_follow_up(parsed, request) if isinstance(parsed, PlanResponse) else [],
             )
 
