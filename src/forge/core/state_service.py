@@ -5,7 +5,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from forge.core.models import DeltaState, StateView, RunResult
+from forge.core.models import DeltaState, RunResult, StateView
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 

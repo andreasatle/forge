@@ -198,6 +198,7 @@ async def test_stub_plan_handler_returns_completed() -> None:
 async def test_work_handler_returns_completed(tmp_path: Path) -> None:
     """make_work_handler returns a COMPLETED response on success."""
     provider = _mock_provider()
+    provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
     handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
     response = await handler(_work_request())
 
@@ -335,7 +336,7 @@ async def test_make_work_handler_never_calls_chat_with_tools(tmp_path: Path) -> 
     """make_work_handler uses provider.chat only, never chat_with_tools."""
     provider = MagicMock()
     provider.max_tokens = 8192
-    provider.chat = AsyncMock(return_value="{}")
+    provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
     provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
 
     handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)

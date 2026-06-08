@@ -292,6 +292,12 @@ async def run_agent(
 
             try:
                 parsed = _parse_response(raw, tools, final_response_type)
+                if state_service is not None and isinstance(parsed, DeltaState):
+                    if not parsed.new_files and not parsed.edits and not parsed.dependencies:
+                        raise ValueError(
+                            "DeltaState is empty — you must use write_file or add_dependency tools before returning "
+                            "the final response. Call list_files to see existing files, then write_file to create new ones."
+                        )
             except ValueError as e:
                 if retry_count >= max_retries:
                     return AgentResponse(

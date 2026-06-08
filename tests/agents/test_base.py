@@ -39,6 +39,8 @@ from forge.tools.schemas import (
     WriteFileResponse,
 )
 
+_NONEMPTY_DELTA = '{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+
 
 def _mock_state_service(passed: bool = True, failures: list[str] | None = None, summary: str = "") -> MagicMock:
     ss = MagicMock(spec=StateService)
@@ -52,7 +54,7 @@ def _mock_state_service(passed: bool = True, failures: list[str] | None = None, 
 async def test_run_agent_worker_mode_applies_delta_and_returns_completed_on_passing_tests():
     """Worker mode: LLM produces DeltaState → apply_delta called → tests pass → COMPLETED."""
     request = _work_request()
-    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+    provider = _mock_provider(_NONEMPTY_DELTA)
     ss = _mock_state_service(passed=True)
 
     response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
@@ -66,10 +68,7 @@ async def test_run_agent_worker_mode_retries_on_test_failure():
     """Worker mode: tests fail → correction prompt built → LLM called again → tests pass → COMPLETED."""
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"edits": [], "new_files": [], "dependencies": []}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(side_effect=[_NONEMPTY_DELTA, _NONEMPTY_DELTA])
     ss = MagicMock(spec=StateService)
     ss.run_tests.side_effect = [
         RunResult(passed=False, failures=["FAILED tests/test_main.py::test_foo"], summary="1 failed"),
@@ -87,10 +86,7 @@ async def test_run_agent_worker_mode_correction_prompt_contains_test_output():
     """Worker mode: the correction prompt sent after test failure includes test output."""
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"edits": [], "new_files": [], "dependencies": []}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(side_effect=[_NONEMPTY_DELTA, _NONEMPTY_DELTA])
     ss = MagicMock(spec=StateService)
     ss.run_tests.side_effect = [
         RunResult(passed=False, failures=["FAILED test_foo"], summary="1 failed in 0.1s"),
