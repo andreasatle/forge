@@ -24,9 +24,11 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
+    RunResult,
     ToolCallRequest,
     WorkSpec,
 )
+from forge.core.state_service import StateService
 from forge.tools.registry import Tool, ToolRegistry
 from forge.tools.schemas import (
     AddDependencyRequest,
@@ -36,6 +38,100 @@ from forge.tools.schemas import (
     WriteFileRequest,
     WriteFileResponse,
 )
+
+
+def _mock_state_service(passed: bool = True, failures: list[str] | None = None, summary: str = "") -> MagicMock:
+    ss = MagicMock(spec=StateService)
+    ss.run_tests.return_value = RunResult(passed=passed, failures=failures or [], summary=summary)
+    return ss
+
+
+# --- run_agent worker mode (Plan→Apply→Verify loop) ---
+
+
+async def test_run_agent_worker_mode_applies_delta_and_returns_completed_on_passing_tests():
+    """Worker mode: LLM produces DeltaState → apply_delta called → tests pass → COMPLETED."""
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+    ss = _mock_state_service(passed=True)
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
+
+    assert response.status == ResponseStatus.COMPLETED
+    ss.apply_delta.assert_called_once()
+    ss.run_tests.assert_called_once()
+
+
+async def test_run_agent_worker_mode_retries_on_test_failure():
+    """Worker mode: tests fail → correction prompt built → LLM called again → tests pass → COMPLETED."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        '{"edits": [], "new_files": [], "dependencies": []}',
+        '{"edits": [], "new_files": [], "dependencies": []}',
+    ])
+    ss = MagicMock(spec=StateService)
+    ss.run_tests.side_effect = [
+        RunResult(passed=False, failures=["FAILED tests/test_main.py::test_foo"], summary="1 failed"),
+        RunResult(passed=True, failures=[], summary="1 passed"),
+    ]
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 2
+    assert ss.apply_delta.call_count == 2
+
+
+async def test_run_agent_worker_mode_correction_prompt_contains_test_output():
+    """Worker mode: the correction prompt sent after test failure includes test output."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        '{"edits": [], "new_files": [], "dependencies": []}',
+        '{"edits": [], "new_files": [], "dependencies": []}',
+    ])
+    ss = MagicMock(spec=StateService)
+    ss.run_tests.side_effect = [
+        RunResult(passed=False, failures=["FAILED test_foo"], summary="1 failed in 0.1s"),
+        RunResult(passed=True),
+    ]
+
+    await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
+
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    correction_content = next(
+        m["content"] for m in reversed(second_call_messages) if m["role"] == "user"
+    )
+    assert "failed tests" in correction_content
+    assert "1 failed in 0.1s" in correction_content
+
+
+async def test_run_agent_worker_mode_returns_failed_after_max_iterations():
+    """Worker mode: tests always fail → max iterations exhausted → FAILED with MAX_ITERATIONS."""
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+    ss = _mock_state_service(passed=False, failures=["FAILED test_x"], summary="1 failed")
+
+    response = await run_agent(
+        request, WorkSpec, provider, "prompt",
+        state_service=ss,
+        max_tool_iterations=2,
+    )
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+
+
+async def test_run_agent_planner_mode_unchanged_without_state_service():
+    """Planner mode: no state_service → no test loop, returns COMPLETED immediately on DeltaState."""
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+
+    response = await run_agent(request, WorkSpec, provider, "prompt")
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 1
 
 
 class _DoThingRequest(BaseModel):

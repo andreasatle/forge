@@ -138,6 +138,14 @@ class DeltaState(BaseModel, frozen=True):
     dependencies: list[str] = []
 
 
+class RunResult(BaseModel, frozen=True):
+    """Result of running tests against the current artifact state."""
+
+    passed: bool
+    failures: list[str] = []
+    summary: str = ""
+
+
 class AgentResponse(BaseModel):
     """Immutable result returned by an agent after processing a request."""
 

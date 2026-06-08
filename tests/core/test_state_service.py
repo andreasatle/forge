@@ -1,9 +1,11 @@
-"""Tests for StateService: build_state_view and apply_delta."""
+"""Tests for StateService: build_state_view, apply_delta, and run_tests."""
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge.core.models import DeltaState, Edit, FileWrite
-from forge.core.state_service import StateService
+from forge.core.models import DeltaState, Edit, FileWrite, RunResult
+from forge.core.state_service import StateService, _parse_test_result
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
@@ -127,3 +129,73 @@ def test_apply_delta_is_single_write_boundary(tmp_path):
     after = {f: f.stat().st_mtime for f in artifact_dir.rglob("*") if f.is_file()}
 
     assert before == after
+
+
+# --- run_tests ---
+
+
+def test_run_tests_returns_passed_when_no_plugin(tmp_path):
+    """run_tests returns RunResult(passed=True) when no plugin is configured."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+
+    result = StateService(ws, "app").run_tests()
+
+    assert result == RunResult(passed=True)
+
+
+def test_run_tests_parses_passing_output(tmp_path):
+    """run_tests returns RunResult(passed=True) when subprocess reports all tests passing."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = "1 passed in 0.1s\n"
+    mock_proc.stderr = ""
+
+    with patch("subprocess.run", return_value=mock_proc):
+        result = StateService(ws, "app", plugin).run_tests()
+
+    assert result.passed is True
+
+
+def test_run_tests_parses_failing_output(tmp_path):
+    """run_tests returns RunResult(passed=False) with failures when subprocess reports failures."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+
+    mock_proc = MagicMock()
+    mock_proc.stdout = "FAILED tests/test_main.py::test_bar - AssertionError\n1 failed in 0.1s\n"
+    mock_proc.stderr = ""
+
+    with patch("subprocess.run", return_value=mock_proc):
+        result = StateService(ws, "app", plugin).run_tests()
+
+    assert result.passed is False
+    assert len(result.failures) == 1
+
+
+# --- _parse_test_result ---
+
+
+def test_parse_test_result_passing():
+    """_parse_test_result returns passed=True when output contains 'N passed'."""
+    result = _parse_test_result("3 passed in 0.2s")
+    assert result.passed is True
+    assert result.failures == []
+
+
+def test_parse_test_result_failing():
+    """_parse_test_result returns passed=False when output contains 'N failed'."""
+    result = _parse_test_result("FAILED tests/test_x.py::test_y\n1 failed in 0.1s")
+    assert result.passed is False
+    assert len(result.failures) == 1
+
+
+def test_parse_test_result_timeout():
+    """_parse_test_result returns passed=False with 'timed out' failure on timeout output."""
+    result = _parse_test_result("timed out after 60 seconds")
+    assert result.passed is False
+    assert "timed out" in result.failures

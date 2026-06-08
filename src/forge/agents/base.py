@@ -19,10 +19,12 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
+    RunResult,
     ToolCallRequest,
     ToolCallResponse,
     WorkSpec,
 )
+from forge.core.state_service import StateService
 from forge.llm.providers import LLMProvider
 from forge.tools.registry import ToolRegistry
 
@@ -242,12 +244,28 @@ def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
     return DeltaState(new_files=list(files.values()), edits=list(edits.values()), dependencies=deps)
 
 
+def _build_test_correction_prompt(test_result: RunResult, delta: DeltaState) -> str:
+    lines = [test_result.summary, *test_result.failures]
+    test_output = "\n".join(line for line in lines if line)
+    files_written = [fw.path for fw in delta.new_files] + [e.path for e in delta.edits]
+    files_section = "\n".join(f"  - {f}" for f in files_written) if files_written else "  (none)"
+    return (
+        "Your previous attempt failed tests. Here are the results:\n\n"
+        f"{test_output}\n\n"
+        "The files you wrote:\n"
+        f"{files_section}\n\n"
+        "Fix the issues and return a new DeltaState with the corrected files.\n"
+        "Include ALL files in new_files — not just the changed ones."
+    )
+
+
 async def run_agent(
     request: AgentRequest,
     spec_type: type[S],
     provider: LLMProvider,
     prompt: str,
     tools: ToolRegistry | None = None,
+    state_service: StateService | None = None,
     final_response_type: type[BaseModel] = DeltaState,
     max_retries: int = 3,
     max_tool_iterations: int = 25,
@@ -297,6 +315,21 @@ async def run_agent(
                 tool_response, tracked_delta = await _execute_tool(parsed, tools, tracked_delta)
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
+                continue
+
+            # Worker mode: Apply the delta, run tests, loop on failure.
+            if state_service is not None and isinstance(parsed, DeltaState):
+                state_service.apply_delta(parsed)
+                test_result = state_service.run_tests()
+                if test_result.passed:
+                    return AgentResponse(
+                        request_id=request.id,
+                        status=ResponseStatus.COMPLETED,
+                        delta=_merge_delta(tracked_delta, parsed),
+                    )
+                correction = _build_test_correction_prompt(test_result, parsed)
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({"role": "user", "content": correction})
                 continue
 
             return AgentResponse(

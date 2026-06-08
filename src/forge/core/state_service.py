@@ -5,13 +5,15 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from forge.core.models import DeltaState, StateView
+from forge.core.models import DeltaState, StateView, RunResult
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
 _EXCLUDED_DIR_NAMES = frozenset({".venv", "__pycache__", ".git"})
 _EXCLUDED_FILE_NAMES = frozenset({"CACHEDIR.TAG", "pyvenv.cfg"})
 _EXCLUDED_SUFFIXES = frozenset({".pyc", ".lock"})
+
+_TEST_TIMEOUT = 60
 
 
 def _is_noise(path: Path, root: Path) -> bool:
@@ -45,6 +47,24 @@ _DEPS_READERS = {
     "python": _read_python_deps,
     "rust": _read_rust_deps,
 }
+
+
+def _parse_test_result(raw: str) -> RunResult:
+    if "timed out" in raw:
+        return RunResult(passed=False, failures=["timed out"], summary=raw.strip())
+    lines = raw.splitlines()
+    failures = [line.strip() for line in lines if line.strip().startswith("FAILED ")]
+    failed_match = re.search(r"(\d+) failed", raw)
+    passed_match = re.search(r"(\d+) passed", raw)
+    if failed_match and int(failed_match.group(1)) > 0:
+        passed = False
+    elif passed_match:
+        passed = True
+    else:
+        passed = len(failures) == 0
+    non_empty = [line.strip() for line in lines if line.strip()]
+    summary = non_empty[-1] if non_empty else raw.strip()
+    return RunResult(passed=passed, failures=failures, summary=summary)
 
 
 class StateService:
@@ -99,3 +119,22 @@ class StateService:
             for dep in delta.dependencies:
                 cmd = self._plugin.add_dependency_command.format(package=dep)
                 subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
+
+    def run_tests(self) -> RunResult:
+        """Run the language plugin test command and return structured result."""
+        if not self._plugin:
+            return RunResult(passed=True)
+        artifact_dir = self._workspace.artifact_dir(self._artifact_name)
+        try:
+            result = subprocess.run(
+                self._plugin.test_command,
+                shell=True,
+                cwd=artifact_dir,
+                capture_output=True,
+                text=True,
+                timeout=_TEST_TIMEOUT,
+            )
+            raw = result.stdout + result.stderr
+        except subprocess.TimeoutExpired:
+            return RunResult(passed=False, failures=["timed out"], summary="test command timed out")
+        return _parse_test_result(raw)
