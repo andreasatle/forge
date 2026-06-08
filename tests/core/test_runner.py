@@ -330,3 +330,29 @@ async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() ->
 
     assert completion_order.index("task A") < completion_order.index("task B")
     assert completion_order.index("task B") < completion_order.index("task C")
+
+
+async def test_make_work_handler_never_calls_chat_with_tools(tmp_path: Path) -> None:
+    """make_work_handler uses provider.chat only, never chat_with_tools."""
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    provider.chat = AsyncMock(return_value="{}")
+    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+
+    handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
+    response = await handler(_work_request())
+
+    assert response.status == ResponseStatus.COMPLETED
+
+
+async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
+    """make_plan_handler uses provider.chat only, never chat_with_tools."""
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    provider.chat = AsyncMock(return_value='{"kind": "plan", "tasks": []}')
+    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+
+    handler = make_plan_handler(_mock_registry(), artifact_names=["codebase"], artifact_languages={"codebase": "python"}, provider=provider)
+    response = await handler(_plan_request())
+
+    assert response.status == ResponseStatus.COMPLETED

@@ -85,3 +85,14 @@ async def test_planner_prints_warning_on_retry(capsys: pytest.CaptureFixture) ->
 
     captured = capsys.readouterr()
     assert "agent retry 1" in captured.out
+
+
+async def test_plan_agent_never_calls_chat_with_tools() -> None:
+    """plan_agent uses provider.chat only, never chat_with_tools."""
+    request = _make_request()
+    provider = _mock_provider()
+    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+
+    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    assert response.status == ResponseStatus.COMPLETED

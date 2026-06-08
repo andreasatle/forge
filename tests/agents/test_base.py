@@ -491,3 +491,33 @@ async def test_run_agent_sets_failure_kind_provider_error_on_http_error():
 
     assert response.status == ResponseStatus.FAILED
     assert response.failure_kind == FailureKind.PROVIDER_ERROR
+
+
+# --- run_agent only uses provider.chat ---
+
+
+async def test_run_agent_never_calls_chat_with_tools_no_tools_path():
+    """run_agent uses provider.chat only, never chat_with_tools, when no tools are registered."""
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+
+    response = await run_agent(request, WorkSpec, provider, "prompt")
+
+    assert response.status == ResponseStatus.COMPLETED
+
+
+async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
+    """run_agent uses provider.chat only, never chat_with_tools, on the tool loop path."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+        '{"edits": [], "new_files": [], "dependencies": []}',
+    ])
+    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
+
+    assert response.status == ResponseStatus.COMPLETED
