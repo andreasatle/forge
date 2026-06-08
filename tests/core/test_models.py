@@ -9,6 +9,7 @@ from forge.core.models import (
     DAGNode,
     DeltaState,
     Edit,
+    FailureKind,
     NodeState,
     PlanResponse,
     Priority,
@@ -258,3 +259,38 @@ def test_tool_call_response_error_defaults_to_none():
     """ToolCallResponse.error defaults to None when not provided."""
     resp = ToolCallResponse(kind="tool_response", name="read_file", success=True, result="ok")
     assert resp.error is None
+
+
+# --- FailureKind ---
+
+
+def test_failure_kind_has_expected_values():
+    """FailureKind enum contains all expected classification values."""
+    assert FailureKind.INVALID_JSON.value == "invalid_json"
+    assert FailureKind.TRUNCATED_OUTPUT.value == "truncated_output"
+    assert FailureKind.PROVIDER_ERROR.value == "provider_error"
+    assert FailureKind.TIMEOUT.value == "timeout"
+    assert FailureKind.MAX_ITERATIONS.value == "max_iterations"
+    assert FailureKind.TOOL_ERROR.value == "tool_error"
+    assert FailureKind.UNKNOWN.value == "unknown"
+
+
+def test_agent_response_with_failure_kind_serializes_correctly():
+    """AgentResponse with failure_kind round-trips through model_dump and model_validate."""
+    request = _make_request()
+    response = AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        error="something went wrong",
+        failure_kind=FailureKind.INVALID_JSON,
+    )
+    data = response.model_dump()
+    restored = AgentResponse.model_validate(data)
+    assert restored.failure_kind == FailureKind.INVALID_JSON
+
+
+def test_agent_response_failure_kind_none_when_completed():
+    """AgentResponse.failure_kind defaults to None when status is COMPLETED."""
+    request = _make_request()
+    response = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+    assert response.failure_kind is None

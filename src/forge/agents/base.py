@@ -5,6 +5,7 @@ import re
 from collections.abc import Callable
 from typing import TypeVar
 
+import httpx
 from pydantic import BaseModel
 
 from forge.core.models import (
@@ -13,6 +14,7 @@ from forge.core.models import (
     AgentType,
     DeltaState,
     Edit,
+    FailureKind,
     FileWrite,
     PlanResponse,
     RequestSource,
@@ -25,6 +27,19 @@ from forge.llm.providers import LLMProvider
 from forge.tools.registry import ToolRegistry
 
 S = TypeVar("S", bound=BaseModel)
+
+
+def _classify_failure(exc: Exception) -> FailureKind:
+    """Map an exception to a FailureKind."""
+    if isinstance(exc, httpx.TimeoutException):
+        return FailureKind.TIMEOUT
+    if isinstance(exc, httpx.HTTPStatusError):
+        return FailureKind.PROVIDER_ERROR
+    if isinstance(exc, RuntimeError):
+        return FailureKind.MAX_ITERATIONS
+    if isinstance(exc, ValueError):
+        return FailureKind.INVALID_JSON
+    return FailureKind.UNKNOWN
 
 
 def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel]) -> str:
@@ -265,6 +280,7 @@ async def run_agent(
                         request_id=request.id,
                         status=ResponseStatus.FAILED,
                         error=f"agent failed after {max_retries} retries: {e}",
+                        failure_kind=FailureKind.INVALID_JSON,
                     )
                 retry_count += 1
                 print(f"  agent retry {retry_count}/{max_retries}: {e}")
@@ -298,4 +314,5 @@ async def run_agent(
             request_id=request.id,
             status=ResponseStatus.FAILED,
             error=f"{type(e).__name__}: {e}",
+            failure_kind=_classify_failure(e),
         )

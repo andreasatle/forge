@@ -155,7 +155,7 @@ class OllamaProvider:
         data = response.json()
         content = data.get("message", {}).get("content", "")
         if not content or not content.strip():
-            raise ValueError(f"empty content in Ollama response: {data!r}")
+            raise ValueError("provider returned empty content")
         return content.strip()
 
     async def chat_with_tools(
@@ -187,7 +187,7 @@ class OllamaProvider:
             ]
         content = message.get("content", "")
         if not content or not content.strip():
-            raise ValueError(f"empty content in Ollama response: {data!r}")
+            raise ValueError("provider returned empty content")
         return content.strip(), []
 
 
@@ -221,7 +221,7 @@ class ClaudeProvider:
             (b["text"] for b in data.get("content", []) if b.get("type") == "text"), ""
         )
         if not content or not content.strip():
-            raise ValueError(f"empty content in Claude response: {data!r}")
+            raise ValueError("provider returned empty content")
         return content.strip()
 
     async def chat_with_tools(
@@ -258,7 +258,7 @@ class ClaudeProvider:
             (b["text"] for b in data.get("content", []) if b.get("type") == "text"), ""
         )
         if not text or not text.strip():
-            raise ValueError(f"empty content in Claude response: {data!r}")
+            raise ValueError("provider returned empty content")
         return text.strip(), []
 
 
@@ -285,7 +285,7 @@ class OpenAIProvider:
         data = response.json()
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not content or not content.strip():
-            raise ValueError(f"empty content in OpenAI response: {data!r}")
+            raise ValueError("provider returned empty content")
         return content.strip()
 
     async def chat_with_tools(
@@ -321,5 +321,5 @@ class OpenAIProvider:
             ]
         content = message.get("content", "")
         if not content or not content.strip():
-            raise ValueError(f"empty content in OpenAI response: {data!r}")
+            raise ValueError("provider returned empty content")
         return content.strip(), []

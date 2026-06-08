@@ -2,16 +2,24 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
-from forge.agents.base import _execute_tool, _merge_delta, _parse_response, run_agent
+from forge.agents.base import (
+    _classify_failure,
+    _execute_tool,
+    _merge_delta,
+    _parse_response,
+    run_agent,
+)
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
     DeltaState,
     Edit,
+    FailureKind,
     FileWrite,
     PlanResponse,
     RequestSource,
@@ -411,3 +419,75 @@ async def test_run_agent_merges_tracked_add_dependency_into_delta():
 
     assert response.delta is not None
     assert response.delta.dependencies == ["httpx"]
+
+
+# --- _classify_failure ---
+
+
+def test_classify_failure_maps_value_error_to_invalid_json():
+    """_classify_failure maps ValueError to FailureKind.INVALID_JSON."""
+    assert _classify_failure(ValueError("bad json")) == FailureKind.INVALID_JSON
+
+
+def test_classify_failure_maps_runtime_error_to_max_iterations():
+    """_classify_failure maps RuntimeError to FailureKind.MAX_ITERATIONS."""
+    assert _classify_failure(RuntimeError("exceeded")) == FailureKind.MAX_ITERATIONS
+
+
+def test_classify_failure_maps_http_status_error_to_provider_error():
+    """_classify_failure maps httpx.HTTPStatusError to FailureKind.PROVIDER_ERROR."""
+    exc = httpx.HTTPStatusError(
+        "error",
+        request=httpx.Request("POST", "http://example.com"),
+        response=httpx.Response(500),
+    )
+    assert _classify_failure(exc) == FailureKind.PROVIDER_ERROR
+
+
+def test_classify_failure_maps_unknown_exception_to_unknown():
+    """_classify_failure maps an unrecognized exception to FailureKind.UNKNOWN."""
+    assert _classify_failure(KeyError("x")) == FailureKind.UNKNOWN
+
+
+async def test_run_agent_sets_failure_kind_invalid_json_on_retry_exhaustion():
+    """run_agent sets failure_kind=INVALID_JSON when JSON parse retries are exhausted."""
+    request = _work_request()
+    provider = _mock_provider("not valid json")
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", max_retries=0)
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.INVALID_JSON
+
+
+async def test_run_agent_sets_failure_kind_max_iterations_on_loop_exhaustion():
+    """run_agent sets failure_kind=MAX_ITERATIONS when the tool loop is exhausted."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+
+    response = await run_agent(
+        request, WorkSpec, provider, "prompt",
+        tools=registry,
+        max_tool_iterations=2,
+        max_retries=0,
+    )
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+
+
+async def test_run_agent_sets_failure_kind_provider_error_on_http_error():
+    """run_agent sets failure_kind=PROVIDER_ERROR when the provider raises HTTPStatusError."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=httpx.HTTPStatusError(
+        "server error",
+        request=httpx.Request("POST", "http://example.com"),
+        response=httpx.Response(500),
+    ))
+
+    response = await run_agent(request, WorkSpec, provider, "prompt")
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.PROVIDER_ERROR

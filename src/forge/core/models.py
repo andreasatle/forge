@@ -50,6 +50,18 @@ class ResponseStatus(Enum):
     FAILED = "failed"
 
 
+class FailureKind(Enum):
+    """Classification of why an agent failed."""
+
+    INVALID_JSON = "invalid_json"
+    TRUNCATED_OUTPUT = "truncated_output"
+    PROVIDER_ERROR = "provider_error"
+    TIMEOUT = "timeout"
+    MAX_ITERATIONS = "max_iterations"
+    TOOL_ERROR = "tool_error"
+    UNKNOWN = "unknown"
+
+
 class PlanSpec(BaseModel):
     """Spec for a planning agent request carrying the northstar goal."""
 
@@ -136,6 +148,7 @@ class AgentResponse(BaseModel):
     delta: DeltaState | None = None
     follow_up: list[AgentRequest] = Field(default_factory=list)
     error: str | None = None
+    failure_kind: FailureKind | None = None
 
 
 class StateView(BaseModel, frozen=True):
