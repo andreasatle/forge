@@ -31,23 +31,43 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
         "",
         "You have two valid response formats:",
         "",
-        "1. To call a tool:",
-        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {<arguments>}}',
+        "1. To call a tool — use this exact format:",
+        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
         "",
         "Available tools:",
     ]
     if tools is not None:
         for tool in tools._tools.values():
             lines.append(f"  {tool.name}: {tool.description}")
-            lines.append(f"    input: {json.dumps(tool.request_type.model_json_schema())}")
-            lines.append(f"    response you will receive: {json.dumps(tool.response_type.model_json_schema())}")
+            lines.append(f"    input schema: {json.dumps(tool.request_type.model_json_schema())}")
+            lines.append(f"    response schema: {json.dumps(tool.response_type.model_json_schema())}")
             lines.append("")
-    lines += [
-        "2. When you have completed your task:",
-        json.dumps(final_response_type.model_json_schema()),
-        "",
-        "Respond with JSON only.",
-    ]
+    if final_response_type is DeltaState:
+        lines += [
+            "2. When ALL your work is done, respond with this exact JSON structure:",
+            "{",
+            '  "new_files": [',
+            '    {"path": "src/example.py", "content": "# complete file content here\\n"}',
+            '  ],',
+            '  "edits": [',
+            '    {"path": "src/existing.py", "old": "exact_string_to_replace", "new": "replacement_string"}',
+            '  ],',
+            '  "dependencies": ["<package-name>"]',
+            "}",
+            "",
+            "Rules for your final response:",
+            "  - new_files: every new file you created, with its FULL content as a string (not a summary)",
+            "  - edits: every change to an existing file — old must be the exact unique string you replaced",
+            "  - dependencies: every package you installed",
+            "  - NEVER return empty new_files and edits if you created or modified any files",
+            "  - Include the COMPLETE content of every file — do not truncate or abbreviate",
+        ]
+    else:
+        lines += [
+            "2. When you have completed your task:",
+            json.dumps(final_response_type.model_json_schema()),
+        ]
+    lines += ["", "Respond with JSON only."]
     return "\n".join(lines)
 
 
