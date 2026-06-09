@@ -12,6 +12,7 @@ from forge.core.models import (
     DeltaState,
     Edit,
     FailureKind,
+    IntegrateSpec,
     IntegrationError,
     NodeState,
     PlanResponse,
@@ -25,6 +26,45 @@ from forge.core.models import (
     ToolCallResponse,
     WorkSpec,
 )
+
+# --- IntegrateSpec ---
+
+
+def test_integrate_spec_is_frozen():
+    """IntegrateSpec raises on direct field mutation."""
+    spec = IntegrateSpec(objective="merge worker results")
+    with pytest.raises(Exception):
+        spec.objective = "other"  # type: ignore[misc]
+
+
+def test_integrate_spec_work_request_ids_defaults_to_empty_list():
+    """IntegrateSpec.work_request_ids defaults to an empty list."""
+    spec = IntegrateSpec(objective="merge worker results")
+    assert spec.work_request_ids == []
+
+
+def test_integrate_spec_kind_discriminator():
+    """IntegrateSpec.kind is 'integrate' by default."""
+    spec = IntegrateSpec(objective="merge worker results")
+    assert spec.kind == "integrate"
+
+
+def test_integrate_spec_resolves_in_agent_spec_discriminated_union():
+    """AgentRequest accepts IntegrateSpec and the discriminated union round-trips correctly."""
+    from uuid import uuid4
+
+    wid = uuid4()
+    spec = IntegrateSpec(objective="merge worker results", work_request_ids=[wid])
+    request = AgentRequest(
+        agent_type=AgentType.INTEGRATE,
+        source=RequestSource.WORKER,
+        spec=spec,
+    )
+    data = request.model_dump()
+    restored = AgentRequest.model_validate(data)
+    assert isinstance(restored.spec, IntegrateSpec)
+    assert restored.spec.objective == "merge worker results"
+    assert restored.spec.work_request_ids == [wid]
 
 
 def _make_request(

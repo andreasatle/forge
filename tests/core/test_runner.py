@@ -61,7 +61,7 @@ def _integrate_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,
-        spec=IntegrateSpec(source_request_id=_work_request().id),
+        spec=IntegrateSpec(objective="integrate work"),
     )
 
 

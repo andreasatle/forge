@@ -90,13 +90,12 @@ class WorkSpec(BaseModel):
     language: str | None = None
 
 
-class IntegrateSpec(BaseModel):
-    """Spec for an integrate agent request that consolidates a completed work result."""
-
-    model_config = ConfigDict(frozen=True)
+class IntegrateSpec(BaseModel, frozen=True):
+    """Specification for an integration task — merges worker DeltaStates into committed state."""
 
     kind: Literal["integrate"] = "integrate"
-    source_request_id: RequestId
+    objective: str
+    work_request_ids: list[RequestId] = Field(default_factory=list)
 
 
 AgentSpec = Annotated[
