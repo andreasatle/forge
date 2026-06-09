@@ -44,9 +44,10 @@ def _classify_failure(exc: Exception) -> FailureKind:
     return FailureKind.UNKNOWN
 
 
-def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel]) -> str:
+def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel], iteration: int = 0) -> str:
     has_tools = tools is not None and bool(tools._tools)
-    step2 = "2. " if has_tools else ""
+    show_final = not has_tools or iteration > 0
+    step2 = "2. " if has_tools and show_final else ""
     lines: list[str] = [
         "You must respond with JSON only — no markdown, no explanation.",
         "",
@@ -73,51 +74,52 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
             "  - Only return the final JSON response after you have completed ALL work using tools",
             "",
         ]
-    if final_response_type is DeltaState:
-        lines += [
-            f"{step2}When ALL your work is done, respond with this exact JSON structure:",
-            "{",
-            '  "new_files": [',
-            '    {"path": "src/example.py", "content": "# complete file content here\\n"}',
-            '  ],',
-            '  "edits": [',
-            '    {"path": "src/existing.py", "old": "exact_string_to_replace", "new": "replacement_string"}',
-            '  ],',
-            '  "dependencies": ["<package-name>"]',
-            "}",
-            "",
-            "Rules for your final response:",
-            "  - new_files: every new file you created, with its FULL content as a string (not a summary)",
-            "  - edits: every change to an existing file — old must be the exact unique string you replaced",
-            "  - dependencies: every package you installed",
-            "  - NEVER return empty new_files and edits if you created or modified any files",
-            "  - Include the COMPLETE content of every file — do not truncate or abbreviate",
-        ]
-    elif final_response_type is PlanResponse:
-        lines += [
-            f"{step2}When you have completed your task, respond with this exact JSON structure:",
-            json.dumps(
-                {
-                    "kind": "plan",
-                    "tasks": [
-                        {
-                            "objective": "<task description>",
-                            "success_condition": "<how to verify it is done>",
-                            "adapter": "coding",
-                            "artifact": "<artifact-name>",
-                            "language": "python",
-                            "depends_on": [],
-                        }
-                    ],
-                },
-                indent=2,
-            ),
-        ]
-    else:
-        lines += [
-            f"{step2}When you have completed your task:",
-            json.dumps(final_response_type.model_json_schema(), indent=2),
-        ]
+    if show_final:
+        if final_response_type is DeltaState:
+            lines += [
+                f"{step2}When ALL your work is done, respond with this exact JSON structure:",
+                "{",
+                '  "new_files": [',
+                '    {"path": "src/example.py", "content": "# complete file content here\\n"}',
+                '  ],',
+                '  "edits": [',
+                '    {"path": "src/existing.py", "old": "exact_string_to_replace", "new": "replacement_string"}',
+                '  ],',
+                '  "dependencies": ["<package-name>"]',
+                "}",
+                "",
+                "Rules for your final response:",
+                "  - new_files: every new file you created, with its FULL content as a string (not a summary)",
+                "  - edits: every change to an existing file — old must be the exact unique string you replaced",
+                "  - dependencies: every package you installed",
+                "  - NEVER return empty new_files and edits if you created or modified any files",
+                "  - Include the COMPLETE content of every file — do not truncate or abbreviate",
+            ]
+        elif final_response_type is PlanResponse:
+            lines += [
+                f"{step2}When you have completed your task, respond with this exact JSON structure:",
+                json.dumps(
+                    {
+                        "kind": "plan",
+                        "tasks": [
+                            {
+                                "objective": "<task description>",
+                                "success_condition": "<how to verify it is done>",
+                                "adapter": "coding",
+                                "artifact": "<artifact-name>",
+                                "language": "python",
+                                "depends_on": [],
+                            }
+                        ],
+                    },
+                    indent=2,
+                ),
+            ]
+        else:
+            lines += [
+                f"{step2}When you have completed your task:",
+                json.dumps(final_response_type.model_json_schema(), indent=2),
+            ]
     lines += ["", "Respond with JSON only."]
     return "\n".join(lines)
 
@@ -280,18 +282,18 @@ async def run_agent(
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
 
-        system_prompt = _build_system_prompt(tools, final_response_type)
-        print(f"[debug] system prompt:\n{system_prompt}")
+        print(f"[debug] system prompt (iter=0):\n{_build_system_prompt(tools, final_response_type, 0)}")
         print(f"[debug] user prompt:\n{prompt}")
         messages: list[dict] = [  # type: ignore[type-arg]
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": ""},
             {"role": "user", "content": prompt},
         ]
 
         tracked_delta = DeltaState()
         retry_count = 0
 
-        for _ in range(max_tool_iterations):
+        for iteration in range(max_tool_iterations):
+            messages[0] = {"role": "system", "content": _build_system_prompt(tools, final_response_type, iteration)}
             raw = await provider.chat(messages)
 
             try:
