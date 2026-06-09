@@ -244,6 +244,10 @@ def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
     return DeltaState(new_files=list(files.values()), edits=list(edits.values()), dependencies=deps)
 
 
+def _is_empty_delta(delta: DeltaState) -> bool:
+    return not delta.new_files and not delta.edits and not delta.dependencies
+
+
 def _build_test_correction_prompt(test_result: RunResult, delta: DeltaState) -> str:
     lines = [test_result.summary, *test_result.failures]
     test_output = "\n".join(line for line in lines if line)
@@ -293,10 +297,11 @@ async def run_agent(
             try:
                 parsed = _parse_response(raw, tools, final_response_type)
                 if state_service is not None and isinstance(parsed, DeltaState):
-                    if not parsed.new_files and not parsed.edits and not parsed.dependencies:
+                    merged = _merge_delta(tracked_delta, parsed)
+                    if _is_empty_delta(merged):
                         raise ValueError(
-                            "DeltaState is empty — you must use write_file or add_dependency tools before returning "
-                            "the final response. Call list_files to see existing files, then write_file to create new ones."
+                            "DeltaState is empty — use available tools to complete your work "
+                            "before returning a response."
                         )
             except ValueError as e:
                 if retry_count >= max_retries:
