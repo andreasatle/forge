@@ -32,29 +32,28 @@ from forge.core.models import (
 
 def test_integrate_spec_is_frozen():
     """IntegrateSpec raises on direct field mutation."""
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase")
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=uuid4())
     with pytest.raises(Exception):
         spec.objective = "other"  # type: ignore[misc]
 
 
-def test_integrate_spec_work_request_ids_defaults_to_empty_list():
-    """IntegrateSpec.work_request_ids defaults to an empty list."""
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase")
-    assert spec.work_request_ids == []
+def test_integrate_spec_stores_work_request_id():
+    """IntegrateSpec stores the single work_request_id it was constructed with."""
+    wid = uuid4()
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=wid)
+    assert spec.work_request_id == wid
 
 
 def test_integrate_spec_kind_discriminator():
     """IntegrateSpec.kind is 'integrate' by default."""
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase")
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=uuid4())
     assert spec.kind == "integrate"
 
 
 def test_integrate_spec_resolves_in_agent_spec_discriminated_union():
     """AgentRequest accepts IntegrateSpec and the discriminated union round-trips correctly."""
-    from uuid import uuid4
-
     wid = uuid4()
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_ids=[wid])
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=wid)
     request = AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,
@@ -64,7 +63,7 @@ def test_integrate_spec_resolves_in_agent_spec_discriminated_union():
     restored = AgentRequest.model_validate(data)
     assert isinstance(restored.spec, IntegrateSpec)
     assert restored.spec.objective == "merge worker results"
-    assert restored.spec.work_request_ids == [wid]
+    assert restored.spec.work_request_id == wid
 
 
 def _make_request(

@@ -1,6 +1,7 @@
 """Tests for the integrator agent — merge, conflict detection, apply, and test reporting."""
 
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 from forge.agents.integrator import integrate_agent
 from forge.core.models import (
@@ -23,7 +24,7 @@ def _integrate_request(artifact: str = "codebase") -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,
-        spec=IntegrateSpec(objective="integrate workers", artifact=artifact),
+        spec=IntegrateSpec(objective="integrate workers", artifact=artifact, work_request_id=uuid4()),
     )
 
 

@@ -94,11 +94,8 @@ def make_integrate_handler(
                 status=ResponseStatus.FAILED,
                 error=f"expected IntegrateSpec, got {type(spec).__name__}",
             )
-        deltas = [
-            completed_work_deltas[rid]
-            for rid in spec.work_request_ids
-            if rid in completed_work_deltas
-        ]
+        rid = spec.work_request_id
+        deltas = [completed_work_deltas[rid]] if rid in completed_work_deltas else []
         return await integrate_agent(
             request=request,
             provider=provider,

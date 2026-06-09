@@ -91,13 +91,13 @@ class WorkSpec(BaseModel):
 
 
 class IntegrateSpec(BaseModel, frozen=True):
-    """Specification for an integration task — merges worker DeltaStates into committed state."""
+    """Specification for an integration task — merges a single worker DeltaState into committed state."""
 
     kind: Literal["integrate"] = "integrate"
     objective: str
     artifact: str
     language: str | None = None
-    work_request_ids: list[RequestId] = Field(default_factory=list)
+    work_request_id: RequestId
 
 
 AgentSpec = Annotated[

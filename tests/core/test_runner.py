@@ -4,6 +4,7 @@
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -64,7 +65,7 @@ def _integrate_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,
-        spec=IntegrateSpec(objective="integrate work", artifact="codebase"),
+        spec=IntegrateSpec(objective="integrate work", artifact="codebase", work_request_id=uuid4()),
     )
 
 
@@ -364,9 +365,8 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
 
 
 async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Path) -> None:
-    """make_integrate_handler passes deltas only for the work_request_ids listed in the spec."""
+    """make_integrate_handler passes the delta for the work_request_id in the spec."""
     from unittest.mock import patch
-    from uuid import uuid4
 
     wid = uuid4()
     delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
@@ -376,7 +376,7 @@ async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Pat
     request = AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,
-        spec=IntegrateSpec(objective="merge", artifact="codebase", work_request_ids=[wid]),
+        spec=IntegrateSpec(objective="merge", artifact="codebase", work_request_id=wid),
     )
 
     with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
