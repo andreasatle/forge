@@ -16,6 +16,7 @@ from forge.core.models import (
     IntegrationError,
     NodeState,
     PlanResponse,
+    PlanSpec,
     Priority,
     RequestSource,
     ResponseStatus,
@@ -221,6 +222,16 @@ def test_work_spec_with_artifact_serializes_correctly():
     assert restored.artifact == "codebase"
 
 
+def test_work_spec_has_no_target_entity_field():
+    """WorkSpec no longer exposes target_entity."""
+    assert not hasattr(WorkSpec, "target_entity")
+
+
+def test_plan_spec_has_no_goal_field():
+    """PlanSpec no longer exposes goal; northstar is the only goal-carrying field."""
+    assert not hasattr(PlanSpec, "goal")
+
+
 # --- Edit ---
 
 
@@ -347,14 +358,10 @@ def test_tool_call_response_error_defaults_to_none():
 
 
 def test_failure_kind_has_expected_values():
-    """FailureKind enum contains all expected classification values."""
-    assert FailureKind.INVALID_JSON.value == "invalid_json"
-    assert FailureKind.TRUNCATED_OUTPUT.value == "truncated_output"
-    assert FailureKind.PROVIDER_ERROR.value == "provider_error"
-    assert FailureKind.TIMEOUT.value == "timeout"
-    assert FailureKind.MAX_ITERATIONS.value == "max_iterations"
-    assert FailureKind.TOOL_ERROR.value == "tool_error"
-    assert FailureKind.UNKNOWN.value == "unknown"
+    """FailureKind enum contains exactly the active classification values."""
+    values = {k.value for k in FailureKind}
+    assert values == {"invalid_json", "provider_error", "timeout", "max_iterations", "tool_error", "unknown"}
+    assert not hasattr(FailureKind, "TRUNCATED_OUTPUT")
 
 
 def test_agent_response_with_failure_kind_serializes_correctly():

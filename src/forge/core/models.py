@@ -58,7 +58,6 @@ class FailureKind(Enum):
     """Classification of why an agent failed."""
 
     INVALID_JSON = "invalid_json"
-    TRUNCATED_OUTPUT = "truncated_output"
     PROVIDER_ERROR = "provider_error"
     TIMEOUT = "timeout"
     MAX_ITERATIONS = "max_iterations"
@@ -73,7 +72,6 @@ class PlanSpec(BaseModel):
 
     kind: Literal["plan"] = "plan"
     northstar: str
-    goal: str | None = None
 
 
 class WorkSpec(BaseModel):
@@ -84,7 +82,6 @@ class WorkSpec(BaseModel):
     kind: Literal["work"] = "work"
     objective: str
     success_condition: str
-    target_entity: str | None = None
     adapter: str
     artifact: str
     language: str | None = None
