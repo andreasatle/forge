@@ -13,6 +13,7 @@ _ANTHROPIC_VERSION = "2023-06-01"
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _MAX_RETRIES = 5
 _RETRY_BASE_DELAY = 10.0
+_JSON_INSTRUCTION = "You must respond with valid JSON only. No markdown, no explanation, no preamble."
 
 
 async def _post_with_retry(client: httpx.AsyncClient, url: str, **kwargs: object) -> httpx.Response:
@@ -57,6 +58,7 @@ class OllamaProvider:
             "messages": messages,
             "stream": False,
             "options": {"num_predict": self.max_tokens},
+            "format": "json",
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, f"{self.base_url}/api/chat", json=payload)
@@ -88,8 +90,7 @@ class ClaudeProvider:
             "max_tokens": self.max_tokens,
             "messages": non_system,
         }
-        if system:
-            payload["system"] = system
+        payload["system"] = f"{system}\n\n{_JSON_INSTRUCTION}" if system else _JSON_INSTRUCTION
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, _ANTHROPIC_API, headers=headers, json=payload)
         data = response.json()
@@ -118,6 +119,7 @@ class OpenAIProvider:
             "model": self.model,
             "max_tokens": self.max_tokens,
             "messages": messages,
+            "response_format": {"type": "json_object"},
         }
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, _OPENAI_API, headers=headers, json=payload)

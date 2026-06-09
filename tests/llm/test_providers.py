@@ -93,6 +93,7 @@ async def test_ollama_provider_chat_formats_request_correctly() -> None:
     assert payload["model"] == "gemma4:e4b"
     assert payload["options"]["num_predict"] == 512
     assert payload["messages"][0] == {"role": "user", "content": "say hello"}
+    assert payload["format"] == "json"
 
 
 # --- ClaudeProvider ---
@@ -117,6 +118,7 @@ async def test_claude_provider_chat_formats_request_correctly() -> None:
     assert payload["model"] == "claude-sonnet-4-20250514"
     assert payload["max_tokens"] == 1024
     assert payload["messages"] == [{"role": "user", "content": "hello"}]
+    assert "valid JSON" in payload["system"]
     headers = captured[0]["headers"]
     assert headers["x-api-key"] == "sk-test"
     assert "anthropic-version" in headers
@@ -157,6 +159,7 @@ async def test_openai_provider_chat_formats_request_correctly() -> None:
     assert payload["model"] == "gpt-4o"
     assert payload["max_tokens"] == 2048
     assert payload["messages"] == [{"role": "user", "content": "question"}]
+    assert payload["response_format"] == {"type": "json_object"}
     headers = captured[0]["headers"]
     assert headers["Authorization"] == "Bearer sk-test"
 
