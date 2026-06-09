@@ -4,6 +4,8 @@ import forge.agents.worker as worker_module
 from forge.core.workspace import Workspace
 from forge.tools.builtin import build_read_registry, build_write_registry
 
+BLACKBOARD_TOOL_NAMES = {"read_blackboard", "write_blackboard"}
+
 MUTATING_TOOL_NAMES = {
     "write_file",
     "replace_in_file",
@@ -23,7 +25,13 @@ def test_read_registry_contains_read_tools(tmp_path):
     names = _names(registry)
     assert "read_file" in names
     assert "list_files" in names
-    assert "read_blackboard" in names
+
+
+def test_read_registry_excludes_blackboard_tools(tmp_path):
+    """build_read_registry must not expose any blackboard tools to agents."""
+    ws = Workspace(tmp_path)  # type: ignore[arg-type]
+    registry = build_read_registry(ws, "myapp", test_command="pytest")
+    assert _names(registry).isdisjoint(BLACKBOARD_TOOL_NAMES)
 
 
 def test_read_registry_excludes_write_tools(tmp_path):
@@ -38,7 +46,7 @@ def test_read_registry_exposes_only_non_mutating_tools(tmp_path):
     """build_read_registry exposes only tools allowed for read-only workers."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     registry = build_read_registry(ws, "myapp", test_command="pytest")
-    assert _names(registry) == {"read_file", "list_files", "read_blackboard", "run_tests"}
+    assert _names(registry) == {"read_file", "list_files", "run_tests"}
 
 
 def test_read_registry_registers_run_tests_when_command_given(tmp_path):
@@ -59,9 +67,14 @@ def test_write_registry_contains_all_tools(tmp_path):
     assert "list_files" in names
     assert "write_file" in names
     assert "replace_in_file" in names
-    assert "read_blackboard" in names
-    assert "write_blackboard" in names
     assert "run_tests" in names
+
+
+def test_write_registry_excludes_blackboard_tools(tmp_path):
+    """build_write_registry must not expose any blackboard tools to agents."""
+    ws = Workspace(tmp_path)  # type: ignore[arg-type]
+    registry = build_write_registry(ws, "myapp", test_command="pytest", add_dependency_command="uv add {package}")
+    assert _names(registry).isdisjoint(BLACKBOARD_TOOL_NAMES)
 
 
 def test_write_registry_registers_add_dependency_when_command_given(tmp_path):
