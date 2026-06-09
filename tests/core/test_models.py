@@ -32,20 +32,20 @@ from forge.core.models import (
 
 def test_integrate_spec_is_frozen():
     """IntegrateSpec raises on direct field mutation."""
-    spec = IntegrateSpec(objective="merge worker results")
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase")
     with pytest.raises(Exception):
         spec.objective = "other"  # type: ignore[misc]
 
 
 def test_integrate_spec_work_request_ids_defaults_to_empty_list():
     """IntegrateSpec.work_request_ids defaults to an empty list."""
-    spec = IntegrateSpec(objective="merge worker results")
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase")
     assert spec.work_request_ids == []
 
 
 def test_integrate_spec_kind_discriminator():
     """IntegrateSpec.kind is 'integrate' by default."""
-    spec = IntegrateSpec(objective="merge worker results")
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase")
     assert spec.kind == "integrate"
 
 
@@ -54,7 +54,7 @@ def test_integrate_spec_resolves_in_agent_spec_discriminated_union():
     from uuid import uuid4
 
     wid = uuid4()
-    spec = IntegrateSpec(objective="merge worker results", work_request_ids=[wid])
+    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_ids=[wid])
     request = AgentRequest(
         agent_type=AgentType.INTEGRATE,
         source=RequestSource.WORKER,

@@ -95,6 +95,8 @@ class IntegrateSpec(BaseModel, frozen=True):
 
     kind: Literal["integrate"] = "integrate"
     objective: str
+    artifact: str
+    language: str | None = None
     work_request_ids: list[RequestId] = Field(default_factory=list)
 
 
