@@ -22,4 +22,5 @@ prompt_supplement: |
   Always write at least one test per public function.
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
-  Use the add_dependency tool to add crate dependencies (e.g. add_dependency("serde")).
+  To add a crate dependency, call: {"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "serde"}}
+  To write a file, call: {"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/main.rs", "content": "..."}}

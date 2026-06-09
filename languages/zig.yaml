@@ -22,4 +22,5 @@ prompt_supplement: |
   Include test steps in build.zig so `zig build test` runs all tests.
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
-  Use the add_dependency tool to fetch Zig packages.
+  To fetch a Zig package, call: {"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "<url-or-path>"}}
+  To write a file, call: {"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/main.zig", "content": "..."}}

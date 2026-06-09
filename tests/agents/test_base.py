@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from forge.agents.base import (
+    _build_system_prompt,
     _classify_failure,
     _execute_tool,
     _merge_delta,
@@ -613,3 +614,56 @@ async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
     assert response.status == ResponseStatus.COMPLETED
+
+
+# --- _build_system_prompt ---
+
+
+def test_build_system_prompt_hides_delta_schema_on_first_turn_with_tools():
+    """First-turn system prompt does not show DeltaState schema when tools are present."""
+    registry, _ = _make_registry()
+    prompt = _build_system_prompt(registry, DeltaState)
+    assert "new_files" not in prompt
+    assert "edits" not in prompt
+
+
+def test_build_system_prompt_shows_delta_schema_after_tool_work():
+    """After tool work (non-empty tracked_delta), system prompt shows DeltaState schema."""
+    registry, _ = _make_registry()
+    tracked = DeltaState(new_files=[FileWrite(path="src/x.py", content="x")])
+    prompt = _build_system_prompt(registry, DeltaState, tracked)
+    assert "new_files" in prompt
+
+
+async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made():
+    """With tools and no prior tool calls, an empty DeltaState is rejected with tool-call format in the error."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+
+    response = await run_agent(
+        request, WorkSpec, provider, "prompt",
+        tools=registry,
+        max_retries=0,
+    )
+
+    assert response.status == ResponseStatus.FAILED
+    assert "tool_call" in (response.error or "")
+    assert "write_file" in (response.error or "")
+
+
+async def test_run_agent_accepts_delta_state_after_tool_work():
+    """With tools and non-empty tracked_delta, a DeltaState is accepted without correction."""
+    registry = ToolRegistry()
+    registry.register(_make_write_file_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/x.py", "content": "x = 1"}}',
+        '{"edits": [], "new_files": [], "dependencies": []}',
+    ])
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 2

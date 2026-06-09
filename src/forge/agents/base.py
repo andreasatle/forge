@@ -44,9 +44,9 @@ def _classify_failure(exc: Exception) -> FailureKind:
     return FailureKind.UNKNOWN
 
 
-def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel], iteration: int = 0) -> str:
+def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel], tracked_delta: DeltaState = DeltaState()) -> str:
     has_tools = tools is not None and bool(tools._tools)
-    show_final = not has_tools or iteration > 0
+    show_final = tools is None or not _is_empty_delta(tracked_delta)
     step2 = "2. " if has_tools and show_final else ""
     lines: list[str] = [
         "You must respond with JSON only — no markdown, no explanation.",
@@ -282,7 +282,7 @@ async def run_agent(
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
 
-        print(f"[debug] system prompt (iter=0):\n{_build_system_prompt(tools, final_response_type, 0)}")
+        print(f"[debug] system prompt (initial):\n{_build_system_prompt(tools, final_response_type, DeltaState())}")
         print(f"[debug] user prompt:\n{prompt}")
         messages: list[dict] = [  # type: ignore[type-arg]
             {"role": "system", "content": ""},
@@ -290,14 +290,26 @@ async def run_agent(
         ]
 
         tracked_delta = DeltaState()
+        any_tool_called = False
         retry_count = 0
 
-        for iteration in range(max_tool_iterations):
-            messages[0] = {"role": "system", "content": _build_system_prompt(tools, final_response_type, iteration)}
+        for _ in range(max_tool_iterations):
+            messages[0] = {"role": "system", "content": _build_system_prompt(tools, final_response_type, tracked_delta)}
             raw = await provider.chat(messages)
 
             try:
                 parsed = _parse_response(raw, tools, final_response_type)
+                if (
+                    tools is not None
+                    and not any_tool_called
+                    and isinstance(parsed, DeltaState)
+                    and _is_empty_delta(parsed)
+                ):
+                    raise ValueError(
+                        'You must call tools before returning a final response. '
+                        'Call a tool using this exact format:\n'
+                        '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/example.py", "content": "..."}}'
+                    )
                 if state_service is not None and isinstance(parsed, DeltaState):
                     merged = _merge_delta(tracked_delta, parsed)
                     if _is_empty_delta(merged):
@@ -326,6 +338,7 @@ async def run_agent(
 
             if isinstance(parsed, ToolCallRequest):
                 tool_response, tracked_delta = await _execute_tool(parsed, tools, tracked_delta)
+                any_tool_called = True
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 continue

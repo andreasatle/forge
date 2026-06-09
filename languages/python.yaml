@@ -31,4 +31,5 @@ prompt_supplement: |
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
   Run `uv add --dev pytest` to add pytest as a dev dependency.
-  Use the add_dependency tool to install packages (e.g. add_dependency("requests")).
+  To install a package, call: {"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "requests"}}
+  To write a file, call: {"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/scraper.py", "content": "..."}}

@@ -55,8 +55,8 @@ async def work_agent(
         prompt += f"\n\nArtifact '{spec.artifact}' has no files yet — create all files from scratch."
 
     prompt += (
-        "\n\nIMPORTANT: Your final response MUST list every file you created in new_files "
-        "and every edit you made in edits. Do NOT return empty new_files and edits."
+        "\n\nUse the available tools to complete your work. "
+        "Start by calling list_files to see what exists, then use write_file to create files."
     )
 
     return await run_agent(
