@@ -16,6 +16,7 @@ from forge.core.models import (
     Edit,
     FailureKind,
     FileWrite,
+    IntegrateSpec,
     PlanResponse,
     RequestSource,
     ResponseStatus,
@@ -215,7 +216,9 @@ async def _execute_tool(
 
 
 def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentRequest]:
-    requests = [
+    if not plan.tasks:
+        return []
+    work_requests = [
         AgentRequest(
             agent_type=AgentType.WORK,
             source=RequestSource.PLANNER,
@@ -229,13 +232,26 @@ def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentReques
         )
         for task in plan.tasks
     ]
-    id_map = {i: req.id for i, req in enumerate(requests)}
-    return [
+    id_map = {i: req.id for i, req in enumerate(work_requests)}
+    work_with_deps = [
         req.model_copy(update={
-            "dependencies": frozenset(id_map[j] for j in task.depends_on if 0 <= j < len(requests))
+            "dependencies": frozenset(id_map[j] for j in task.depends_on if 0 <= j < len(work_requests))
         })
-        for req, task in zip(requests, plan.tasks)
+        for req, task in zip(work_requests, plan.tasks)
     ]
+    first_task = plan.tasks[0]
+    integrate_node = AgentRequest(
+        agent_type=AgentType.INTEGRATE,
+        source=RequestSource.PLANNER,
+        spec=IntegrateSpec(
+            objective="integrate completed work",
+            artifact=first_task.artifact,
+            language=first_task.language,
+            work_request_ids=[req.id for req in work_with_deps],
+        ),
+        dependencies=frozenset(req.id for req in work_with_deps),
+    )
+    return [*work_with_deps, integrate_node]
 
 
 def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:

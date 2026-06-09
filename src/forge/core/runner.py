@@ -3,12 +3,16 @@
 from collections.abc import Awaitable, Callable
 
 from forge.adapters.registry import AdapterRegistry
+from forge.agents.integrator import integrate_agent
 from forge.agents.planner import plan_agent
 from forge.agents.worker import work_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
+    DeltaState,
+    IntegrateSpec,
+    RequestId,
     RequestSource,
     ResponseStatus,
     WorkSpec,
@@ -72,6 +76,38 @@ async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
         status=ResponseStatus.COMPLETED,
         delta=None,
     )
+
+
+def make_integrate_handler(
+    workspace: Workspace,
+    language_registry: LanguageRegistry,
+    provider: LLMProvider,
+    completed_work_deltas: dict[RequestId, DeltaState],
+) -> Handler:
+    """Return a handler that delegates integrate requests to integrate_agent."""
+
+    async def integrate_handler(request: AgentRequest) -> AgentResponse:
+        spec = request.spec
+        if not isinstance(spec, IntegrateSpec):
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"expected IntegrateSpec, got {type(spec).__name__}",
+            )
+        deltas = [
+            completed_work_deltas[rid]
+            for rid in spec.work_request_ids
+            if rid in completed_work_deltas
+        ]
+        return await integrate_agent(
+            request=request,
+            provider=provider,
+            workspace=workspace,
+            language_registry=language_registry,
+            completed_deltas=deltas,
+        )
+
+    return integrate_handler
 
 
 async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:

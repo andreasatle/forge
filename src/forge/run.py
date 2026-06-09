@@ -17,9 +17,9 @@ from forge.core.models import (
 from forge.core.persistence import load_run, save_run
 from forge.core.runner import (
     Runner,
+    make_integrate_handler,
     make_plan_handler,
     make_work_handler,
-    stub_integrate_handler,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.workspace import Workspace
@@ -82,10 +82,12 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     planner_provider = make_provider(config.models.planner, config.max_tokens)
     worker_provider = make_provider(config.models.worker, config.max_tokens)
 
+    completed_work_deltas = {}
+
     runner = Runner()
     runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, planner_provider, config.max_retries))
     runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider, max_tool_iterations=config.max_tool_iterations))
-    runner.register(AgentType.INTEGRATE, stub_integrate_handler)
+    runner.register(AgentType.INTEGRATE, make_integrate_handler(workspace, language_registry, worker_provider, completed_work_deltas))
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)
 
@@ -96,13 +98,16 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         priority=Priority.HIGH,
     )
 
+    def _on_node_completed(node) -> None:
+        print(f"✓ completed: {node.request.agent_type.value} ({node.request.id})")
+        if node.request.agent_type == AgentType.WORK and node.response and node.response.delta:
+            completed_work_deltas[node.request.id] = node.response.delta
+
     callbacks = SchedulerCallbacks(
         on_node_dispatched=lambda node: print(
             f"→ dispatched: {node.request.agent_type.value} ({node.request.id})"
         ),
-        on_node_completed=lambda node: print(
-            f"✓ completed: {node.request.agent_type.value} ({node.request.id})"
-        ),
+        on_node_completed=_on_node_completed,
         on_node_failed=lambda node: print(
             f"✗ failed: {node.request.agent_type.value} ({node.request.id})"
         ),

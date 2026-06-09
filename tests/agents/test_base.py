@@ -17,6 +17,7 @@ from forge.agents.base import (
     _execute_tool,
     _merge_delta,
     _parse_response,
+    _to_follow_up,
     run_agent,
 )
 from forge.core.models import (
@@ -27,9 +28,11 @@ from forge.core.models import (
     Edit,
     FailureKind,
     FileWrite,
+    IntegrateSpec,
     PlanResponse,
     RequestSource,
     ResponseStatus,
+    TaskSpec,
     ToolCallRequest,
     WorkSpec,
 )
@@ -639,3 +642,56 @@ async def test_run_agent_accepts_delta_state_after_tool_work():
 
     assert response.status == ResponseStatus.COMPLETED
     assert provider.chat.call_count == 2
+
+
+# --- _to_follow_up ---
+
+
+def test_to_follow_up_emits_integrate_node_as_last_follow_up():
+    """_to_follow_up appends an INTEGRATE node as the last element for non-empty tasks."""
+    plan = PlanResponse(kind="plan", tasks=[TaskSpec(
+        objective="write code",
+        success_condition="tests pass",
+        adapter="coding",
+        artifact="codebase",
+    )])
+
+    follow_ups = _to_follow_up(plan, _work_request())
+
+    assert follow_ups[-1].agent_type == AgentType.INTEGRATE
+    assert len([r for r in follow_ups if r.agent_type == AgentType.WORK]) == 1
+    assert len([r for r in follow_ups if r.agent_type == AgentType.INTEGRATE]) == 1
+
+
+def test_to_follow_up_integrate_node_depends_on_all_work_nodes():
+    """INTEGRATE node's dependencies include all work node request IDs."""
+    plan = PlanResponse(kind="plan", tasks=[
+        TaskSpec(objective="A", success_condition="done", adapter="coding", artifact="codebase"),
+        TaskSpec(objective="B", success_condition="done", adapter="coding", artifact="codebase"),
+    ])
+
+    follow_ups = _to_follow_up(plan, _work_request())
+
+    work_ids = {r.id for r in follow_ups if r.agent_type == AgentType.WORK}
+    integrate = next(r for r in follow_ups if r.agent_type == AgentType.INTEGRATE)
+    assert integrate.dependencies == work_ids
+
+
+def test_to_follow_up_integrate_spec_contains_work_request_ids():
+    """IntegrateSpec.work_request_ids matches the IDs of all emitted work nodes."""
+    plan = PlanResponse(kind="plan", tasks=[
+        TaskSpec(objective="X", success_condition="done", adapter="coding", artifact="codebase"),
+    ])
+
+    follow_ups = _to_follow_up(plan, _work_request())
+
+    work_ids = [r.id for r in follow_ups if r.agent_type == AgentType.WORK]
+    integrate = next(r for r in follow_ups if r.agent_type == AgentType.INTEGRATE)
+    assert isinstance(integrate.spec, IntegrateSpec)
+    assert integrate.spec.work_request_ids == work_ids
+
+
+def test_to_follow_up_empty_tasks_returns_empty_list():
+    """_to_follow_up returns an empty list when PlanResponse.tasks is empty."""
+    plan = PlanResponse(kind="plan", tasks=[])
+    assert _to_follow_up(plan, _work_request()) == []

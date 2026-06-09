@@ -12,6 +12,8 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
+    DeltaState,
+    FileWrite,
     IntegrateSpec,
     PlanSpec,
     Priority,
@@ -22,6 +24,7 @@ from forge.core.models import (
 )
 from forge.core.runner import (
     Runner,
+    make_integrate_handler,
     make_plan_handler,
     make_work_handler,
     scripted_plan_handler,
@@ -358,3 +361,29 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     response = await handler(_plan_request())
 
     assert response.status == ResponseStatus.COMPLETED
+
+
+async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Path) -> None:
+    """make_integrate_handler passes deltas only for the work_request_ids listed in the spec."""
+    from unittest.mock import patch
+    from uuid import uuid4
+
+    wid = uuid4()
+    delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
+    unrelated_wid = uuid4()
+    completed = {wid: delta, unrelated_wid: DeltaState()}
+
+    request = AgentRequest(
+        agent_type=AgentType.INTEGRATE,
+        source=RequestSource.WORKER,
+        spec=IntegrateSpec(objective="merge", artifact="codebase", work_request_ids=[wid]),
+    )
+
+    with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+        handler = make_integrate_handler(_make_workspace(tmp_path), LanguageRegistry(), _mock_provider(), completed)
+        response = await handler(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    mock_integrate.assert_called_once()
+    assert mock_integrate.call_args.kwargs["completed_deltas"] == [delta]
