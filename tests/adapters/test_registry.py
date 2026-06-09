@@ -70,8 +70,9 @@ def test_registry_get_returns_correct_adapter_spec(tmp_path: Path) -> None:
 name: coding
 description: Writes and edits code
 tools:
+  - list_files
   - read_file
-  - write_file
+  - run_tests
 prompt_template: "Complete: {{ objective }}"
 """)
 
@@ -83,5 +84,5 @@ prompt_template: "Complete: {{ objective }}"
     assert isinstance(spec, AdapterSpec)
     assert spec.name == "coding"
     assert spec.description == "Writes and edits code"
-    assert spec.tools == ["read_file", "write_file"]
+    assert spec.tools == ["list_files", "read_file", "run_tests"]
     assert "{{ objective }}" in spec.prompt_template

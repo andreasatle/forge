@@ -46,7 +46,6 @@ async def test_read_file_returns_helpful_message_for_missing_file(workspace: Wor
 
     assert "file not found: no_such_file.txt" in result
     assert "list_files" in result
-    assert "write_file" in result
 
 
 async def test_list_files_returns_newline_separated_paths(workspace: Workspace) -> None:
