@@ -115,7 +115,6 @@ class AgentRequest(BaseModel):
     agent_type: AgentType
     source: RequestSource
     spec: AgentSpec
-    context_chain: tuple[str, ...] = ()
     dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
     priority: Priority = Priority.NORMAL
 
