@@ -17,6 +17,7 @@ from forge.agents.base import (
     _execute_tool,
     _merge_delta,
     _parse_response,
+    _render_response_schema,
     _to_follow_up,
     run_agent,
 )
@@ -58,6 +59,13 @@ class _DoThingResponse(BaseModel):
     """Minimal response carrying a result string used in agent base unit tests."""
 
     result: str
+
+
+class _ExtendedResponse(BaseModel):
+    """Synthetic response model used to prove prompt schema rendering is model-derived."""
+
+    alpha: str
+    beta: int
 
 
 def _work_request() -> AgentRequest:
@@ -617,6 +625,27 @@ def test_build_system_prompt_shows_delta_schema_after_tool_work():
     tracked = DeltaState(new_files=[FileWrite(path="src/x.py", content="x")])
     prompt = _build_system_prompt(registry, DeltaState, tracked)
     assert "new_files" in prompt
+
+
+def test_generated_delta_schema_includes_all_top_level_model_fields():
+    """DeltaState schema prompt is generated from all actual top-level Pydantic fields."""
+    prompt = _render_response_schema(DeltaState)
+    for field_name in DeltaState.model_fields:
+        assert field_name in prompt
+
+
+def test_generated_plan_schema_includes_all_top_level_model_fields():
+    """PlanResponse schema prompt is generated from all actual top-level Pydantic fields."""
+    prompt = _render_response_schema(PlanResponse)
+    for field_name in PlanResponse.model_fields:
+        assert field_name in prompt
+
+
+def test_generated_schema_reflects_new_response_model_fields_automatically():
+    """Adding fields to a response model is reflected by schema rendering without prompt edits."""
+    prompt = _render_response_schema(_ExtendedResponse)
+    for field_name in _ExtendedResponse.model_fields:
+        assert field_name in prompt
 
 
 def test_build_system_prompt_tool_guidance_uses_registered_tools_only():

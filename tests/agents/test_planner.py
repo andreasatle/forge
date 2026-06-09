@@ -96,3 +96,20 @@ async def test_plan_agent_never_calls_chat_with_tools() -> None:
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
     assert response.status == ResponseStatus.COMPLETED
+
+
+async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
+    """Planner-specific prompt leaves final schema ownership to run_agent."""
+    request = _make_request()
+    provider = _mock_provider()
+
+    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    system_prompt = messages[0]["content"]
+    user_prompt = messages[1]["content"]
+    assert "Final response model: PlanResponse" in system_prompt
+    assert '"tasks": [' not in user_prompt
+    assert '"kind": "plan"' not in user_prompt
+    assert "Respond with ONLY a JSON object" not in user_prompt

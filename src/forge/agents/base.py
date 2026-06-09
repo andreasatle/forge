@@ -51,6 +51,34 @@ def _classify_failure(exc: Exception) -> FailureKind:
     return FailureKind.UNKNOWN
 
 
+def _compact_response_schema(response_type: type[BaseModel]) -> dict[str, object]:
+    """Return a compact JSON schema view derived from a Pydantic response model."""
+    schema = response_type.model_json_schema()
+    compact: dict[str, object] = {
+        "title": schema.get("title", response_type.__name__),
+        "type": schema.get("type", "object"),
+        "properties": schema.get("properties", {}),
+    }
+    if "required" in schema:
+        compact["required"] = schema["required"]
+    if "$defs" in schema:
+        compact["$defs"] = schema["$defs"]
+    return compact
+
+
+def _render_response_schema(response_type: type[BaseModel]) -> str:
+    """Render final-response schema instructions from the actual Pydantic model."""
+    schema = _compact_response_schema(response_type)
+    fields = ", ".join(schema["properties"].keys()) if isinstance(schema["properties"], dict) else ""
+    lines = [
+        f"Final response model: {response_type.__name__}",
+        f"Top-level fields: {fields}",
+        "Generated JSON schema:",
+        json.dumps(schema, indent=2),
+    ]
+    return "\n".join(lines)
+
+
 def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel], tracked_delta: DeltaState = DeltaState()) -> str:
     has_tools = tools is not None and bool(tools)
     show_final = tools is None or not _is_empty_delta(tracked_delta)
@@ -81,50 +109,17 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
             "",
         ]
     if show_final:
+        lines += [
+            f"{step2}When you have completed your task, respond with JSON matching this generated schema:",
+            _render_response_schema(final_response_type),
+        ]
         if final_response_type is DeltaState:
             lines += [
-                f"{step2}When ALL your work is done, respond with this exact JSON structure:",
-                "{",
-                '  "new_files": [',
-                '    {"path": "src/example.py", "content": "# complete file content here\\n"}',
-                '  ],',
-                '  "edits": [',
-                '    {"path": "src/existing.py", "old": "exact_string_to_replace", "new": "replacement_string"}',
-                '  ],',
-                '  "dependencies": ["<package-name>"]',
-                "}",
                 "",
                 "Rules for your final response:",
-                "  - new_files: every new file you created, with its FULL content as a string (not a summary)",
-                "  - edits: every change to an existing file — old must be the exact unique string you replaced",
-                "  - dependencies: every package you installed",
-                "  - NEVER return empty new_files and edits if you created or modified any files",
-                "  - Include the COMPLETE content of every file — do not truncate or abbreviate",
-            ]
-        elif final_response_type is PlanResponse:
-            lines += [
-                f"{step2}When you have completed your task, respond with this exact JSON structure:",
-                json.dumps(
-                    {
-                        "kind": "plan",
-                        "tasks": [
-                            {
-                                "objective": "<task description>",
-                                "success_condition": "<how to verify it is done>",
-                                "adapter": "coding",
-                                "artifact": "<artifact-name>",
-                                "language": "python",
-                                "depends_on": [],
-                            }
-                        ],
-                    },
-                    indent=2,
-                ),
-            ]
-        else:
-            lines += [
-                f"{step2}When you have completed your task:",
-                json.dumps(final_response_type.model_json_schema(), indent=2),
+                "  - Include complete file contents for newly created files.",
+                "  - Existing-file edits must identify exact unique text to replace.",
+                "  - Do not return an empty change set if you created or modified files.",
             ]
     return "\n".join(lines)
 
