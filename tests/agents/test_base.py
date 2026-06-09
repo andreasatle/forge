@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from forge.agents.base import (
+    ToolError,
     _build_system_prompt,
     _classify_failure,
     _execute_tool,
@@ -331,6 +332,33 @@ async def test_execute_tool_add_dependency_skips_duplicate():
     assert after_second.dependencies == ["requests"]
 
 
+async def test_execute_tool_returns_failed_response_when_replace_in_file_raises():
+    """_execute_tool returns (ToolCallResponse(success=False), original_delta) when the tool fn raises ValueError."""
+    original_delta = DeltaState(dependencies=["existing"])
+    registry = ToolRegistry()
+
+    async def failing_fn(req: ReplaceInFileRequest) -> ReplaceInFileResponse:
+        raise ValueError("old string not found in file")
+
+    registry.register(Tool(
+        name="replace_in_file",
+        description="replace in a file",
+        request_type=ReplaceInFileRequest,
+        response_type=ReplaceInFileResponse,
+        fn=failing_fn,
+    ))
+    request = ToolCallRequest(
+        kind="tool_call",
+        name="replace_in_file",
+        arguments={"path": "src/main.py", "old": "missing", "new": "x = 2"},
+    )
+    response, delta = await _execute_tool(request, registry, original_delta)
+
+    assert response.success is False
+    assert "not found" in (response.error or "")
+    assert delta == original_delta
+
+
 # --- _merge_delta ---
 
 
@@ -540,6 +568,11 @@ def test_classify_failure_maps_http_status_error_to_provider_error():
 def test_classify_failure_maps_unknown_exception_to_unknown():
     """_classify_failure maps an unrecognized exception to FailureKind.UNKNOWN."""
     assert _classify_failure(KeyError("x")) == FailureKind.UNKNOWN
+
+
+def test_classify_failure_maps_tool_error_to_tool_error():
+    """_classify_failure maps ToolError to FailureKind.TOOL_ERROR, not INVALID_JSON."""
+    assert _classify_failure(ToolError("replace_in_file failed")) == FailureKind.TOOL_ERROR
 
 
 async def test_run_agent_sets_failure_kind_invalid_json_on_retry_exhaustion():

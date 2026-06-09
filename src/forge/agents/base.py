@@ -31,6 +31,10 @@ from forge.tools.registry import ToolRegistry
 S = TypeVar("S", bound=BaseModel)
 
 
+class ToolError(Exception):
+    """Raised when a tool call fails during execution (distinct from JSON parse errors)."""
+
+
 def _classify_failure(exc: Exception) -> FailureKind:
     """Map an exception to a FailureKind."""
     if isinstance(exc, httpx.TimeoutException):
@@ -39,6 +43,8 @@ def _classify_failure(exc: Exception) -> FailureKind:
         return FailureKind.PROVIDER_ERROR
     if isinstance(exc, RuntimeError):
         return FailureKind.MAX_ITERATIONS
+    if isinstance(exc, ToolError):
+        return FailureKind.TOOL_ERROR
     if isinstance(exc, ValueError):
         return FailureKind.INVALID_JSON
     return FailureKind.UNKNOWN
