@@ -9,6 +9,7 @@ import pytest
 
 from forge.llm.factory import make_provider
 from forge.llm.providers import (
+    ChatMessage,
     ClaudeProvider,
     OllamaProvider,
     OpenAIProvider,
@@ -16,6 +17,13 @@ from forge.llm.providers import (
 )
 
 type CapturedRequest = dict[str, object]
+
+_SEMANTIC_PROVIDER_INJECTION_MARKERS = (
+    "valid JSON",
+    "No markdown",
+    "no explanation",
+    "no preamble",
+)
 
 
 def _mock_http_response(data: Mapping[str, object]) -> MagicMock:
@@ -39,6 +47,26 @@ def _mapping(value: object) -> dict[str, object]:
 def _list(value: object) -> list[object]:
     assert isinstance(value, list)
     return cast(list[object], value)
+
+
+async def _capture_provider_payload(provider: object, response_data: Mapping[str, object]) -> dict[str, object]:
+    captured: list[CapturedRequest] = []
+
+    async def fake_post(url: str, **kwargs: object) -> MagicMock:
+        captured.append({"url": url, "json": kwargs.get("json"), "headers": kwargs.get("headers")})
+        return _mock_http_response(response_data)
+
+    messages: list[ChatMessage] = [
+        {"role": "system", "content": "System-owned instruction."},
+        {"role": "user", "content": "Do the task."},
+        {"role": "assistant", "content": '{"kind": "tool_call"}'},
+        {"role": "user", "content": '{"kind": "tool_response"}'},
+    ]
+    with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)
+        await provider.chat(messages)  # type: ignore[attr-defined]
+
+    return _captured_mapping(captured, "json")
 
 
 # --- make_provider factory ---
@@ -146,11 +174,45 @@ async def test_claude_provider_chat_formats_request_correctly() -> None:
     assert payload["model"] == "claude-sonnet-4-20250514"
     assert payload["max_tokens"] == 1024
     assert payload["messages"] == [{"role": "user", "content": "hello"}]
-    system = payload["system"]
-    assert isinstance(system, str)
-    assert "valid JSON" in system
+    assert "system" not in payload
     assert headers["x-api-key"] == "sk-test"
     assert "anthropic-version" in headers
+
+
+async def test_providers_preserve_prompt_semantics_without_injection() -> None:
+    """Providers may package messages differently, but must not add semantic prompt text."""
+    messages: list[ChatMessage] = [
+        {"role": "system", "content": "System-owned instruction."},
+        {"role": "user", "content": "Do the task."},
+        {"role": "assistant", "content": '{"kind": "tool_call"}'},
+        {"role": "user", "content": '{"kind": "tool_response"}'},
+    ]
+
+    ollama_payload = await _capture_provider_payload(
+        OllamaProvider(model="gemma4:e4b", max_tokens=512),
+        {"message": {"content": "{}"}},
+    )
+    openai_payload = await _capture_provider_payload(
+        OpenAIProvider(model="gpt-4o", api_key="sk-test", max_tokens=512),
+        {"choices": [{"message": {"content": "{}"}}]},
+    )
+    claude_payload = await _capture_provider_payload(
+        ClaudeProvider(model="claude-sonnet-4-20250514", api_key="sk-test", max_tokens=512),
+        {"content": [{"type": "text", "text": "{}"}]},
+    )
+
+    assert ollama_payload["messages"] == messages
+    assert openai_payload["messages"] == messages
+    assert claude_payload["system"] == messages[0]["content"]
+    assert claude_payload["messages"] == messages[1:]
+
+    semantic_text = "\n".join(
+        str(value)
+        for payload in (ollama_payload, openai_payload, claude_payload)
+        for value in payload.values()
+    )
+    for marker in _SEMANTIC_PROVIDER_INJECTION_MARKERS:
+        assert marker not in semantic_text
 
 
 async def test_claude_provider_chat_raises_on_empty_response() -> None:

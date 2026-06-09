@@ -14,9 +14,6 @@ _ANTHROPIC_VERSION = "2023-06-01"
 _RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _MAX_RETRIES = 5
 _RETRY_BASE_DELAY = 10.0
-_JSON_INSTRUCTION = (
-    "You must respond with valid JSON only. No markdown, no explanation, no preamble."
-)
 
 
 class ChatMessage(TypedDict):
@@ -129,7 +126,8 @@ class ClaudeProvider:
             "max_tokens": self.max_tokens,
             "messages": non_system,
         }
-        payload["system"] = f"{system}\n\n{_JSON_INSTRUCTION}" if system else _JSON_INSTRUCTION
+        if system is not None:
+            payload["system"] = system
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await _post_with_retry(client, _ANTHROPIC_API, headers=headers, json=payload)
         data = cast(dict[str, object], response.json())

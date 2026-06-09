@@ -126,7 +126,6 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
                 f"{step2}When you have completed your task:",
                 json.dumps(final_response_type.model_json_schema(), indent=2),
             ]
-    lines += ["", "Respond with JSON only."]
     return "\n".join(lines)
 
 

@@ -604,6 +604,13 @@ def test_build_system_prompt_hides_delta_schema_on_first_turn_with_tools():
     assert "edits" not in prompt
 
 
+def test_build_system_prompt_owns_json_only_instruction_once():
+    """run_agent owns the JSON-only semantic instruction and emits it once."""
+    registry, _ = _make_registry()
+    prompt = _build_system_prompt(registry, DeltaState)
+    assert prompt.count("JSON only") == 1
+
+
 def test_build_system_prompt_shows_delta_schema_after_tool_work():
     """After tool work (non-empty tracked_delta), system prompt shows DeltaState schema."""
     registry, _ = _make_registry()
