@@ -22,7 +22,6 @@ def build_read_registry(
     registry.register(make_read_file_tool(workspace, artifact_name))
     registry.register(make_list_files_tool(workspace, artifact_name))
     registry.register(make_read_blackboard_tool(workspace))
-    registry.register(make_write_blackboard_tool(workspace))
     if test_command is not None:
         registry.register(make_run_tests_tool(workspace, artifact_name, test_command))
     return registry

@@ -4,6 +4,13 @@ import forge.agents.worker as worker_module
 from forge.core.workspace import Workspace
 from forge.tools.builtin import build_read_registry, build_write_registry
 
+MUTATING_TOOL_NAMES = {
+    "write_file",
+    "replace_in_file",
+    "add_dependency",
+    "write_blackboard",
+}
+
 
 def _names(registry) -> set[str]:
     return set(registry._tools.keys())
@@ -17,17 +24,21 @@ def test_read_registry_contains_read_tools(tmp_path):
     assert "read_file" in names
     assert "list_files" in names
     assert "read_blackboard" in names
-    assert "write_blackboard" in names
 
 
 def test_read_registry_excludes_write_tools(tmp_path):
-    """build_read_registry must not register write_file, replace_in_file, or add_dependency."""
+    """build_read_registry must not register mutating tools."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     registry = build_read_registry(ws, "myapp")
     names = _names(registry)
-    assert "write_file" not in names
-    assert "replace_in_file" not in names
-    assert "add_dependency" not in names
+    assert names.isdisjoint(MUTATING_TOOL_NAMES)
+
+
+def test_read_registry_exposes_only_non_mutating_tools(tmp_path):
+    """build_read_registry exposes only tools allowed for read-only workers."""
+    ws = Workspace(tmp_path)  # type: ignore[arg-type]
+    registry = build_read_registry(ws, "myapp", test_command="pytest")
+    assert _names(registry) == {"read_file", "list_files", "read_blackboard", "run_tests"}
 
 
 def test_read_registry_registers_run_tests_when_command_given(tmp_path):
