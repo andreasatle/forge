@@ -1,5 +1,7 @@
 """Tests for Runner routing, built-in handlers, and scripted_plan_handler."""
 
+# pyright: reportPrivateUsage=false
+
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 

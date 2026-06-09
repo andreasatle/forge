@@ -1,5 +1,7 @@
 """Tests for LLM provider implementations and the make_provider factory."""
 
+from collections.abc import Mapping
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -13,12 +15,30 @@ from forge.llm.providers import (
     ProviderEmptyOutputError,
 )
 
+type CapturedRequest = dict[str, object]
 
-def _mock_http_response(data: dict) -> MagicMock:
+
+def _mock_http_response(data: Mapping[str, object]) -> MagicMock:
     resp = MagicMock()
     resp.raise_for_status = MagicMock()
     resp.json.return_value = data
     return resp
+
+
+def _captured_mapping(captured: list[CapturedRequest], key: str) -> dict[str, object]:
+    value = captured[0][key]
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
+
+
+def _mapping(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
+
+
+def _list(value: object) -> list[object]:
+    assert isinstance(value, list)
+    return cast(list[object], value)
 
 
 # --- make_provider factory ---
@@ -82,7 +102,7 @@ def test_make_provider_openai_missing_api_key_raises(monkeypatch: pytest.MonkeyP
 async def test_ollama_provider_chat_formats_request_correctly() -> None:
     """OllamaProvider.chat sends the correct payload to the Ollama REST API."""
     provider = OllamaProvider(model="gemma4:e4b", max_tokens=512, base_url="http://localhost:11434")
-    captured: list[dict] = []
+    captured: list[CapturedRequest] = []
 
     async def fake_post(url: str, **kwargs: object) -> MagicMock:
         captured.append({"url": url, "json": kwargs.get("json")})
@@ -94,10 +114,12 @@ async def test_ollama_provider_chat_formats_request_correctly() -> None:
 
     assert result == "hello"
     assert captured[0]["url"] == "http://localhost:11434/api/chat"
-    payload = captured[0]["json"]
+    payload = _captured_mapping(captured, "json")
+    options = _mapping(payload["options"])
+    messages = _list(payload["messages"])
     assert payload["model"] == "gemma4:e4b"
-    assert payload["options"]["num_predict"] == 512
-    assert payload["messages"][0] == {"role": "user", "content": "say hello"}
+    assert options["num_predict"] == 512
+    assert messages[0] == {"role": "user", "content": "say hello"}
     assert payload["format"] == "json"
 
 
@@ -107,7 +129,7 @@ async def test_ollama_provider_chat_formats_request_correctly() -> None:
 async def test_claude_provider_chat_formats_request_correctly() -> None:
     """ClaudeProvider.chat sends the correct payload and headers to the Anthropic API."""
     provider = ClaudeProvider(model="claude-sonnet-4-20250514", api_key="sk-test", max_tokens=1024)
-    captured: list[dict] = []
+    captured: list[CapturedRequest] = []
 
     async def fake_post(url: str, **kwargs: object) -> MagicMock:
         captured.append({"url": url, "json": kwargs.get("json"), "headers": kwargs.get("headers")})
@@ -119,12 +141,14 @@ async def test_claude_provider_chat_formats_request_correctly() -> None:
 
     assert result == "response"
     assert captured[0]["url"] == "https://api.anthropic.com/v1/messages"
-    payload = captured[0]["json"]
+    payload = _captured_mapping(captured, "json")
+    headers = _captured_mapping(captured, "headers")
     assert payload["model"] == "claude-sonnet-4-20250514"
     assert payload["max_tokens"] == 1024
     assert payload["messages"] == [{"role": "user", "content": "hello"}]
-    assert "valid JSON" in payload["system"]
-    headers = captured[0]["headers"]
+    system = payload["system"]
+    assert isinstance(system, str)
+    assert "valid JSON" in system
     assert headers["x-api-key"] == "sk-test"
     assert "anthropic-version" in headers
 
@@ -146,7 +170,7 @@ async def test_claude_provider_chat_raises_on_empty_response() -> None:
 async def test_openai_provider_chat_formats_request_correctly() -> None:
     """OpenAIProvider.chat sends the correct payload and headers to the OpenAI API."""
     provider = OpenAIProvider(model="gpt-4o", api_key="sk-test", max_tokens=2048)
-    captured: list[dict] = []
+    captured: list[CapturedRequest] = []
 
     async def fake_post(url: str, **kwargs: object) -> MagicMock:
         captured.append({"url": url, "json": kwargs.get("json"), "headers": kwargs.get("headers")})
@@ -160,12 +184,12 @@ async def test_openai_provider_chat_formats_request_correctly() -> None:
 
     assert result == "answer"
     assert captured[0]["url"] == "https://api.openai.com/v1/chat/completions"
-    payload = captured[0]["json"]
+    payload = _captured_mapping(captured, "json")
+    headers = _captured_mapping(captured, "headers")
     assert payload["model"] == "gpt-4o"
     assert payload["max_tokens"] == 2048
     assert payload["messages"] == [{"role": "user", "content": "question"}]
     assert payload["response_format"] == {"type": "json_object"}
-    headers = captured[0]["headers"]
     assert headers["Authorization"] == "Bearer sk-test"
 
 

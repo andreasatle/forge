@@ -1,5 +1,8 @@
 """Tests for StateService: build_state_view, apply_delta, and run_tests."""
 
+# pyright: reportPrivateUsage=false
+
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,7 +13,7 @@ from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
 
-def _ws(tmp_path):
+def _ws(tmp_path: Path) -> Workspace:
     ws = Workspace(path=tmp_path)
     ws.init()
     return ws
@@ -29,7 +32,7 @@ def _plugin(name: str = "python") -> LanguagePlugin:
     )
 
 
-def test_build_state_view_returns_correct_file_listing(tmp_path):
+def test_build_state_view_returns_correct_file_listing(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     artifact_dir = ws.artifact_dir("app")
@@ -42,7 +45,7 @@ def test_build_state_view_returns_correct_file_listing(tmp_path):
     assert sorted(view.files) == ["README.md", "src/main.py"]
 
 
-def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path):
+def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
 
@@ -52,7 +55,7 @@ def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path):
     assert view.dependencies == []
 
 
-def test_apply_delta_writes_new_files(tmp_path):
+def test_apply_delta_writes_new_files(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
 
@@ -63,7 +66,7 @@ def test_apply_delta_writes_new_files(tmp_path):
     assert (ws.artifact_dir("app") / "src" / "hello.py").read_text() == "print('hi')"
 
 
-def test_apply_delta_applies_edits(tmp_path):
+def test_apply_delta_applies_edits(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
@@ -75,7 +78,7 @@ def test_apply_delta_applies_edits(tmp_path):
     assert (ws.artifact_dir("app") / "a.py").read_text() == "x = 2\n"
 
 
-def test_apply_delta_raises_on_non_unique_old_string(tmp_path):
+def test_apply_delta_raises_on_non_unique_old_string(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\nx = 1\n")
@@ -86,7 +89,7 @@ def test_apply_delta_raises_on_non_unique_old_string(tmp_path):
         )
 
 
-def test_apply_delta_raises_on_old_string_not_found(tmp_path):
+def test_apply_delta_raises_on_old_string_not_found(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
@@ -97,7 +100,7 @@ def test_apply_delta_raises_on_old_string_not_found(tmp_path):
         )
 
 
-def test_build_state_view_excludes_noise_files(tmp_path):
+def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     artifact_dir = ws.artifact_dir("app")
@@ -117,7 +120,7 @@ def test_build_state_view_excludes_noise_files(tmp_path):
     assert view.files == ["src/main.py"]
 
 
-def test_apply_delta_is_single_write_boundary(tmp_path):
+def test_apply_delta_is_single_write_boundary(tmp_path: Path) -> None:
     """build_state_view must not write any files — only apply_delta may mutate disk."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
@@ -134,7 +137,7 @@ def test_apply_delta_is_single_write_boundary(tmp_path):
 # --- run_tests ---
 
 
-def test_run_tests_returns_passed_when_no_plugin(tmp_path):
+def test_run_tests_returns_passed_when_no_plugin(tmp_path: Path) -> None:
     """run_tests returns RunResult(passed=True) when no plugin is configured."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
@@ -144,7 +147,7 @@ def test_run_tests_returns_passed_when_no_plugin(tmp_path):
     assert result == RunResult(passed=True)
 
 
-def test_run_tests_parses_passing_output(tmp_path):
+def test_run_tests_parses_passing_output(tmp_path: Path) -> None:
     """run_tests returns RunResult(passed=True) when subprocess reports all tests passing."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
@@ -160,7 +163,7 @@ def test_run_tests_parses_passing_output(tmp_path):
     assert result.passed is True
 
 
-def test_run_tests_parses_failing_output(tmp_path):
+def test_run_tests_parses_failing_output(tmp_path: Path) -> None:
     """run_tests returns RunResult(passed=False) with failures when subprocess reports failures."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")

@@ -72,7 +72,7 @@ async def test_planner_llm_error_returns_failed_immediately() -> None:
     assert provider.chat.call_count == 1
 
 
-async def test_planner_prints_warning_on_retry(capsys: pytest.CaptureFixture) -> None:
+async def test_planner_prints_warning_on_retry(capsys: pytest.CaptureFixture[str]) -> None:
     """plan_agent prints a retry warning when the LLM returns invalid JSON."""
     request = _make_request()
     provider = _mock_provider()

@@ -1,5 +1,9 @@
 """Tests for the run_agent base engine — plain chat loop with structured JSON parsing."""
 
+# pyright: reportPrivateUsage=false
+
+from collections.abc import Awaitable, Callable
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -267,7 +271,7 @@ def _make_write_file_tool() -> Tool:
         description="write a file",
         request_type=WriteFileRequest,
         response_type=WriteFileResponse,
-        fn=fn,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
     )
 
 
@@ -279,7 +283,7 @@ def _make_replace_in_file_tool() -> Tool:
         description="replace in a file",
         request_type=ReplaceInFileRequest,
         response_type=ReplaceInFileResponse,
-        fn=fn,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
     )
 
 
@@ -291,7 +295,7 @@ def _make_add_dependency_tool() -> Tool:
         description="add a dependency",
         request_type=AddDependencyRequest,
         response_type=AddDependencyResponse,
-        fn=fn,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
     )
 
 
@@ -431,7 +435,7 @@ async def test_execute_tool_returns_failed_response_when_replace_in_file_raises(
         description="replace in a file",
         request_type=ReplaceInFileRequest,
         response_type=ReplaceInFileResponse,
-        fn=failing_fn,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], failing_fn),
     ))
     request = ToolCallRequest(
         kind="tool_call",

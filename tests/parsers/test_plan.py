@@ -1,5 +1,7 @@
 """Tests for parse_plan: JSON parsing, artifact validation, dependency wiring, and adapter defaulting."""
 
+# pyright: reportPrivateUsage=false
+
 import json
 
 import pytest
@@ -21,7 +23,7 @@ def _make_registry(*adapter_names: str) -> AdapterRegistry:
     return registry
 
 
-def _plan_json(tasks: list[dict]) -> str:  # type: ignore[type-arg]
+def _plan_json(tasks: list[dict[str, object]]) -> str:
     return json.dumps({"tasks": tasks})
 
 

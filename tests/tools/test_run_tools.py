@@ -139,6 +139,7 @@ async def test_add_dependency_tool_sets_success_true_on_normal_output(workspace:
 
     result = await tool.fn(AddDependencyRequest(package="requests"))
 
+    assert isinstance(result, AddDependencyResponse)
     assert result.success is True
 
 
@@ -148,4 +149,5 @@ async def test_add_dependency_tool_sets_package_field(workspace: Workspace) -> N
 
     result = await tool.fn(AddDependencyRequest(package="numpy"))
 
+    assert isinstance(result, AddDependencyResponse)
     assert result.package == "numpy"

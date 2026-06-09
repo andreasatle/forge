@@ -1,5 +1,7 @@
 """Tests for core Pydantic models: DAGNode, SchedulerState, and AgentRequest immutability."""
 
+from uuid import UUID
+
 import pytest
 
 from forge.core.models import (
@@ -26,7 +28,7 @@ from forge.core.models import (
 
 def _make_request(
     *,
-    dependencies: frozenset | None = None,
+    dependencies: frozenset[UUID] | None = None,
 ) -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.WORK,
@@ -44,12 +46,16 @@ def _make_request(
 def _make_node(
     *,
     node_state: NodeState = NodeState.PENDING,
-    dependencies: frozenset | None = None,
+    dependencies: frozenset[UUID] | None = None,
 ) -> DAGNode:
     return DAGNode(request=_make_request(dependencies=dependencies), node_state=node_state)
 
 
-def _make_response(request_id, *, status: ResponseStatus = ResponseStatus.COMPLETED) -> AgentResponse:
+def _make_response(
+    request_id: UUID,
+    *,
+    status: ResponseStatus = ResponseStatus.COMPLETED,
+) -> AgentResponse:
     return AgentResponse(request_id=request_id, status=status)
 
 
