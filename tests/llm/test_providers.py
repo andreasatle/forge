@@ -6,7 +6,12 @@ import httpx
 import pytest
 
 from forge.llm.factory import make_provider
-from forge.llm.providers import ClaudeProvider, OllamaProvider, OpenAIProvider
+from forge.llm.providers import (
+    ClaudeProvider,
+    OllamaProvider,
+    OpenAIProvider,
+    ProviderEmptyOutputError,
+)
 
 
 def _mock_http_response(data: dict) -> MagicMock:
@@ -125,13 +130,13 @@ async def test_claude_provider_chat_formats_request_correctly() -> None:
 
 
 async def test_claude_provider_chat_raises_on_empty_response() -> None:
-    """ClaudeProvider.chat raises ValueError when the API returns no text content."""
+    """ClaudeProvider.chat raises ProviderEmptyOutputError when the API returns no text content."""
     provider = ClaudeProvider(model="claude-sonnet-4-20250514", api_key="sk-test", max_tokens=1024)
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(
             return_value=_mock_http_response({"content": []})
         )
-        with pytest.raises(ValueError, match="empty content"):
+        with pytest.raises(ProviderEmptyOutputError, match="empty content"):
             await provider.chat([{"role": "user", "content": "hello"}])
 
 
@@ -165,13 +170,13 @@ async def test_openai_provider_chat_formats_request_correctly() -> None:
 
 
 async def test_openai_provider_chat_raises_on_empty_response() -> None:
-    """OpenAIProvider.chat raises ValueError when the API returns empty content."""
+    """OpenAIProvider.chat raises ProviderEmptyOutputError when the API returns empty content."""
     provider = OpenAIProvider(model="gpt-4o", api_key="sk-test", max_tokens=2048)
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(
             return_value=_mock_http_response({"choices": [{"message": {"content": ""}}]})
         )
-        with pytest.raises(ValueError, match="empty content"):
+        with pytest.raises(ProviderEmptyOutputError, match="empty content"):
             await provider.chat([{"role": "user", "content": "question"}])
 
 

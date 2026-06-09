@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Callable
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import httpx
 from pydantic import BaseModel
@@ -25,7 +25,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.state_service import StateService
-from forge.llm.providers import LLMProvider
+from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
 from forge.tools.registry import ToolRegistry
 
 S = TypeVar("S", bound=BaseModel)
@@ -41,6 +41,8 @@ def _classify_failure(exc: Exception) -> FailureKind:
         return FailureKind.TIMEOUT
     if isinstance(exc, httpx.HTTPStatusError):
         return FailureKind.PROVIDER_ERROR
+    if isinstance(exc, ProviderError):
+        return FailureKind.PROVIDER_ERROR
     if isinstance(exc, RuntimeError):
         return FailureKind.MAX_ITERATIONS
     if isinstance(exc, ToolError):
@@ -51,14 +53,14 @@ def _classify_failure(exc: Exception) -> FailureKind:
 
 
 def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel], tracked_delta: DeltaState = DeltaState()) -> str:
-    has_tools = tools is not None and bool(tools._tools)
+    has_tools = tools is not None and bool(tools)
     show_final = tools is None or not _is_empty_delta(tracked_delta)
     step2 = "2. " if has_tools and show_final else ""
     lines: list[str] = [
         "You must respond with JSON only — no markdown, no explanation.",
         "",
     ]
-    if has_tools:
+    if tools is not None:
         lines += [
             "You have two valid response formats:",
             "",
@@ -67,7 +69,7 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
             "",
             "Available tools:",
         ]
-        for tool in tools._tools.values():
+        for tool in tools:
             lines.append(f"  {tool.name}: {tool.description}")
             lines.append(f"    input schema: {json.dumps(tool.request_type.model_json_schema())}")
             lines.append(f"    response schema: {json.dumps(tool.response_type.model_json_schema())}")
@@ -138,12 +140,13 @@ def _parse_response(
     if match:
         text = match.group(1).strip()
     try:
-        data = json.loads(text)
+        data: object = json.loads(text)
     except json.JSONDecodeError as e:
         raise ValueError(f"response is not valid JSON: {e}") from e
-    if isinstance(data, dict) and data.get("kind") == "tool_call":
+    data_dict = cast(dict[str, object], data) if isinstance(data, dict) else None
+    if data_dict is not None and data_dict.get("kind") == "tool_call":
         try:
-            return ToolCallRequest.model_validate(data)
+            return ToolCallRequest.model_validate(data_dict)
         except Exception as e:
             raise ValueError(f"invalid tool_call format: {e}") from e
     try:
@@ -290,7 +293,7 @@ async def run_agent(
 
         print(f"[debug] system prompt (initial):\n{_build_system_prompt(tools, final_response_type, DeltaState())}")
         print(f"[debug] user prompt:\n{prompt}")
-        messages: list[dict[str, str]] = [
+        messages: list[ChatMessage] = [
             {"role": "system", "content": ""},
             {"role": "user", "content": prompt},
         ]

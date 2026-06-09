@@ -31,6 +31,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.state_service import StateService
+from forge.llm.providers import ProviderEmptyOutputError
 from forge.tools.registry import Tool, ToolRegistry
 from forge.tools.schemas import (
     AddDependencyRequest,
@@ -648,6 +649,12 @@ def test_classify_failure_maps_http_status_error_to_provider_error():
         response=httpx.Response(500),
     )
     assert _classify_failure(exc) == FailureKind.PROVIDER_ERROR
+
+
+def test_classify_failure_maps_provider_empty_output_to_provider_error():
+    """_classify_failure maps empty provider output to PROVIDER_ERROR, not INVALID_JSON."""
+    failure_kind = _classify_failure(ProviderEmptyOutputError("empty content"))
+    assert failure_kind == FailureKind.PROVIDER_ERROR
 
 
 def test_classify_failure_maps_unknown_exception_to_unknown():

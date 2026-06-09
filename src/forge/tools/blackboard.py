@@ -1,6 +1,7 @@
 """Blackboard tools for reading and writing shared key-value state in the workspace."""
 
 import json
+from typing import cast
 
 from forge.core.workspace import Workspace
 from forge.tools.registry import Tool
@@ -41,7 +42,7 @@ def make_write_blackboard_tool(workspace: Workspace) -> Tool:
     """Return a Tool that writes a single key-value pair to the workspace blackboard."""
     async def fn(req: WriteBlackboardRequest) -> WriteBlackboardResponse:  # type: ignore[misc]
         path = workspace.blackboard_path()
-        data = json.loads(path.read_text()) if path.exists() else {}
+        data = cast(dict[str, object], json.loads(path.read_text())) if path.exists() else {}
         data[req.key] = req.value
         path.write_text(json.dumps(data, indent=2))
         return WriteBlackboardResponse(key=req.key)

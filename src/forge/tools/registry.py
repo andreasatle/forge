@@ -1,6 +1,6 @@
 """Tool dataclass and ToolRegistry for storing and retrieving agent tools."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
 from pydantic import BaseModel
@@ -22,6 +22,14 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+
+    def __bool__(self) -> bool:
+        """Return True when at least one tool is registered."""
+        return bool(self._tools)
+
+    def __iter__(self) -> Iterator[Tool]:
+        """Iterate over registered tools."""
+        return iter(self._tools.values())
 
     def register(self, tool: Tool) -> None:
         """Add tool to the registry, keyed by tool.name."""

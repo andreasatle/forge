@@ -47,6 +47,8 @@ pythonVersion = "3.12"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
+include = ["src"]
+exclude = ["workspaces", ".venv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 RequestId = UUID
 
 
+def _empty_request_ids() -> frozenset[RequestId]:
+    return frozenset()
+
+
 class AgentType(Enum):
     """Discriminator enum for the three agent roles in the system."""
 
@@ -111,7 +115,7 @@ class AgentRequest(BaseModel):
     source: RequestSource
     spec: AgentSpec
     context_chain: tuple[str, ...] = ()
-    dependencies: frozenset[RequestId] = frozenset()
+    dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
     priority: Priority = Priority.NORMAL
 
 
@@ -130,20 +134,36 @@ class FileWrite(BaseModel, frozen=True):
     content: str
 
 
+def _empty_edits() -> list[Edit]:
+    return []
+
+
+def _empty_file_writes() -> list[FileWrite]:
+    return []
+
+
+def _empty_strings() -> list[str]:
+    return []
+
+
 class DeltaState(BaseModel, frozen=True):
     """The state change produced by a worker or integrator agent."""
 
-    edits: list[Edit] = []
-    new_files: list[FileWrite] = []
-    dependencies: list[str] = []
+    edits: list[Edit] = Field(default_factory=_empty_edits)
+    new_files: list[FileWrite] = Field(default_factory=_empty_file_writes)
+    dependencies: list[str] = Field(default_factory=_empty_strings)
 
 
 class RunResult(BaseModel, frozen=True):
     """Result of running tests against the current artifact state."""
 
     passed: bool
-    failures: list[str] = []
+    failures: list[str] = Field(default_factory=_empty_strings)
     summary: str = ""
+
+
+def _empty_agent_requests() -> list[AgentRequest]:
+    return []
 
 
 class AgentResponse(BaseModel):
@@ -154,7 +174,7 @@ class AgentResponse(BaseModel):
     request_id: RequestId
     status: ResponseStatus
     delta: DeltaState | None = None
-    follow_up: list[AgentRequest] = Field(default_factory=list)
+    follow_up: list[AgentRequest] = Field(default_factory=_empty_agent_requests)
     error: str | None = None
     failure_kind: FailureKind | None = None
 
@@ -169,6 +189,10 @@ class StateView(BaseModel, frozen=True):
     test_summary: str | None = None
 
 
+def _empty_ints() -> list[int]:
+    return []
+
+
 class TaskSpec(BaseModel, frozen=True):
     """A single task emitted by the planner."""
 
@@ -176,8 +200,8 @@ class TaskSpec(BaseModel, frozen=True):
     success_condition: str
     adapter: str
     artifact: str
-    language: str | None
-    depends_on: list[int] = []
+    language: str | None = None
+    depends_on: list[int] = Field(default_factory=_empty_ints)
 
 
 class PlanResponse(BaseModel, frozen=True):
@@ -226,12 +250,16 @@ class DAGNode(BaseModel):
         return self.model_copy(update={"node_state": node_state, "response": response})
 
 
+def _empty_dag() -> dict[RequestId, DAGNode]:
+    return {}
+
+
 class SchedulerState(BaseModel):
     """Immutable snapshot of the full DAG and scheduler configuration at a point in time."""
 
     model_config = ConfigDict(frozen=True)
 
-    dag: dict[RequestId, DAGNode] = Field(default_factory=dict)
+    dag: dict[RequestId, DAGNode] = Field(default_factory=_empty_dag)
     northstar: str
     max_concurrency: int = 1
 
