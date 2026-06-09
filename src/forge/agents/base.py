@@ -74,11 +74,10 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
             lines.append(f"    response schema: {json.dumps(tool.response_type.model_json_schema())}")
             lines.append("")
         lines += [
-            "IMPORTANT: Use tools only to READ and understand the existing codebase.",
-            "  - Use list_files to discover what exists",
-            "  - Use read_file to read existing files",
-            "  - Use run_tests to check current test status",
-            "  - All file creation and editing goes in your final JSON response — not via tools",
+            "Tool-use rules:",
+            "  - Only call tools listed above, using exactly those tool names.",
+            "  - Do not invent or reference tools that are not listed above.",
+            "  - If a needed capability is not listed, include the requested result in your final JSON response instead.",
             "",
         ]
     if show_final:
@@ -335,10 +334,12 @@ async def run_agent(
                     and isinstance(parsed, DeltaState)
                     and _is_empty_delta(parsed)
                 ):
+                    available_tools = ", ".join(tool.name for tool in tools) or "(none)"
                     raise ValueError(
                         'You must call tools before returning a final response. '
-                        'Call a tool using this exact format:\n'
-                        '{"kind": "tool_call", "name": "list_files", "arguments": {}}'
+                        f"Available tools: {available_tools}. "
+                        'Call one of the available tools using this format: '
+                        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
                     )
             except ValueError as e:
                 if retry_count >= max_retries:

@@ -1,11 +1,16 @@
 """Tests for LanguageRegistry loading and retrieval."""
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
 from forge.languages.registry import LanguageRegistry
+
+LANGUAGES_DIR = Path(__file__).parents[2] / "languages"
+TOOL_LIKE_NAME = re.compile(r"\b[a-z]+(?:_[a-z]+)+\b")
+NON_TOOL_SUPPLEMENT_NAMES = {"ini_options"}
 
 
 def _write_plugin(dir: Path, name: str) -> None:
@@ -103,3 +108,13 @@ def test_add_dependency_command_loaded_correctly_from_yaml(tmp_path: Path) -> No
     reg.load(tmp_path)
     plugin = reg.get("custom")
     assert plugin.add_dependency_command == "custom install {package}"
+
+
+def test_language_prompt_supplements_do_not_name_tools() -> None:
+    """Language supplements stay convention-focused instead of naming tool APIs."""
+    for path in LANGUAGES_DIR.glob("*.yaml"):
+        data = yaml.safe_load(path.read_text())
+        supplement = data["prompt_supplement"]
+        assert "tool_call" not in supplement, path.name
+        tool_like_names = set(TOOL_LIKE_NAME.findall(supplement)) - NON_TOOL_SUPPLEMENT_NAMES
+        assert not tool_like_names, path.name

@@ -9,10 +9,10 @@ project_structure:
   - src/
   - tests/
 prompt_supplement: |
-  Always call run_tests before making any changes to understand the current state.
-  Always call run_tests after every file change to verify progress.
-  Never rewrite the same file more than once without calling run_tests in between.
-  If run_tests fails, read the error output carefully and fix the specific error before trying anything else.
+  Check the current test status before making changes when test execution is available.
+  Verify progress after each file change when test execution is available.
+  Never rewrite the same file more than once without checking test status in between.
+  If tests fail, read the error output carefully and fix the specific error before trying anything else.
   Always place source code under src/.
   Always write tests under tests/ using pytest.
   Always include a pyproject.toml declaring dependencies and requiring Python >=3.12.
@@ -28,7 +28,5 @@ prompt_supplement: |
   Import modules directly by name, not with src. prefix:
     correct:   from scraper import WebScraper
     incorrect: from src.scraper import WebScraper
-  A run_tests tool is available — use it after writing or modifying code.
-  Always iterate until run_tests returns a passing result.
-  Run `uv add --dev pytest` to add pytest as a dev dependency.
-  To install a package, call: {"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "requests"}}
+  Always iterate until tests pass.
+  List required runtime packages in the final dependency output.

@@ -4,9 +4,7 @@ tools:
   - list_files
   - read_file
   - run_tests
-  - add_dependency
   - read_blackboard
-  - write_blackboard
 prompt_template: |
   Complete the following task: {objective}
   Success condition: {success_condition}

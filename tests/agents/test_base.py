@@ -612,6 +612,16 @@ def test_build_system_prompt_shows_delta_schema_after_tool_work():
     assert "new_files" in prompt
 
 
+def test_build_system_prompt_tool_guidance_uses_registered_tools_only():
+    """Tool guidance names tools from the provided registry, not hardcoded worker tools."""
+    registry, _ = _make_registry()
+    prompt = _build_system_prompt(registry, DeltaState)
+
+    assert "do_thing" in prompt
+    for unavailable in ("list_files", "read_file", "run_tests", "add_dependency", "write_blackboard"):
+        assert unavailable not in prompt
+
+
 async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made():
     """With tools and no prior tool calls, an empty DeltaState is rejected with tool-call format in the error."""
     registry, _ = _make_registry()
@@ -626,7 +636,8 @@ async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made()
 
     assert response.status == ResponseStatus.FAILED
     assert "tool_call" in (response.error or "")
-    assert "list_files" in (response.error or "")
+    assert "do_thing" in (response.error or "")
+    assert "list_files" not in (response.error or "")
 
 
 async def test_run_agent_accepts_delta_state_after_tool_work():
