@@ -146,12 +146,26 @@ def _empty_strings() -> list[str]:
     return []
 
 
+class IntegrationError(BaseModel, frozen=True):
+    """An error encountered during integration — conflict, apply failure, test failure, etc."""
+
+    kind: str
+    description: str
+    path: str | None = None
+    worker_ids: list[RequestId] = Field(default_factory=list)
+
+
+def _empty_integration_errors() -> list[IntegrationError]:
+    return []
+
+
 class DeltaState(BaseModel, frozen=True):
     """The state change produced by a worker or integrator agent."""
 
-    edits: list[Edit] = Field(default_factory=_empty_edits)
     new_files: list[FileWrite] = Field(default_factory=_empty_file_writes)
+    edits: list[Edit] = Field(default_factory=_empty_edits)
     dependencies: list[str] = Field(default_factory=_empty_strings)
+    errors: list[IntegrationError] = Field(default_factory=_empty_integration_errors)
 
 
 class RunResult(BaseModel, frozen=True):

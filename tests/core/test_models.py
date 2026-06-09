@@ -1,6 +1,6 @@
 """Tests for core Pydantic models: DAGNode, SchedulerState, and AgentRequest immutability."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -12,6 +12,7 @@ from forge.core.models import (
     DeltaState,
     Edit,
     FailureKind,
+    IntegrationError,
     NodeState,
     PlanResponse,
     Priority,
@@ -191,6 +192,28 @@ def test_edit_is_frozen():
         edit.path = "b.py"  # type: ignore[misc]
 
 
+# --- IntegrationError ---
+
+
+def test_integration_error_is_frozen():
+    """IntegrationError raises on direct field mutation."""
+    err = IntegrationError(kind="conflict", description="merge conflict")
+    with pytest.raises(Exception):
+        err.kind = "other"  # type: ignore[misc]
+
+
+def test_integration_error_path_defaults_to_none():
+    """IntegrationError.path defaults to None when not provided."""
+    err = IntegrationError(kind="conflict", description="merge conflict")
+    assert err.path is None
+
+
+def test_integration_error_worker_ids_defaults_to_empty_list():
+    """IntegrationError.worker_ids defaults to an empty list."""
+    err = IntegrationError(kind="conflict", description="merge conflict")
+    assert err.worker_ids == []
+
+
 # --- DeltaState ---
 
 
@@ -200,6 +223,20 @@ def test_delta_state_defaults_to_empty_lists():
     assert delta.edits == []
     assert delta.new_files == []
     assert delta.dependencies == []
+    assert delta.errors == []
+
+
+def test_delta_state_with_errors_serializes_correctly():
+    """DeltaState with errors round-trips through model_dump and model_validate."""
+
+    wid = uuid4()
+    err = IntegrationError(kind="test_failure", description="tests failed", path="src/a.py", worker_ids=[wid])
+    delta = DeltaState(errors=[err])
+    data = delta.model_dump()
+    restored = DeltaState.model_validate(data)
+    assert len(restored.errors) == 1
+    assert restored.errors[0].kind == "test_failure"
+    assert restored.errors[0].worker_ids == [wid]
 
 
 # --- StateView ---
