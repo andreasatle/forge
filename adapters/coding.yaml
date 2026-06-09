@@ -3,8 +3,6 @@ description: Writes and edits code
 tools:
   - list_files
   - read_file
-  - write_file
-  - replace_in_file
   - run_tests
   - add_dependency
   - read_blackboard

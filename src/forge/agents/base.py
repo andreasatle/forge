@@ -315,7 +315,7 @@ async def run_agent(
                     raise ValueError(
                         'You must call tools before returning a final response. '
                         'Call a tool using this exact format:\n'
-                        '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/example.py", "content": "..."}}'
+                        '{"kind": "tool_call", "name": "list_files", "arguments": {}}'
                     )
             except ValueError as e:
                 if retry_count >= max_retries:

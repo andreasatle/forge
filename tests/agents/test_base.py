@@ -624,7 +624,7 @@ async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made()
 
     assert response.status == ResponseStatus.FAILED
     assert "tool_call" in (response.error or "")
-    assert "write_file" in (response.error or "")
+    assert "list_files" in (response.error or "")
 
 
 async def test_run_agent_accepts_delta_state_after_tool_work():

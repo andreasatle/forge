@@ -2,7 +2,6 @@ name: document
 description: Reads and writes documents
 tools:
   - read_file
-  - write_file
 prompt_template: |
   Complete the following task: {objective}
   Success condition: {success_condition}

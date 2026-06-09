@@ -23,4 +23,3 @@ prompt_supplement: |
   A run_tests tool is available — use it after writing or modifying code.
   Always iterate until run_tests returns a passing result.
   To add a crate dependency, call: {"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "serde"}}
-  To write a file, call: {"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/main.rs", "content": "..."}}
