@@ -3,7 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -366,8 +366,6 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
 
 async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Path) -> None:
     """make_integrate_handler passes the delta for the work_request_id in the spec."""
-    from unittest.mock import patch
-
     wid = uuid4()
     delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
     unrelated_wid = uuid4()
@@ -381,9 +379,24 @@ async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Pat
 
     with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
-        handler = make_integrate_handler(_make_workspace(tmp_path), LanguageRegistry(), _mock_provider(), completed)
+        handler = make_integrate_handler(_make_workspace(tmp_path), LanguageRegistry(), completed)
         response = await handler(request)
 
     assert response.status == ResponseStatus.COMPLETED
     mock_integrate.assert_called_once()
     assert mock_integrate.call_args.kwargs["completed_deltas"] == [delta]
+    assert "provider" not in mock_integrate.call_args.kwargs
+
+
+async def test_make_integrate_handler_does_not_require_provider(tmp_path: Path) -> None:
+    """make_integrate_handler constructs and runs without any LLM provider."""
+    request = _integrate_request()
+    completed: dict = {}
+
+    with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+        handler = make_integrate_handler(_make_workspace(tmp_path), LanguageRegistry(), completed)
+        response = await handler(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert "provider" not in mock_integrate.call_args.kwargs

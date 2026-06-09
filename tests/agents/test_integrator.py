@@ -47,7 +47,6 @@ async def test_merges_two_non_conflicting_worker_deltas(tmp_path):
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[
@@ -71,7 +70,6 @@ async def test_detects_conflict_when_two_workers_write_different_content_to_same
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[
@@ -92,7 +90,6 @@ async def test_no_conflict_when_two_workers_write_identical_content_to_same_path
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[
@@ -114,7 +111,6 @@ async def test_detects_conflict_when_two_workers_edit_overlapping_regions(tmp_pa
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[
@@ -138,7 +134,6 @@ async def test_applies_non_conflicting_changes_via_state_service(tmp_path):
     with _patch_ss(ss):
         await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[
@@ -164,7 +159,6 @@ async def test_adds_test_failed_error_when_tests_fail(tmp_path):
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[DeltaState()],
@@ -185,7 +179,6 @@ async def test_returns_completed_even_when_there_are_conflict_errors(tmp_path):
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[
@@ -208,7 +201,6 @@ async def test_returns_empty_errors_on_clean_integration(tmp_path):
     with _patch_ss(ss):
         response = await integrate_agent(
             request=_integrate_request(),
-            provider=MagicMock(),
             workspace=Workspace(tmp_path),
             language_registry=LanguageRegistry(),
             completed_deltas=[DeltaState(new_files=[FileWrite(path="x.py", content="x = 1")])],

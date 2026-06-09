@@ -13,7 +13,6 @@ from forge.core.models import (
 from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
-from forge.llm.providers import LLMProvider
 
 
 def _edits_conflict(a: Edit, b: Edit) -> bool:
@@ -27,11 +26,9 @@ def _edits_conflict(a: Edit, b: Edit) -> bool:
 
 async def integrate_agent(
     request: AgentRequest,
-    provider: LLMProvider,
     workspace: Workspace,
     language_registry: LanguageRegistry,
     completed_deltas: list[DeltaState],
-    max_retries: int = 3,
 ) -> AgentResponse:
     """Merge worker DeltaStates, apply to disk via StateService, run tests, return AgentResponse."""
     spec = request.spec

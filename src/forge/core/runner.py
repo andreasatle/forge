@@ -81,7 +81,6 @@ async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
 def make_integrate_handler(
     workspace: Workspace,
     language_registry: LanguageRegistry,
-    provider: LLMProvider,
     completed_work_deltas: dict[RequestId, DeltaState],
 ) -> Handler:
     """Return a handler that delegates integrate requests to integrate_agent."""
@@ -98,7 +97,6 @@ def make_integrate_handler(
         deltas = [completed_work_deltas[rid]] if rid in completed_work_deltas else []
         return await integrate_agent(
             request=request,
-            provider=provider,
             workspace=workspace,
             language_registry=language_registry,
             completed_deltas=deltas,
