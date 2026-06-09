@@ -1,4 +1,4 @@
-"""Runner that routes agent requests to registered handlers, plus built-in handlers."""
+"""Runner that routes agent requests to registered runtime handlers."""
 
 from collections.abc import Awaitable, Callable
 
@@ -15,7 +15,6 @@ from forge.core.models import (
     RequestId,
     RequestSource,
     ResponseStatus,
-    WorkSpec,
 )
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
@@ -45,15 +44,6 @@ class Runner:
         return await handler(request)
 
 
-async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
-    """Return a completed response with a placeholder plan delta, for testing."""
-    return AgentResponse(
-        request_id=request.id,
-        status=ResponseStatus.COMPLETED,
-        delta=None,
-    )
-
-
 def make_work_handler(
     registry: AdapterRegistry,
     workspace: Workspace,
@@ -67,15 +57,6 @@ def make_work_handler(
         return await work_agent(request, registry, workspace, language_registry, provider, max_tool_iterations=max_tool_iterations)
 
     return work_handler
-
-
-async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
-    """Return a completed response with a placeholder integration delta, for testing."""
-    return AgentResponse(
-        request_id=request.id,
-        status=ResponseStatus.COMPLETED,
-        delta=None,
-    )
 
 
 def make_integrate_handler(
@@ -103,50 +84,6 @@ def make_integrate_handler(
         )
 
     return integrate_handler
-
-
-async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
-    """Return a hardcoded A→B→C dependency chain for use in integration tests."""
-    if request.source == RequestSource.PLANNER:
-        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
-
-    a = AgentRequest(
-        agent_type=AgentType.WORK,
-        source=RequestSource.PLANNER,
-        spec=WorkSpec(
-            objective="task A",
-            success_condition="A done",
-            adapter="coding",
-            artifact="codebase",
-        ),
-    )
-    b = AgentRequest(
-        agent_type=AgentType.WORK,
-        source=RequestSource.PLANNER,
-        spec=WorkSpec(
-            objective="task B",
-            success_condition="B done",
-            adapter="coding",
-            artifact="codebase",
-        ),
-        dependencies=frozenset({a.id}),
-    )
-    c = AgentRequest(
-        agent_type=AgentType.WORK,
-        source=RequestSource.PLANNER,
-        spec=WorkSpec(
-            objective="task C",
-            success_condition="C done",
-            adapter="coding",
-            artifact="codebase",
-        ),
-        dependencies=frozenset({b.id}),
-    )
-    return AgentResponse(
-        request_id=request.id,
-        status=ResponseStatus.COMPLETED,
-        follow_up=[c, b, a],
-    )
 
 
 def make_plan_handler(

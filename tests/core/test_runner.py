@@ -1,4 +1,4 @@
-"""Tests for Runner routing, built-in handlers, and scripted_plan_handler."""
+"""Tests for Runner routing and test-owned helper handlers."""
 
 # pyright: reportPrivateUsage=false
 
@@ -28,9 +28,6 @@ from forge.core.runner import (
     make_integrate_handler,
     make_plan_handler,
     make_work_handler,
-    scripted_plan_handler,
-    stub_integrate_handler,
-    stub_plan_handler,
 )
 from forge.core.scheduler import Scheduler
 from forge.core.workspace import Workspace
@@ -92,6 +89,68 @@ def _mock_provider() -> MagicMock:
     provider.max_tokens = 8192
     provider.chat = AsyncMock(return_value="{}")
     return provider
+
+
+async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
+    """Return a completed response with a placeholder plan delta, for testing."""
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.COMPLETED,
+        delta=None,
+    )
+
+
+async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
+    """Return a completed response with a placeholder integration delta, for testing."""
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.COMPLETED,
+        delta=None,
+    )
+
+
+async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
+    """Return a hardcoded A→B→C dependency chain for use in integration tests."""
+    if request.source == RequestSource.PLANNER:
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+
+    a = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task A",
+            success_condition="A done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+    )
+    b = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task B",
+            success_condition="B done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+        dependencies=frozenset({a.id}),
+    )
+    c = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task C",
+            success_condition="C done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+        dependencies=frozenset({b.id}),
+    )
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.COMPLETED,
+        follow_up=[c, b, a],
+    )
 
 
 # --- Tests ---
