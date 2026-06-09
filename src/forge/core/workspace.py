@@ -41,12 +41,10 @@ class Workspace:
         self.logs_dir().mkdir(exist_ok=True)
 
     def init_artifact(self, name: str, plugin: LanguagePlugin | None = None) -> None:
-        """Create the artifact root directory and run the language init and sync commands if the directory is empty."""
+        """Create the artifact root directory. For language-backed artifacts, also run init and sync if the directory is new."""
         artifact_dir = self.artifact_dir(name)
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        if plugin is None:
-            return
-        if any(artifact_dir.iterdir()):
+        if plugin is None or any(artifact_dir.iterdir()):
             return
         cmd = plugin.init_command.format(artifact_name=name)
         subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
