@@ -7,7 +7,7 @@ from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
-from forge.tools.builtin import build_default_registry
+from forge.tools.builtin import build_read_registry
 
 
 async def work_agent(
@@ -30,11 +30,10 @@ async def work_agent(
 
     adapter = registry.get(spec.adapter)
     plugin = language_registry.get(spec.language) if spec.language else None
-    tools = build_default_registry(
+    tools = build_read_registry(
         workspace,
         spec.artifact,
         plugin.test_command if plugin else None,
-        plugin.add_dependency_command if plugin else None,
     )
 
     state_service = StateService(workspace, spec.artifact, plugin)
@@ -56,7 +55,7 @@ async def work_agent(
 
     prompt += (
         "\n\nUse the available tools to complete your work. "
-        "Start by calling list_files to see what exists, then use write_file to create files."
+        "Start by calling list_files to see what exists, then read_file to inspect content."
     )
 
     return await run_agent(
