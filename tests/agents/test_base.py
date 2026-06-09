@@ -121,6 +121,91 @@ async def test_run_agent_worker_mode_returns_failed_after_max_iterations():
     assert response.failure_kind == FailureKind.MAX_ITERATIONS
 
 
+async def test_run_agent_worker_mode_uses_tracked_delta_when_final_delta_is_empty():
+    """Worker mode: empty final DeltaState returns tracked_delta after tool writes."""
+    registry = ToolRegistry()
+    registry.register(_make_write_file_tool())
+    registry.register(_make_add_dependency_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        (
+            '{"kind": "tool_call", "name": "write_file", '
+            '"arguments": {"path": "src/app.py", "content": "x = 1"}}'
+        ),
+        '{"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "httpx"}}',
+        '{"edits": [], "new_files": [], "dependencies": []}',
+    ])
+    ss = _mock_state_service(passed=True)
+
+    response = await run_agent(
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
+        tools=registry,
+        state_service=ss,
+    )
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta == DeltaState(
+        new_files=[FileWrite(path="src/app.py", content="x = 1")],
+        dependencies=["httpx"],
+    )
+    ss.apply_delta.assert_not_called()
+    ss.run_tests.assert_called_once()
+
+
+async def test_run_agent_worker_mode_ignores_stale_final_delta_after_tool_work():
+    """Worker mode: stale reported edits after tool writes are ignored instead of applied."""
+    registry = ToolRegistry()
+    registry.register(_make_write_file_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        (
+            '{"kind": "tool_call", "name": "write_file", '
+            '"arguments": {"path": "pyproject.toml", "content": "new"}}'
+        ),
+        (
+            '{"edits": [{"path": "pyproject.toml", "old": "missing", "new": "x"}], '
+            '"new_files": [], "dependencies": []}'
+        ),
+    ])
+    ss = _mock_state_service(passed=True)
+    ss.apply_delta.side_effect = ValueError("old string not found in pyproject.toml")
+
+    response = await run_agent(
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
+        tools=registry,
+        state_service=ss,
+    )
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.failure_kind is None
+    assert response.delta == DeltaState(
+        new_files=[FileWrite(path="pyproject.toml", content="new")]
+    )
+    ss.apply_delta.assert_not_called()
+
+
+async def test_run_agent_worker_mode_apply_delta_value_error_is_not_invalid_json():
+    """Worker mode: state application failures are classified as TOOL_ERROR, not INVALID_JSON."""
+    request = _work_request()
+    provider = _mock_provider(_NONEMPTY_DELTA)
+    ss = _mock_state_service(passed=True)
+    ss.apply_delta.side_effect = ValueError("old string not found in pyproject.toml")
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.TOOL_ERROR
+    assert response.failure_kind != FailureKind.INVALID_JSON
+
+
 async def test_run_agent_planner_mode_unchanged_without_state_service():
     """Planner mode: no state_service → no test loop, returns COMPLETED immediately on DeltaState."""
     request = _work_request()

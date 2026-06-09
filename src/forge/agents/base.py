@@ -290,7 +290,7 @@ async def run_agent(
 
         print(f"[debug] system prompt (initial):\n{_build_system_prompt(tools, final_response_type, DeltaState())}")
         print(f"[debug] user prompt:\n{prompt}")
-        messages: list[dict] = [  # type: ignore[type-arg]
+        messages: list[dict[str, str]] = [
             {"role": "system", "content": ""},
             {"role": "user", "content": prompt},
         ]
@@ -351,7 +351,23 @@ async def run_agent(
 
             # Worker mode: Apply the delta, run tests, loop on failure.
             if state_service is not None and isinstance(parsed, DeltaState):
-                state_service.apply_delta(parsed)
+                if not _is_empty_delta(tracked_delta):
+                    test_result = state_service.run_tests()
+                    if test_result.passed:
+                        return AgentResponse(
+                            request_id=request.id,
+                            status=ResponseStatus.COMPLETED,
+                            delta=tracked_delta,
+                        )
+                    correction = _build_test_correction_prompt(test_result, tracked_delta)
+                    messages.append({"role": "assistant", "content": raw})
+                    messages.append({"role": "user", "content": correction})
+                    continue
+
+                try:
+                    state_service.apply_delta(parsed)
+                except ValueError as e:
+                    raise ToolError(str(e)) from e
                 test_result = state_service.run_tests()
                 if test_result.passed:
                     return AgentResponse(
