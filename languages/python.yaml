@@ -9,10 +9,6 @@ project_structure:
   - src/
   - tests/
 prompt_supplement: |
-  Check the current test status before making changes when test execution is available.
-  Verify progress after each file change when test execution is available.
-  Never rewrite the same file more than once without checking test status in between.
-  If tests fail, read the error output carefully and fix the specific error before trying anything else.
   Always place source code under src/.
   Always write tests under tests/ using pytest.
   Always include a pyproject.toml declaring dependencies and requiring Python >=3.12.
@@ -28,5 +24,4 @@ prompt_supplement: |
   Import modules directly by name, not with src. prefix:
     correct:   from scraper import WebScraper
     incorrect: from src.scraper import WebScraper
-  Always iterate until tests pass.
   List required runtime packages in the final dependency output.

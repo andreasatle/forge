@@ -110,6 +110,27 @@ def test_add_dependency_command_loaded_correctly_from_yaml(tmp_path: Path) -> No
     assert plugin.add_dependency_command == "custom install {package}"
 
 
+_STALE_WORKER_PHRASES = [
+    "after every file change",
+    "after each file change",
+    "never rewrite the same file",
+    "iterate until tests pass",
+    "verify progress after",
+    "if tests fail",
+    "check the current test status",
+    "checking test status",
+]
+
+
+def test_language_supplements_have_no_stale_worker_mutation_phrases() -> None:
+    """Language supplements must not contain workflow directives that assume workers edit files or run tests."""
+    for path in LANGUAGES_DIR.glob("*.yaml"):
+        data = yaml.safe_load(path.read_text())
+        supplement = data["prompt_supplement"].lower()
+        for phrase in _STALE_WORKER_PHRASES:
+            assert phrase not in supplement, f"{path.name}: stale phrase {phrase!r}"
+
+
 def test_language_prompt_supplements_do_not_name_tools() -> None:
     """Language supplements stay convention-focused instead of naming tool APIs."""
     for path in LANGUAGES_DIR.glob("*.yaml"):

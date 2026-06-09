@@ -9,10 +9,6 @@ project_structure:
   - src/
   - tests/
 prompt_supplement: |
-  Check the current test status before making changes when test execution is available.
-  Verify progress after each file change when test execution is available.
-  Never rewrite the same file more than once without checking test status in between.
-  If tests fail, read the error output carefully and fix the specific error before trying anything else.
   Always place source code under src/.
   Always write tests under tests/.
   Always include a Cargo.toml declaring dependencies.
@@ -20,5 +16,4 @@ prompt_supplement: |
   Always include dev-dependencies in Cargo.toml for testing utilities if needed.
   The built-in #[cfg(test)] module is sufficient for unit tests — always use it.
   Always write at least one test per public function.
-  Always iterate until tests pass.
   List required crates in the final dependency output.
