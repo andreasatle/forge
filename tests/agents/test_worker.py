@@ -17,7 +17,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.workspace import Workspace
-from forge.languages.registry import LanguageRegistry
+from forge.languages.registry import LanguagePlugin, LanguageRegistry
 
 BLACKBOARD_TOOL_NAMES = {"read_blackboard", "write_blackboard"}
 MUTATING_TOOL_NAMES = {"write_file", "replace_in_file", "add_dependency", "write_blackboard"}
@@ -51,6 +51,42 @@ def _request() -> AgentRequest:
             success_condition="report changes",
             adapter="coding",
             artifact="codebase",
+        ),
+    )
+
+
+def _yaml_adapter_registry() -> AdapterRegistry:
+    adapters_dir = Path(__file__).parents[2] / "adapters"
+    registry = AdapterRegistry()
+    registry.load(adapters_dir)
+    return registry
+
+
+def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
+    lr = LanguageRegistry()
+    lr._plugins[name] = LanguagePlugin(
+        name=name,
+        package_manager="uv",
+        init_command="uv init",
+        test_command="pytest",
+        sync_command="uv sync",
+        add_dependency_command="uv add {package}",
+        project_structure=[],
+        prompt_supplement="",
+    )
+    return lr
+
+
+def _work_request(adapter: str, language: str | None = None) -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task objective",
+            success_condition="task done",
+            adapter=adapter,
+            artifact="codebase",
+            language=language,
         ),
     )
 
@@ -136,3 +172,121 @@ def test_production_adapter_yamls_expose_no_blackboard_tools() -> None:
         spec = registry.get(name)
         exposed = BLACKBOARD_TOOL_NAMES.intersection(spec.tools)
         assert not exposed, f"adapter '{name}' exposes blackboard tools: {exposed}"
+
+
+async def test_coding_adapter_receives_exactly_declared_tools(tmp_path) -> None:
+    """work_agent passes exactly the tools declared in coding.yaml — no more, no less."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = _yaml_adapter_registry()
+    expected = set(adapter_registry.get("coding").tools)
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, adapter_registry, workspace, _language_registry_with_tests(), provider)
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert _tool_names(tools) == expected
+
+
+async def test_document_adapter_receives_exactly_declared_tools(tmp_path) -> None:
+    """work_agent passes exactly the tools declared in document.yaml — no more, no less."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = _yaml_adapter_registry()
+    expected = set(adapter_registry.get("document").tools)
+    request = _work_request("document")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert _tool_names(tools) == expected
+
+
+async def test_audit_adapter_receives_exactly_declared_tools(tmp_path) -> None:
+    """work_agent passes exactly the tools declared in audit.yaml — no more, no less."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = _yaml_adapter_registry()
+    expected = set(adapter_registry.get("audit").tools)
+    request = _work_request("audit")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert _tool_names(tools) == expected
+
+
+async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) -> None:
+    """audit adapter declares only read_file — list_files and run_tests must not be exposed."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = _yaml_adapter_registry()
+    request = _work_request("audit")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert "list_files" not in _tool_names(tools)
+    assert "run_tests" not in _tool_names(tools)
+
+
+async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None:
+    """work_agent returns FAILED with a clear message when adapter declares an unknown tool."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = AdapterRegistry()
+    adapter_registry._adapters["broken"] = AdapterSpec(
+        name="broken",
+        description="test",
+        tools=["nonexistent_tool"],
+        prompt_template="do: {objective}\nsuccess: {success_condition}",
+    )
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task",
+            success_condition="done",
+            adapter="broken",
+            artifact="codebase",
+        ),
+    )
+    provider = MagicMock()
+
+    response = await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+
+    assert response.status == ResponseStatus.FAILED
+    assert "nonexistent_tool" in (response.error or "")

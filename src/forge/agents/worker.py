@@ -8,6 +8,7 @@ from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
 from forge.tools.builtin import build_read_registry
+from forge.tools.registry import ToolRegistry
 
 
 async def work_agent(
@@ -30,11 +31,22 @@ async def work_agent(
 
     adapter = registry.get(spec.adapter)
     plugin = language_registry.get(spec.language) if spec.language else None
-    tools = build_read_registry(
+    full_registry = build_read_registry(
         workspace,
         spec.artifact,
         plugin.test_command if plugin else None,
     )
+    try:
+        tool_list = full_registry.get_many(adapter.tools)
+    except KeyError as e:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            error=f"adapter '{adapter.name}' declares {e}",
+        )
+    tools = ToolRegistry()
+    for tool in tool_list:
+        tools.register(tool)
 
     state_service = StateService(workspace, spec.artifact, plugin)
     state_view = state_service.build_state_view()
