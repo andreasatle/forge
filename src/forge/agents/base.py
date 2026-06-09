@@ -74,11 +74,11 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
             lines.append(f"    response schema: {json.dumps(tool.response_type.model_json_schema())}")
             lines.append("")
         lines += [
-            "IMPORTANT: You must use tools to do your work. Do NOT skip straight to the final response.",
-            "  - Use write_file to create files",
-            "  - Use add_dependency to install packages",
-            "  - Use run_tests to verify your work",
-            "  - Only return the final JSON response after you have completed ALL work using tools",
+            "IMPORTANT: Use tools only to READ and understand the existing codebase.",
+            "  - Use list_files to discover what exists",
+            "  - Use read_file to read existing files",
+            "  - Use run_tests to check current test status",
+            "  - All file creation and editing goes in your final JSON response — not via tools",
             "",
         ]
     if show_final:

@@ -54,8 +54,10 @@ async def work_agent(
         prompt += f"\n\nArtifact '{spec.artifact}' has no files yet — create all files from scratch."
 
     prompt += (
-        "\n\nUse the available tools to complete your work. "
-        "Start by calling list_files to see what exists, then read_file to inspect content."
+        "\n\nUse list_files and read_file to understand the existing codebase before writing."
+        "\nUse run_tests to check the current state."
+        "\nProduce ALL new files and edits in your final JSON response."
+        "\nDo not attempt to write files via tools — workers are read-only."
     )
 
     return await run_agent(
