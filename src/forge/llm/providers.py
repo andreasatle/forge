@@ -89,6 +89,7 @@ class OllamaProvider:
     base_url: str = "http://localhost:11434"
 
     async def chat(self, messages: list[ChatMessage]) -> str:
+        """Send a multi-turn message list and return the response text."""
         payload: dict[str, object] = {
             "model": self.model,
             "messages": messages,
@@ -115,6 +116,7 @@ class ClaudeProvider:
     max_tokens: int
 
     async def chat(self, messages: list[ChatMessage]) -> str:
+        """Send a multi-turn message list and return the response text."""
         system = next((m["content"] for m in messages if m["role"] == "system"), None)
         non_system = [m for m in messages if m["role"] != "system"]
         headers: dict[str, str] = {
@@ -158,6 +160,7 @@ class OpenAIProvider:
     max_tokens: int
 
     async def chat(self, messages: list[ChatMessage]) -> str:
+        """Send a multi-turn message list and return the response text."""
         headers: dict[str, str] = {
             "Authorization": f"Bearer {self.api_key}",
             "content-type": "application/json",

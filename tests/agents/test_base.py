@@ -51,10 +51,12 @@ _NONEMPTY_DELTA = '{"new_files": [{"path": "src/main.py", "content": "x = 1"}], 
 
 
 class _DoThingRequest(BaseModel):
-    pass
+    """Minimal no-field request used in agent base unit tests."""
 
 
 class _DoThingResponse(BaseModel):
+    """Minimal response carrying a result string used in agent base unit tests."""
+
     result: str
 
 

@@ -7,10 +7,14 @@ from forge.tools.registry import Tool, ToolRegistry
 
 
 class _SimpleRequest(BaseModel):
+    """Minimal request model used in registry unit tests."""
+
     x: str
 
 
 class _SimpleResponse(BaseModel):
+    """Minimal response model used in registry unit tests."""
+
     result: str
 
 

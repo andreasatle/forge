@@ -33,6 +33,7 @@ def _plugin(name: str = "python") -> LanguagePlugin:
 
 
 def test_build_state_view_returns_correct_file_listing(tmp_path: Path) -> None:
+    """build_state_view lists all files relative to the artifact root."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     artifact_dir = ws.artifact_dir("app")
@@ -46,6 +47,7 @@ def test_build_state_view_returns_correct_file_listing(tmp_path: Path) -> None:
 
 
 def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path: Path) -> None:
+    """build_state_view returns empty files and dependencies for a freshly initialised artifact."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
 
@@ -56,6 +58,7 @@ def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path: Path)
 
 
 def test_apply_delta_writes_new_files(tmp_path: Path) -> None:
+    """apply_delta creates a new file on disk when DeltaState contains a FileWrite."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
 
@@ -67,6 +70,7 @@ def test_apply_delta_writes_new_files(tmp_path: Path) -> None:
 
 
 def test_apply_delta_applies_edits(tmp_path: Path) -> None:
+    """apply_delta performs an in-place string replacement when DeltaState contains an Edit."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
@@ -79,6 +83,7 @@ def test_apply_delta_applies_edits(tmp_path: Path) -> None:
 
 
 def test_apply_delta_raises_on_non_unique_old_string(tmp_path: Path) -> None:
+    """apply_delta raises ValueError when the old string appears more than once in the target file."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\nx = 1\n")
@@ -90,6 +95,7 @@ def test_apply_delta_raises_on_non_unique_old_string(tmp_path: Path) -> None:
 
 
 def test_apply_delta_raises_on_old_string_not_found(tmp_path: Path) -> None:
+    """apply_delta raises ValueError when the old string is not present in the target file."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
@@ -101,6 +107,7 @@ def test_apply_delta_raises_on_old_string_not_found(tmp_path: Path) -> None:
 
 
 def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:
+    """build_state_view omits .venv, __pycache__, .pyc, lock files, and other noise."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     artifact_dir = ws.artifact_dir("app")
