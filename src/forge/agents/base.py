@@ -19,12 +19,10 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
-    RunResult,
     ToolCallRequest,
     ToolCallResponse,
     WorkSpec,
 )
-from forge.core.state_service import StateService
 from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
 from forge.tools.registry import ToolRegistry
 
@@ -259,28 +257,12 @@ def _is_empty_delta(delta: DeltaState) -> bool:
     return not delta.new_files and not delta.edits and not delta.dependencies
 
 
-def _build_test_correction_prompt(test_result: RunResult, delta: DeltaState) -> str:
-    lines = [test_result.summary, *test_result.failures]
-    test_output = "\n".join(line for line in lines if line)
-    files_written = [fw.path for fw in delta.new_files] + [e.path for e in delta.edits]
-    files_section = "\n".join(f"  - {f}" for f in files_written) if files_written else "  (none)"
-    return (
-        "Your previous attempt failed tests. Here are the results:\n\n"
-        f"{test_output}\n\n"
-        "The files you wrote:\n"
-        f"{files_section}\n\n"
-        "Fix the issues and return a new DeltaState with the corrected files.\n"
-        "Include ALL files in new_files — not just the changed ones."
-    )
-
-
 async def run_agent(
     request: AgentRequest,
     spec_type: type[S],
     provider: LLMProvider,
     prompt: str,
     tools: ToolRegistry | None = None,
-    state_service: StateService | None = None,
     final_response_type: type[BaseModel] = DeltaState,
     max_retries: int = 3,
     max_tool_iterations: int = 25,
@@ -319,13 +301,6 @@ async def run_agent(
                         'Call a tool using this exact format:\n'
                         '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/example.py", "content": "..."}}'
                     )
-                if state_service is not None and isinstance(parsed, DeltaState):
-                    merged = _merge_delta(tracked_delta, parsed)
-                    if _is_empty_delta(merged):
-                        raise ValueError(
-                            "DeltaState is empty — use available tools to complete your work "
-                            "before returning a response."
-                        )
             except ValueError as e:
                 if retry_count >= max_retries:
                     return AgentResponse(
@@ -350,37 +325,6 @@ async def run_agent(
                 any_tool_called = True
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
-                continue
-
-            # Worker mode: Apply the delta, run tests, loop on failure.
-            if state_service is not None and isinstance(parsed, DeltaState):
-                if not _is_empty_delta(tracked_delta):
-                    test_result = state_service.run_tests()
-                    if test_result.passed:
-                        return AgentResponse(
-                            request_id=request.id,
-                            status=ResponseStatus.COMPLETED,
-                            delta=tracked_delta,
-                        )
-                    correction = _build_test_correction_prompt(test_result, tracked_delta)
-                    messages.append({"role": "assistant", "content": raw})
-                    messages.append({"role": "user", "content": correction})
-                    continue
-
-                try:
-                    state_service.apply_delta(parsed)
-                except ValueError as e:
-                    raise ToolError(str(e)) from e
-                test_result = state_service.run_tests()
-                if test_result.passed:
-                    return AgentResponse(
-                        request_id=request.id,
-                        status=ResponseStatus.COMPLETED,
-                        delta=_merge_delta(tracked_delta, parsed),
-                    )
-                correction = _build_test_correction_prompt(test_result, parsed)
-                messages.append({"role": "assistant", "content": raw})
-                messages.append({"role": "user", "content": correction})
                 continue
 
             return AgentResponse(

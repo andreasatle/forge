@@ -30,11 +30,9 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
-    RunResult,
     ToolCallRequest,
     WorkSpec,
 )
-from forge.core.state_service import StateService
 from forge.llm.providers import ProviderEmptyOutputError
 from forge.tools.registry import Tool, ToolRegistry
 from forge.tools.schemas import (
@@ -47,179 +45,6 @@ from forge.tools.schemas import (
 )
 
 _NONEMPTY_DELTA = '{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
-
-
-def _mock_state_service(passed: bool = True, failures: list[str] | None = None, summary: str = "") -> MagicMock:
-    ss = MagicMock(spec=StateService)
-    ss.run_tests.return_value = RunResult(passed=passed, failures=failures or [], summary=summary)
-    return ss
-
-
-# --- run_agent worker mode (Plan→Apply→Verify loop) ---
-
-
-async def test_run_agent_worker_mode_applies_delta_and_returns_completed_on_passing_tests():
-    """Worker mode: LLM produces DeltaState → apply_delta called → tests pass → COMPLETED."""
-    request = _work_request()
-    provider = _mock_provider(_NONEMPTY_DELTA)
-    ss = _mock_state_service(passed=True)
-
-    response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
-
-    assert response.status == ResponseStatus.COMPLETED
-    ss.apply_delta.assert_called_once()
-    ss.run_tests.assert_called_once()
-
-
-async def test_run_agent_worker_mode_retries_on_test_failure():
-    """Worker mode: tests fail → correction prompt built → LLM called again → tests pass → COMPLETED."""
-    request = _work_request()
-    provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[_NONEMPTY_DELTA, _NONEMPTY_DELTA])
-    ss = MagicMock(spec=StateService)
-    ss.run_tests.side_effect = [
-        RunResult(passed=False, failures=["FAILED tests/test_main.py::test_foo"], summary="1 failed"),
-        RunResult(passed=True, failures=[], summary="1 passed"),
-    ]
-
-    response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert provider.chat.call_count == 2
-    assert ss.apply_delta.call_count == 2
-
-
-async def test_run_agent_worker_mode_correction_prompt_contains_test_output():
-    """Worker mode: the correction prompt sent after test failure includes test output."""
-    request = _work_request()
-    provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[_NONEMPTY_DELTA, _NONEMPTY_DELTA])
-    ss = MagicMock(spec=StateService)
-    ss.run_tests.side_effect = [
-        RunResult(passed=False, failures=["FAILED test_foo"], summary="1 failed in 0.1s"),
-        RunResult(passed=True),
-    ]
-
-    await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
-
-    second_call_messages = provider.chat.call_args_list[1][0][0]
-    correction_content = next(
-        m["content"] for m in reversed(second_call_messages) if m["role"] == "user"
-    )
-    assert "failed tests" in correction_content
-    assert "1 failed in 0.1s" in correction_content
-
-
-async def test_run_agent_worker_mode_returns_failed_after_max_iterations():
-    """Worker mode: tests always fail → max iterations exhausted → FAILED with MAX_ITERATIONS."""
-    request = _work_request()
-    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
-    ss = _mock_state_service(passed=False, failures=["FAILED test_x"], summary="1 failed")
-
-    response = await run_agent(
-        request, WorkSpec, provider, "prompt",
-        state_service=ss,
-        max_tool_iterations=2,
-    )
-
-    assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.MAX_ITERATIONS
-
-
-async def test_run_agent_worker_mode_uses_tracked_delta_when_final_delta_is_empty():
-    """Worker mode: empty final DeltaState returns tracked_delta after tool writes."""
-    registry = ToolRegistry()
-    registry.register(_make_write_file_tool())
-    registry.register(_make_add_dependency_tool())
-    request = _work_request()
-    provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        (
-            '{"kind": "tool_call", "name": "write_file", '
-            '"arguments": {"path": "src/app.py", "content": "x = 1"}}'
-        ),
-        '{"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "httpx"}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
-    ss = _mock_state_service(passed=True)
-
-    response = await run_agent(
-        request,
-        WorkSpec,
-        provider,
-        "prompt",
-        tools=registry,
-        state_service=ss,
-    )
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert response.delta == DeltaState(
-        new_files=[FileWrite(path="src/app.py", content="x = 1")],
-        dependencies=["httpx"],
-    )
-    ss.apply_delta.assert_not_called()
-    ss.run_tests.assert_called_once()
-
-
-async def test_run_agent_worker_mode_ignores_stale_final_delta_after_tool_work():
-    """Worker mode: stale reported edits after tool writes are ignored instead of applied."""
-    registry = ToolRegistry()
-    registry.register(_make_write_file_tool())
-    request = _work_request()
-    provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        (
-            '{"kind": "tool_call", "name": "write_file", '
-            '"arguments": {"path": "pyproject.toml", "content": "new"}}'
-        ),
-        (
-            '{"edits": [{"path": "pyproject.toml", "old": "missing", "new": "x"}], '
-            '"new_files": [], "dependencies": []}'
-        ),
-    ])
-    ss = _mock_state_service(passed=True)
-    ss.apply_delta.side_effect = ValueError("old string not found in pyproject.toml")
-
-    response = await run_agent(
-        request,
-        WorkSpec,
-        provider,
-        "prompt",
-        tools=registry,
-        state_service=ss,
-    )
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert response.failure_kind is None
-    assert response.delta == DeltaState(
-        new_files=[FileWrite(path="pyproject.toml", content="new")]
-    )
-    ss.apply_delta.assert_not_called()
-
-
-async def test_run_agent_worker_mode_apply_delta_value_error_is_not_invalid_json():
-    """Worker mode: state application failures are classified as TOOL_ERROR, not INVALID_JSON."""
-    request = _work_request()
-    provider = _mock_provider(_NONEMPTY_DELTA)
-    ss = _mock_state_service(passed=True)
-    ss.apply_delta.side_effect = ValueError("old string not found in pyproject.toml")
-
-    response = await run_agent(request, WorkSpec, provider, "prompt", state_service=ss)
-
-    assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.TOOL_ERROR
-    assert response.failure_kind != FailureKind.INVALID_JSON
-
-
-async def test_run_agent_planner_mode_unchanged_without_state_service():
-    """Planner mode: no state_service → no test loop, returns COMPLETED immediately on DeltaState."""
-    request = _work_request()
-    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
-
-    response = await run_agent(request, WorkSpec, provider, "prompt")
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert provider.chat.call_count == 1
 
 
 class _DoThingRequest(BaseModel):
@@ -630,6 +455,24 @@ async def test_run_agent_merges_tracked_add_dependency_into_delta():
 
     assert response.delta is not None
     assert response.delta.dependencies == ["httpx"]
+
+
+async def test_run_agent_returns_completed_with_llm_reported_delta_after_read_tool_calls():
+    """Workers using read-only tools: tracked_delta stays empty; LLM-reported DeltaState is returned."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+        _NONEMPTY_DELTA,
+    ])
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta is not None
+    assert len(response.delta.new_files) == 1
+    assert response.delta.new_files[0].path == "src/main.py"
 
 
 # --- _classify_failure ---
