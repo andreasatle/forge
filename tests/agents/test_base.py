@@ -16,12 +16,8 @@ from forge.agents.base import (
     ToolError,
     ToolLoop,
     TrackedToolExecutor,
-    _build_system_prompt,
     _classify_failure,
-    _execute_tool,
     _merge_delta,
-    _parse_response,
-    _render_response_schema,
     run_agent,
 )
 from forge.core.models import (
@@ -151,7 +147,7 @@ def _make_add_dependency_tool() -> Tool:
     )
 
 
-# --- _parse_response ---
+# --- ResponseParser ---
 
 
 def test_response_parser_parses_tool_call_request():
@@ -182,36 +178,36 @@ def test_response_parser_rejects_schema_invalid_final_response():
         ResponseParser(_RequiredResponse).parse("{}")
 
 
-def test_parse_response_correctly_parses_tool_call_request():
-    """_parse_response returns ToolCallRequest when kind == 'tool_call'."""
+def test_response_parser_correctly_parses_tool_call_request():
+    """ResponseParser returns ToolCallRequest when kind == 'tool_call'."""
     raw = '{"kind": "tool_call", "name": "my_tool", "arguments": {}}'
-    result = _parse_response(raw, None, DeltaState)
+    result = ResponseParser(DeltaState).parse(raw)
     assert isinstance(result, ToolCallRequest)
     assert result.name == "my_tool"
 
 
-def test_parse_response_correctly_parses_delta_state_as_final_response():
-    """_parse_response returns DeltaState when JSON matches DeltaState schema."""
+def test_response_parser_correctly_parses_delta_state_as_final_response():
+    """ResponseParser returns DeltaState when JSON matches DeltaState schema."""
     raw = '{"edits": [], "new_files": [], "dependencies": []}'
-    result = _parse_response(raw, None, DeltaState)
+    result = ResponseParser(DeltaState).parse(raw)
     assert isinstance(result, DeltaState)
 
 
-def test_parse_response_correctly_parses_plan_response_as_final_response():
-    """_parse_response returns PlanResponse when final_response_type is PlanResponse."""
+def test_response_parser_correctly_parses_plan_response_as_final_response():
+    """ResponseParser returns PlanResponse when final_response_type is PlanResponse."""
     raw = '{"kind": "plan", "tasks": []}'
-    result = _parse_response(raw, None, PlanResponse)
+    result = ResponseParser(PlanResponse).parse(raw)
     assert isinstance(result, PlanResponse)
     assert result.tasks == []
 
 
-def test_parse_response_raises_value_error_on_unknown_format():
-    """_parse_response raises ValueError when the response is not valid JSON."""
+def test_response_parser_raises_value_error_on_unknown_format():
+    """ResponseParser raises ValueError when the response is not valid JSON."""
     with pytest.raises(ValueError, match="not valid JSON"):
-        _parse_response("not json at all", None, DeltaState)
+        ResponseParser(DeltaState).parse("not json at all")
 
 
-# --- _execute_tool ---
+# --- TrackedToolExecutor ---
 
 
 async def test_tracked_tool_executor_executes_valid_tool():
@@ -252,7 +248,7 @@ async def test_tracked_tool_executor_validates_tool_arguments():
 
 
 async def test_tracked_tool_executor_tracks_write_file_delta():
-    """TrackedToolExecutor tracks write_file calls exactly as _execute_tool does."""
+    """TrackedToolExecutor tracks write_file calls in DeltaState."""
     registry = ToolRegistry()
     registry.register(_make_write_file_tool())
     request = ToolCallRequest(
@@ -276,29 +272,29 @@ async def test_tracked_tool_executor_leaves_read_only_tool_delta_unchanged():
     assert delta == original_delta
 
 
-async def test_execute_tool_returns_correct_tool_call_response():
-    """_execute_tool returns (ToolCallResponse, delta) with success=True on valid tool call."""
+async def test_tracked_tool_executor_returns_correct_tool_call_response():
+    """TrackedToolExecutor returns (ToolCallResponse, delta) on valid tool call."""
     registry, mock_fn = _make_registry()
     request = ToolCallRequest(kind="tool_call", name="do_thing", arguments={})
-    response, delta = await _execute_tool(request, registry, DeltaState())
+    response, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
     assert response.success is True
     assert response.result == {"result": "done"}
     assert mock_fn.call_count == 1
     assert delta == DeltaState()
 
 
-async def test_execute_tool_returns_error_tool_call_response_on_unknown_tool():
-    """_execute_tool returns (error response, unchanged delta) for an unregistered tool."""
+async def test_tracked_tool_executor_returns_error_tool_call_response_on_unknown_tool():
+    """TrackedToolExecutor returns (error response, unchanged delta) for an unregistered tool."""
     registry = ToolRegistry()
     request = ToolCallRequest(kind="tool_call", name="nonexistent", arguments={})
-    response, delta = await _execute_tool(request, registry, DeltaState())
+    response, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
     assert response.success is False
     assert response.error is not None
     assert delta == DeltaState()
 
 
-async def test_execute_tool_tracks_write_file_in_new_files():
-    """_execute_tool adds a FileWrite entry to tracked_delta when write_file succeeds."""
+async def test_tracked_tool_executor_tracks_write_file_in_new_files():
+    """TrackedToolExecutor adds a FileWrite entry to tracked_delta when write_file succeeds."""
     registry = ToolRegistry()
     registry.register(_make_write_file_tool())
     request = ToolCallRequest(
@@ -306,12 +302,12 @@ async def test_execute_tool_tracks_write_file_in_new_files():
         name="write_file",
         arguments={"path": "src/hello.py", "content": "print(1)\n"},
     )
-    _, delta = await _execute_tool(request, registry, DeltaState())
+    _, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
     assert len(delta.new_files) == 1
     assert delta.new_files[0] == FileWrite(path="src/hello.py", content="print(1)\n")
 
 
-async def test_execute_tool_write_file_overwrites_same_path():
+async def test_tracked_tool_executor_write_file_overwrites_same_path():
     """Calling write_file twice for the same path keeps only the latest content."""
     registry = ToolRegistry()
     registry.register(_make_write_file_tool())
@@ -321,14 +317,15 @@ async def test_execute_tool_write_file_overwrites_same_path():
     req2 = ToolCallRequest(
         kind="tool_call", name="write_file", arguments={"path": "a.py", "content": "v2"}
     )
-    _, after_first = await _execute_tool(req1, registry, DeltaState())
-    _, after_second = await _execute_tool(req2, registry, after_first)
+    executor = TrackedToolExecutor(registry)
+    _, after_first = await executor.execute(req1, DeltaState())
+    _, after_second = await executor.execute(req2, after_first)
     assert len(after_second.new_files) == 1
     assert after_second.new_files[0].content == "v2"
 
 
-async def test_execute_tool_tracks_replace_in_file_in_edits():
-    """_execute_tool adds an Edit entry to tracked_delta when replace_in_file succeeds."""
+async def test_tracked_tool_executor_tracks_replace_in_file_in_edits():
+    """TrackedToolExecutor adds an Edit entry to tracked_delta when replace_in_file succeeds."""
     registry = ToolRegistry()
     registry.register(_make_replace_in_file_tool())
     request = ToolCallRequest(
@@ -336,36 +333,37 @@ async def test_execute_tool_tracks_replace_in_file_in_edits():
         name="replace_in_file",
         arguments={"path": "src/main.py", "old": "x = 1", "new": "x = 2"},
     )
-    _, delta = await _execute_tool(request, registry, DeltaState())
+    _, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
     assert len(delta.edits) == 1
     assert delta.edits[0] == Edit(path="src/main.py", old="x = 1", new="x = 2")
 
 
-async def test_execute_tool_tracks_add_dependency_in_dependencies():
-    """_execute_tool adds a package name to tracked_delta when add_dependency succeeds."""
+async def test_tracked_tool_executor_tracks_add_dependency_in_dependencies():
+    """TrackedToolExecutor adds a package name to tracked_delta when add_dependency succeeds."""
     registry = ToolRegistry()
     registry.register(_make_add_dependency_tool())
     request = ToolCallRequest(
         kind="tool_call", name="add_dependency", arguments={"package": "requests"}
     )
-    _, delta = await _execute_tool(request, registry, DeltaState())
+    _, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
     assert delta.dependencies == ["requests"]
 
 
-async def test_execute_tool_add_dependency_skips_duplicate():
+async def test_tracked_tool_executor_add_dependency_skips_duplicate():
     """add_dependency does not add the same package twice."""
     registry = ToolRegistry()
     registry.register(_make_add_dependency_tool())
     req = ToolCallRequest(
         kind="tool_call", name="add_dependency", arguments={"package": "requests"}
     )
-    _, after_first = await _execute_tool(req, registry, DeltaState())
-    _, after_second = await _execute_tool(req, registry, after_first)
+    executor = TrackedToolExecutor(registry)
+    _, after_first = await executor.execute(req, DeltaState())
+    _, after_second = await executor.execute(req, after_first)
     assert after_second.dependencies == ["requests"]
 
 
-async def test_execute_tool_returns_failed_response_when_replace_in_file_raises():
-    """_execute_tool returns (ToolCallResponse(success=False), original_delta) when the tool fn raises ValueError."""
+async def test_tracked_tool_executor_returns_failed_response_when_replace_in_file_raises():
+    """TrackedToolExecutor returns a failed ToolCallResponse and the original delta."""
     original_delta = DeltaState(dependencies=["existing"])
     registry = ToolRegistry()
 
@@ -386,7 +384,7 @@ async def test_execute_tool_returns_failed_response_when_replace_in_file_raises(
         name="replace_in_file",
         arguments={"path": "src/main.py", "old": "missing", "new": "x = 2"},
     )
-    response, delta = await _execute_tool(request, registry, original_delta)
+    response, delta = await TrackedToolExecutor(registry).execute(request, original_delta)
 
     assert response.success is False
     assert "not found" in (response.error or "")
@@ -815,7 +813,7 @@ async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
     assert response.status == ResponseStatus.COMPLETED
 
 
-# --- _build_system_prompt ---
+# --- PromptBuilder ---
 
 
 def test_prompt_builder_builds_prompt_with_tools():
@@ -862,54 +860,54 @@ def test_prompt_builder_preserves_tracked_delta_schema_visibility():
     assert "new_files" in after_tool_work
 
 
-def test_build_system_prompt_hides_delta_schema_on_first_turn_with_tools():
+def test_prompt_builder_hides_delta_schema_on_first_turn_with_tools():
     """First-turn system prompt does not show DeltaState schema when tools are present."""
     registry, _ = _make_registry()
-    prompt = _build_system_prompt(registry, DeltaState)
+    prompt = PromptBuilder(registry, DeltaState).build()
     assert "new_files" not in prompt
     assert "edits" not in prompt
 
 
-def test_build_system_prompt_owns_json_only_instruction_once():
+def test_prompt_builder_owns_json_only_instruction_once():
     """run_agent owns the JSON-only semantic instruction and emits it once."""
     registry, _ = _make_registry()
-    prompt = _build_system_prompt(registry, DeltaState)
+    prompt = PromptBuilder(registry, DeltaState).build()
     assert prompt.count("JSON only") == 1
 
 
-def test_build_system_prompt_shows_delta_schema_after_tool_work():
+def test_prompt_builder_shows_delta_schema_after_tool_work():
     """After tool work (non-empty tracked_delta), system prompt shows DeltaState schema."""
     registry, _ = _make_registry()
     tracked = DeltaState(new_files=[FileWrite(path="src/x.py", content="x")])
-    prompt = _build_system_prompt(registry, DeltaState, tracked)
+    prompt = PromptBuilder(registry, DeltaState).build(tracked)
     assert "new_files" in prompt
 
 
 def test_generated_delta_schema_includes_all_top_level_model_fields():
     """DeltaState schema prompt is generated from all actual top-level Pydantic fields."""
-    prompt = _render_response_schema(DeltaState)
+    prompt = PromptBuilder.render_response_schema(DeltaState)
     for field_name in DeltaState.model_fields:
         assert field_name in prompt
 
 
 def test_generated_plan_schema_includes_all_top_level_model_fields():
     """PlanResponse schema prompt is generated from all actual top-level Pydantic fields."""
-    prompt = _render_response_schema(PlanResponse)
+    prompt = PromptBuilder.render_response_schema(PlanResponse)
     for field_name in PlanResponse.model_fields:
         assert field_name in prompt
 
 
 def test_generated_schema_reflects_new_response_model_fields_automatically():
     """Adding fields to a response model is reflected by schema rendering without prompt edits."""
-    prompt = _render_response_schema(_ExtendedResponse)
+    prompt = PromptBuilder.render_response_schema(_ExtendedResponse)
     for field_name in _ExtendedResponse.model_fields:
         assert field_name in prompt
 
 
-def test_build_system_prompt_tool_guidance_uses_registered_tools_only():
+def test_prompt_builder_tool_guidance_uses_registered_tools_only():
     """Tool guidance names tools from the provided registry, not hardcoded worker tools."""
     registry, _ = _make_registry()
-    prompt = _build_system_prompt(registry, DeltaState)
+    prompt = PromptBuilder(registry, DeltaState).build()
 
     assert "do_thing" in prompt
     for unavailable in (

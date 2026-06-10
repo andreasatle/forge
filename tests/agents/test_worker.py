@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
-from forge.agents.base import _build_system_prompt
+from forge.agents.base import PromptBuilder
 from forge.agents.worker import WorkTaskExecutor, work_agent
 from forge.core.models import (
     AgentRequest,
@@ -298,7 +298,7 @@ async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path) -> None:
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = _build_system_prompt(tools, DeltaState)
+    system_prompt = PromptBuilder(tools, DeltaState).build()
 
     for tool_name in BLACKBOARD_TOOL_NAMES:
         assert tool_name not in system_prompt
@@ -325,7 +325,7 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = _build_system_prompt(tools, DeltaState)
+    system_prompt = PromptBuilder(tools, DeltaState).build()
     tool_names = _tool_names(tools)
 
     assert _available_tool_names(system_prompt) == tool_names
@@ -354,11 +354,9 @@ async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path) -> None:
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = _build_system_prompt(tools, DeltaState)
-    schema_system_prompt = _build_system_prompt(
-        tools,
-        DeltaState,
-        DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+    system_prompt = PromptBuilder(tools, DeltaState).build()
+    schema_system_prompt = PromptBuilder(tools, DeltaState).build(
+        DeltaState(new_files=[FileWrite(path="x.py", content="x")])
     )
 
     assert "tool_call" in system_prompt

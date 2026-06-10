@@ -142,19 +142,12 @@ class PromptBuilder:
         return "\n".join(lines)
 
 
-def _compact_response_schema(response_type: type[BaseModel]) -> dict[str, object]:
-    return PromptBuilder.compact_response_schema(response_type)
-
-
-def _render_response_schema(response_type: type[BaseModel]) -> str:
-    return PromptBuilder.render_response_schema(response_type)
-
-
 def _build_system_prompt(
     tools: ToolRegistry | None,
     final_response_type: type[BaseModel],
     tracked_delta: DeltaState = DeltaState(),
 ) -> str:
+    # Compatibility shim for critic/referee until their retry loops use PromptBuilder directly.
     return PromptBuilder(tools, final_response_type).build(tracked_delta)
 
 
@@ -190,6 +183,7 @@ class ResponseParser:
 def _parse_response(
     raw: str, tools: ToolRegistry | None, final_response_type: type[BaseModel]
 ) -> ToolCallRequest | BaseModel:
+    # Compatibility shim for critic/referee until their retry loops use ResponseParser directly.
     return ResponseParser(final_response_type).parse(raw)
 
 
@@ -279,14 +273,6 @@ class TrackedToolExecutor:
                 ),
                 tracked_delta,
             )
-
-
-async def _execute_tool(
-    request: ToolCallRequest,
-    tools: ToolRegistry | None,
-    tracked_delta: DeltaState,
-) -> tuple[ToolCallResponse, DeltaState]:
-    return await TrackedToolExecutor(tools).execute(request, tracked_delta)
 
 
 def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
