@@ -20,6 +20,9 @@ prompt_supplement: |
     [tool.pytest.ini_options]
     testpaths = ["tests"]
     pythonpath = ["src"]
+  pytest plugins (pytest-mock, pytest-cov, pytest-asyncio, etc.) are dev
+  dependencies — add them to [project.optional-dependencies] dev via an
+  edit, never in DeltaState.dependencies.
 
   Import modules directly by name, not with src. prefix:
     correct:   from scraper import WebScraper
