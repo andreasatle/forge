@@ -45,12 +45,16 @@ async def test_planner_format_failure_triggers_retry() -> None:
     """plan_agent retries when the LLM returns invalid JSON and succeeds on the next attempt."""
     request = _make_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        "not valid json",
-        '{"kind": "plan", "tasks": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            "not valid json",
+            '{"kind": "plan", "tasks": []}',
+        ]
+    )
 
-    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider, max_retries=3)
+    response = await plan_agent(
+        request, ["codebase"], {"codebase": "python"}, provider, max_retries=3
+    )
 
     assert response.status == ResponseStatus.COMPLETED
     assert provider.chat.call_count == 2
@@ -61,7 +65,9 @@ async def test_planner_format_failure_exhausts_retries_returns_failed() -> None:
     request = _make_request()
     provider = _mock_provider("not json")
 
-    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider, max_retries=2)
+    response = await plan_agent(
+        request, ["codebase"], {"codebase": "python"}, provider, max_retries=2
+    )
 
     assert response.status == ResponseStatus.FAILED
     assert provider.chat.call_count == 3  # initial + 2 retries
@@ -73,7 +79,9 @@ async def test_planner_llm_error_returns_failed_immediately() -> None:
     provider = _mock_provider()
     provider.chat = AsyncMock(side_effect=RuntimeError("network error"))
 
-    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider, max_retries=3)
+    response = await plan_agent(
+        request, ["codebase"], {"codebase": "python"}, provider, max_retries=3
+    )
 
     assert response.status == ResponseStatus.FAILED
     assert provider.chat.call_count == 1
@@ -83,10 +91,12 @@ async def test_planner_prints_warning_on_retry(capsys: pytest.CaptureFixture[str
     """plan_agent prints a retry warning when the LLM returns invalid JSON."""
     request = _make_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        "not valid json",
-        '{"kind": "plan", "tasks": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            "not valid json",
+            '{"kind": "plan", "tasks": []}',
+        ]
+    )
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider, max_retries=3)
 
@@ -98,7 +108,9 @@ async def test_plan_agent_never_calls_chat_with_tools() -> None:
     """plan_agent uses provider.chat only, never chat_with_tools."""
     request = _make_request()
     provider = _mock_provider()
-    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+    provider.chat_with_tools = AsyncMock(
+        side_effect=AssertionError("chat_with_tools must not be called")
+    )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
@@ -128,7 +140,7 @@ async def test_planner_follow_up_contains_only_work_nodes() -> None:
     provider = _mock_provider(
         '{"kind": "plan", "tasks": ['
         '{"objective": "A", "success_condition": "done", "adapter": "coding", "artifact": "codebase"}'
-        ']}'
+        "]}"
     )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
@@ -145,12 +157,30 @@ async def test_planner_dependency_wiring_is_task_to_task() -> None:
         '{"kind": "plan", "tasks": ['
         '{"objective": "A", "success_condition": "done", "adapter": "coding", "artifact": "codebase"},'
         '{"objective": "B", "success_condition": "done", "adapter": "coding", "artifact": "codebase", "depends_on": [0]}'
-        ']}'
+        "]}"
     )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
-    work_a = next(r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "A")
-    work_b = next(r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "B")
+    work_a = next(
+        r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "A"
+    )
+    work_b = next(
+        r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "B"
+    )
     assert work_a.id in work_b.dependencies
     assert len(work_b.dependencies) == 1
+
+
+async def test_planner_prompt_bans_legacy_packaging_in_success_conditions() -> None:
+    """PLAN_PROMPT instructs the planner never to mention legacy packaging formats in success conditions."""
+    request = _make_request()
+    provider = _mock_provider()
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "requirements.txt" in user_prompt
+    assert "setup.py" in user_prompt
+    assert "observable outcomes" in user_prompt

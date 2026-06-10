@@ -30,6 +30,8 @@ Rules:
 - depends_on contains indices (0-based) of tasks this task depends on
 - adapter must be one of: coding, document, audit
 - No more than 5 tasks
+- Success conditions must describe observable outcomes (tests pass, output matches, endpoint returns X)
+- Never mention requirements.txt, setup.py, or other legacy Python packaging formats in success conditions
 
 Goal: {northstar}
 """
@@ -51,9 +53,10 @@ async def plan_agent(
             error=f"expected PlanSpec, got {type(spec).__name__}",
         )
 
-    artifact_language_list = "\n".join(
-        f"  {name}: {lang}" for name, lang in artifact_languages.items()
-    ) or "  (no languages declared)"
+    artifact_language_list = (
+        "\n".join(f"  {name}: {lang}" for name, lang in artifact_languages.items())
+        or "  (no languages declared)"
+    )
     prompt = PLAN_PROMPT.format(
         northstar=spec.northstar,
         artifact_names=", ".join(artifact_names),
