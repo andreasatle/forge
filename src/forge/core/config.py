@@ -22,6 +22,8 @@ class ModelsConfig:
     planner: str = "ollama/gemma4:e4b"
     worker: str = "ollama/gemma4:e4b"
     integrator: str = "ollama/gemma4:e4b"
+    critic: str | None = None
+    referee: str | None = None
 
 
 @dataclass
@@ -62,6 +64,8 @@ class ForgeConfig:
             planner=models_data.get("planner", "ollama/gemma4:e4b"),
             worker=models_data.get("worker", "ollama/gemma4:e4b"),
             integrator=models_data.get("integrator", "ollama/gemma4:e4b"),
+            critic=models_data.get("critic"),
+            referee=models_data.get("referee"),
         )
         return ForgeConfig(
             northstar=data["northstar"],

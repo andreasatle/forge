@@ -83,6 +83,12 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
 
     planner_provider = make_provider(config.models.planner, config.max_tokens)
     worker_provider = make_provider(config.models.worker, config.max_tokens)
+    critic_provider = (
+        make_provider(config.models.critic, config.max_tokens) if config.models.critic else None
+    )
+    referee_provider = (
+        make_provider(config.models.referee, config.max_tokens) if config.models.referee else None
+    )
 
     runner = Runner()
     runner.register(
@@ -100,6 +106,8 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             worker_provider,
             state_services=state_services,
             max_tool_iterations=config.max_tool_iterations,
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
         ),
     )
 

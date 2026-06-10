@@ -445,6 +445,58 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
+async def test_make_work_handler_passes_critic_and_referee_providers(tmp_path: Path) -> None:
+    """make_work_handler forwards critic and referee providers to work_agent."""
+    from unittest.mock import patch
+
+    critic = _mock_provider()
+    referee = _mock_provider()
+    captured: dict[str, object] = {}
+
+    async def capturing_work_agent(*args: object, **kwargs: object) -> AgentResponse:
+        captured["critic_provider"] = kwargs.get("critic_provider")
+        captured["referee_provider"] = kwargs.get("referee_provider")
+        return AgentResponse(request_id=args[0].id, status=ResponseStatus.COMPLETED)  # type: ignore[union-attr]
+
+    with patch("forge.core.runner.work_agent", capturing_work_agent):
+        handler = make_work_handler(
+            _mock_registry(),
+            _make_workspace(tmp_path),
+            LanguageRegistry(),
+            _mock_provider(),
+            critic_provider=critic,
+            referee_provider=referee,
+        )
+        await handler(_work_request())
+
+    assert captured["critic_provider"] is critic
+    assert captured["referee_provider"] is referee
+
+
+async def test_make_work_handler_passes_none_providers_when_omitted(tmp_path: Path) -> None:
+    """make_work_handler passes None for critic and referee when not provided."""
+    from unittest.mock import patch
+
+    captured: dict[str, object] = {}
+
+    async def capturing_work_agent(*args: object, **kwargs: object) -> AgentResponse:
+        captured["critic_provider"] = kwargs.get("critic_provider")
+        captured["referee_provider"] = kwargs.get("referee_provider")
+        return AgentResponse(request_id=args[0].id, status=ResponseStatus.COMPLETED)  # type: ignore[union-attr]
+
+    with patch("forge.core.runner.work_agent", capturing_work_agent):
+        handler = make_work_handler(
+            _mock_registry(),
+            _make_workspace(tmp_path),
+            LanguageRegistry(),
+            _mock_provider(),
+        )
+        await handler(_work_request())
+
+    assert captured["critic_provider"] is None
+    assert captured["referee_provider"] is None
+
+
 async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: Path) -> None:
     """Scheduler calls state_service.apply_delta when a work node completes successfully."""
     provider = _mock_provider()

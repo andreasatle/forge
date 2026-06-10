@@ -20,7 +20,8 @@ def test_load_parses_valid_yaml(tmp_path: Path) -> None:
     """load() correctly parses all fields from a valid YAML config file."""
     p = _write_yaml(
         tmp_path,
-        "northstar: 'do the thing'\nworkspace: ./ws\nconcurrency: 4\nverbose: true\n" + _ARTIFACTS_YAML,
+        "northstar: 'do the thing'\nworkspace: ./ws\nconcurrency: 4\nverbose: true\n"
+        + _ARTIFACTS_YAML,
     )
     config = ForgeConfig.load(p)
     assert config.northstar == "do the thing"
@@ -99,7 +100,9 @@ def test_coding_artifact_without_language_raises(tmp_path: Path) -> None:
         tmp_path,
         "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: codebase\n    type: coding\n",
     )
-    with pytest.raises(ValueError, match="artifact 'codebase' has type 'coding' but no language declared"):
+    with pytest.raises(
+        ValueError, match="artifact 'codebase' has type 'coding' but no language declared"
+    ):
         ForgeConfig.load(p)
 
 
@@ -129,7 +132,9 @@ def test_max_retries_defaults_to_three(tmp_path: Path) -> None:
 
 def test_max_retries_parsed_from_yaml(tmp_path: Path) -> None:
     """load() reads max_retries from YAML when explicitly declared."""
-    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_retries: 5\n" + _ARTIFACTS_YAML)
+    p = _write_yaml(
+        tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_retries: 5\n" + _ARTIFACTS_YAML
+    )
     config = ForgeConfig.load(p)
     assert config.max_retries == 5
 
@@ -143,7 +148,9 @@ def test_max_tokens_defaults_to_8192(tmp_path: Path) -> None:
 
 def test_max_tokens_parsed_from_yaml(tmp_path: Path) -> None:
     """load() reads max_tokens from YAML when explicitly declared."""
-    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tokens: 4096\n" + _ARTIFACTS_YAML)
+    p = _write_yaml(
+        tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tokens: 4096\n" + _ARTIFACTS_YAML
+    )
     config = ForgeConfig.load(p)
     assert config.max_tokens == 4096
 
@@ -179,6 +186,34 @@ def test_models_config_defaults() -> None:
     assert m.integrator == "ollama/gemma4:e4b"
 
 
+def test_models_critic_and_referee_default_to_none() -> None:
+    """ModelsConfig defaults critic and referee to None when not provided."""
+    m = ModelsConfig()
+    assert m.critic is None
+    assert m.referee is None
+
+
+def test_models_critic_and_referee_parsed_from_yaml(tmp_path: Path) -> None:
+    """load() reads critic and referee model strings from the models section when declared."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n  critic: ollama/gemma4:e4b\n  referee: ollama/gemma4:e4b\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.critic == "ollama/gemma4:e4b"
+    assert config.models.referee == "ollama/gemma4:e4b"
+
+
+def test_models_critic_and_referee_absent_defaults_to_none(tmp_path: Path) -> None:
+    """load() sets critic and referee to None when omitted from the models section."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.models.critic is None
+    assert config.models.referee is None
+
+
 def test_max_tool_iterations_defaults_to_25(tmp_path: Path) -> None:
     """load() defaults max_tool_iterations to 25 when not present in YAML."""
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
@@ -188,6 +223,8 @@ def test_max_tool_iterations_defaults_to_25(tmp_path: Path) -> None:
 
 def test_max_tool_iterations_parsed_from_yaml(tmp_path: Path) -> None:
     """load() reads max_tool_iterations from YAML when explicitly declared."""
-    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tool_iterations: 50\n" + _ARTIFACTS_YAML)
+    p = _write_yaml(
+        tmp_path, "northstar: 'goal'\nworkspace: ./ws\nmax_tool_iterations: 50\n" + _ARTIFACTS_YAML
+    )
     config = ForgeConfig.load(p)
     assert config.max_tool_iterations == 50

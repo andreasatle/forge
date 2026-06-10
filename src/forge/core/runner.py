@@ -50,6 +50,8 @@ def make_work_handler(
     provider: LLMProvider,
     state_services: dict[str, StateService] | None = None,
     max_tool_iterations: int = 25,
+    critic_provider: LLMProvider | None = None,
+    referee_provider: LLMProvider | None = None,
 ) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
 
@@ -72,6 +74,8 @@ def make_work_handler(
             provider,
             state_view,
             max_tool_iterations=max_tool_iterations,
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
         )
 
     return work_handler
