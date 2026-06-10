@@ -16,9 +16,7 @@ from forge.tools.builtin import build_read_registry
 from forge.tools.registry import ToolRegistry
 
 _FALLBACK_DELTA_EXAMPLE = (
-    '{{\n  "new_files": [{{"path": "output/result.txt", "content": "..."}}],\n'
-    '  "edits": [],\n  "dependencies": [],\n  "errors": [],\n'
-    '  "base_version": {base_version}\n}}'
+    "No language-specific file layout conventions are configured for this artifact."
 )
 
 

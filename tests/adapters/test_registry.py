@@ -6,6 +6,8 @@ import pytest
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 
+ADAPTERS_DIR = Path(__file__).parents[2] / "adapters"
+
 
 def _write_yaml(tmp_path: Path, filename: str, content: str) -> None:
     (tmp_path / filename).write_text(content)
@@ -86,3 +88,14 @@ prompt_template: "Complete: {{ objective }}"
     assert spec.description == "Writes and edits code"
     assert spec.tools == ["list_files", "read_file", "run_tests"]
     assert "{{ objective }}" in spec.prompt_template
+
+
+def test_validation_adapters_do_not_duplicate_response_schema_examples() -> None:
+    """Pydantic models own critic/referee response schemas, not YAML examples."""
+    registry = AdapterRegistry()
+    registry.load(ADAPTERS_DIR)
+
+    for adapter_name in ("critic", "referee"):
+        prompt = registry.get(adapter_name).prompt_template
+        assert "Respond with a JSON object exactly matching this structure" not in prompt
+        assert "{{" not in prompt

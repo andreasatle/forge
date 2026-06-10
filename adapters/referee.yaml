@@ -20,13 +20,6 @@ prompt_template: |
 
   {files}
 
-  Respond with a JSON object exactly matching this structure:
-  {{
-    "disposition": "accept",
-    "rationale": "The implementation correctly satisfies the success condition",
-    "override": false
-  }}
-
   Rules:
   - Use lowercase disposition values: "accept", "revise", or "reject"
   - Set override to true if your disposition differs from the critic's ({critic_disposition})

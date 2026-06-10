@@ -431,7 +431,7 @@ async def test_python_worker_prompt_includes_packaging_guidance(tmp_path) -> Non
 
 
 async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None:
-    """work_agent renders the language-specific delta_example into the prompt."""
+    """work_agent renders language-specific conventions into the prompt."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -466,6 +466,8 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None
         )
 
     user_prompt = mock_run_agent.call_args.args[3]
+    assert "Language-specific output conventions" in user_prompt
+    assert "Example of a valid DeltaState response" not in user_prompt
     assert "DELTA_EXAMPLE_MARKER" in user_prompt
 
 

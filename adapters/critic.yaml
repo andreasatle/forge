@@ -20,16 +20,6 @@ prompt_template: |
   Be demanding. Do not accept partial implementations. If tests are missing and the success
   condition implies correctness, that is REVISE. If no files were produced, that is REJECT.
 
-  Respond with a JSON object exactly matching this structure:
-  {{
-    "disposition": "revise",
-    "rationale": "The implementation is missing error handling",
-    "hints": [
-      "Add try/except around the HTTP call",
-      "Return None instead of raising on 404"
-    ]
-  }}
-
   Rules:
   - Use lowercase disposition values: "accept", "revise", or "reject"
   - hints must be specific and actionable

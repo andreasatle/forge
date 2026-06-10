@@ -18,15 +18,6 @@ prompt_supplement: |
   Always write at least one test per public function.
   List required crates in the final dependency output.
 delta_example: |
-  {{
-    "new_files": [
-      {{"path": "src/main.rs", "content": "..."}},
-      {{"path": "tests/integration_test.rs", "content": "..."}}
-    ],
-    "edits": [
-      {{"path": "Cargo.toml", "old": "[dependencies]", "new": "[dependencies]\nserde = \"1\""}}
-    ],
-    "dependencies": ["serde"],
-    "errors": [],
-    "base_version": {base_version}
-  }}
+  Use paths such as src/main.rs and tests/integration_test.rs.
+  Keep runtime crates in Cargo.toml and DeltaState.dependencies.
+  Keep test-only utilities under dev-dependencies in Cargo.toml.

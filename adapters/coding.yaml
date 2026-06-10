@@ -10,7 +10,7 @@ prompt_template: |
   Complete the following task: {objective}
   Success condition: {success_condition}
 
-  Example of a valid DeltaState response:
+  Language-specific output conventions:
   {delta_example}
 
   Verification rules:
