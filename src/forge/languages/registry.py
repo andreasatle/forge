@@ -5,7 +5,17 @@ from pathlib import Path
 
 import yaml
 
-_REQUIRED_FIELDS = ("name", "package_manager", "init_command", "test_command", "sync_command", "add_dependency_command", "project_structure", "prompt_supplement")
+_REQUIRED_FIELDS = (
+    "name",
+    "package_manager",
+    "init_command",
+    "test_command",
+    "sync_command",
+    "add_dependency_command",
+    "project_structure",
+    "prompt_supplement",
+    "delta_example",
+)
 
 
 @dataclass
@@ -20,6 +30,7 @@ class LanguagePlugin:
     add_dependency_command: str
     project_structure: list[str]
     prompt_supplement: str
+    delta_example: str
 
 
 class LanguageRegistry:
@@ -35,7 +46,9 @@ class LanguageRegistry:
                 data = yaml.safe_load(f)
             for field in _REQUIRED_FIELDS:
                 if field not in data:
-                    raise ValueError(f"language plugin {path.name!r} missing required field: {field!r}")
+                    raise ValueError(
+                        f"language plugin {path.name!r} missing required field: {field!r}"
+                    )
             plugin = LanguagePlugin(
                 name=data["name"],
                 package_manager=data["package_manager"],
@@ -45,6 +58,7 @@ class LanguageRegistry:
                 add_dependency_command=data["add_dependency_command"],
                 project_structure=data["project_structure"],
                 prompt_supplement=data["prompt_supplement"],
+                delta_example=data["delta_example"],
             )
             self._plugins[plugin.name] = plugin
             print(f"loaded language plugin: {plugin.name}")

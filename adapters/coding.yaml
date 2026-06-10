@@ -9,18 +9,7 @@ prompt_template: |
   Success condition: {success_condition}
 
   Example of a valid DeltaState response:
-  {{
-    "new_files": [
-      {{"path": "src/foo.py", "content": "def hello():\n    pass\n"}},
-      {{"path": "tests/test_foo.py", "content": "from foo import hello\n\ndef test_hello():\n    hello()\n"}}
-    ],
-    "edits": [
-      {{"path": "pyproject.toml", "old": "name = \"old\"", "new": "name = \"new\""}}
-    ],
-    "dependencies": ["requests"],
-    "errors": [],
-    "base_version": {base_version}
-  }}
+  {delta_example}
 
   Package rules:
   - Declare all required packages in the dependencies field of your

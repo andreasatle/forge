@@ -28,3 +28,16 @@ prompt_supplement: |
     correct:   from scraper import WebScraper
     incorrect: from src.scraper import WebScraper
   List required runtime packages in the final dependency output.
+delta_example: |
+  {{
+    "new_files": [
+      {{"path": "src/scraper.py", "content": "..."}},
+      {{"path": "tests/test_scraper.py", "content": "..."}}
+    ],
+    "edits": [
+      {{"path": "pyproject.toml", "old": "dependencies = []", "new": "dependencies = [\"requests\"]"}}
+    ],
+    "dependencies": ["requests"],
+    "errors": [],
+    "base_version": {base_version}
+  }}

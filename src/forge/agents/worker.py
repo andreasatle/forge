@@ -9,6 +9,12 @@ from forge.llm.providers import LLMProvider
 from forge.tools.builtin import build_read_registry
 from forge.tools.registry import ToolRegistry
 
+_FALLBACK_DELTA_EXAMPLE = (
+    '{{\n  "new_files": [{{"path": "output/result.txt", "content": "..."}}],\n'
+    '  "edits": [],\n  "dependencies": [],\n  "errors": [],\n'
+    '  "base_version": {base_version}\n}}'
+)
+
 
 async def work_agent(
     request: AgentRequest,
@@ -48,10 +54,16 @@ async def work_agent(
     for tool in tool_list:
         tools.register(tool)
 
+    if plugin:
+        delta_example = plugin.delta_example.format(base_version=state_view.version)
+    else:
+        delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=state_view.version)
+
     prompt = adapter.prompt_template.format(
         objective=spec.objective,
         success_condition=spec.success_condition,
         base_version=state_view.version,
+        delta_example=delta_example,
     )
     if plugin:
         prompt += f"\n\n{plugin.prompt_supplement}"

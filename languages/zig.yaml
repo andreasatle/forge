@@ -17,3 +17,16 @@ prompt_supplement: |
   Always write at least one test per public function.
   Include test steps in build.zig so `zig build test` runs all tests.
   List required packages in the final dependency output.
+delta_example: |
+  {{
+    "new_files": [
+      {{"path": "src/main.zig", "content": "..."}},
+      {{"path": "src/module.zig", "content": "..."}}
+    ],
+    "edits": [
+      {{"path": "build.zig.zon", "old": ".dependencies = .{{}},", "new": ".dependencies = .{{ .zap = .{{ .url = \"...\" }} }},"}}
+    ],
+    "dependencies": [],
+    "errors": [],
+    "base_version": {base_version}
+  }}

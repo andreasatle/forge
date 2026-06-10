@@ -29,6 +29,7 @@ def _plugin(name: str = "python") -> LanguagePlugin:
         add_dependency_command="uv add {package}",
         project_structure=[],
         prompt_supplement="",
+        delta_example="",
     )
 
 

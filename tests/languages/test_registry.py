@@ -14,16 +14,21 @@ NON_TOOL_SUPPLEMENT_NAMES = {"ini_options"}
 
 
 def _write_plugin(dir: Path, name: str) -> None:
-    (dir / f"{name}.yaml").write_text(yaml.dump({
-        "name": name,
-        "package_manager": "test-pm",
-        "init_command": f"init-{name} {{artifact_name}}",
-        "test_command": "test-cmd",
-        "sync_command": "sync-cmd",
-        "add_dependency_command": "pm add {package}",
-        "project_structure": ["src/", "tests/"],
-        "prompt_supplement": f"Use {name} conventions.",
-    }))
+    (dir / f"{name}.yaml").write_text(
+        yaml.dump(
+            {
+                "name": name,
+                "package_manager": "test-pm",
+                "init_command": f"init-{name} {{artifact_name}}",
+                "test_command": "test-cmd",
+                "sync_command": "sync-cmd",
+                "add_dependency_command": "pm add {package}",
+                "project_structure": ["src/", "tests/"],
+                "prompt_supplement": f"Use {name} conventions.",
+                "delta_example": "",
+            }
+        )
+    )
 
 
 def test_registry_loads_all_yamls(tmp_path: Path) -> None:
@@ -94,16 +99,21 @@ def test_init_command_loaded_correctly_from_yaml(tmp_path: Path) -> None:
 
 def test_add_dependency_command_loaded_correctly_from_yaml(tmp_path: Path) -> None:
     """add_dependency_command is loaded verbatim from the YAML file."""
-    (tmp_path / "custom.yaml").write_text(yaml.dump({
-        "name": "custom",
-        "package_manager": "custom-pm",
-        "init_command": "custom init {artifact_name}",
-        "test_command": "custom-test",
-        "sync_command": "custom-sync",
-        "add_dependency_command": "custom install {package}",
-        "project_structure": ["src/"],
-        "prompt_supplement": "Use custom conventions.",
-    }))
+    (tmp_path / "custom.yaml").write_text(
+        yaml.dump(
+            {
+                "name": "custom",
+                "package_manager": "custom-pm",
+                "init_command": "custom init {artifact_name}",
+                "test_command": "custom-test",
+                "sync_command": "custom-sync",
+                "add_dependency_command": "custom install {package}",
+                "project_structure": ["src/"],
+                "prompt_supplement": "Use custom conventions.",
+                "delta_example": "",
+            }
+        )
+    )
     reg = LanguageRegistry()
     reg.load(tmp_path)
     plugin = reg.get("custom")

@@ -74,6 +74,7 @@ def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
         add_dependency_command="uv add {package}",
         project_structure=[],
         prompt_supplement="",
+        delta_example="",
     )
     return lr
 
@@ -327,6 +328,7 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
         add_dependency_command="uv add {package}",
         project_structure=[],
         prompt_supplement="UNIQUE_SUPPLEMENT_MARKER",
+        delta_example="",
     )
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
@@ -340,6 +342,45 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "UNIQUE_SUPPLEMENT_MARKER" in user_prompt
+
+
+async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None:
+    """work_agent renders the language-specific delta_example into the prompt."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    lr = LanguageRegistry()
+    lr._plugins["python"] = LanguagePlugin(
+        name="python",
+        package_manager="uv",
+        init_command="uv init",
+        test_command="pytest",
+        sync_command="uv sync",
+        add_dependency_command="uv add {package}",
+        project_structure=[],
+        prompt_supplement="",
+        delta_example='{{"path": "DELTA_EXAMPLE_MARKER"}}',
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            lr,
+            provider,
+            _state_view(language="python"),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "DELTA_EXAMPLE_MARKER" in user_prompt
 
 
 async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None:

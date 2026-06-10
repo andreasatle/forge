@@ -17,3 +17,16 @@ prompt_supplement: |
   The built-in #[cfg(test)] module is sufficient for unit tests — always use it.
   Always write at least one test per public function.
   List required crates in the final dependency output.
+delta_example: |
+  {{
+    "new_files": [
+      {{"path": "src/main.rs", "content": "..."}},
+      {{"path": "tests/integration_test.rs", "content": "..."}}
+    ],
+    "edits": [
+      {{"path": "Cargo.toml", "old": "[dependencies]", "new": "[dependencies]\nserde = \"1\""}}
+    ],
+    "dependencies": ["serde"],
+    "errors": [],
+    "base_version": {base_version}
+  }}
