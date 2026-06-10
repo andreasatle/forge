@@ -20,3 +20,11 @@ prompt_template: |
     "dependencies": ["requests"],
     "errors": []
   }}
+
+  Package rules:
+  - Declare all required packages in the dependencies field of your
+    DeltaState response — this is the ONLY way to add packages
+  - Never attempt to install packages via tools, shell commands, or
+    any other mechanism
+  - csv, json, os, re, and other stdlib modules are never dependencies
+  - Only list third-party packages that must be installed via uv

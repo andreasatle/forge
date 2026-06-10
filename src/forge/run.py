@@ -115,7 +115,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             f"→ dispatched: {node.request.agent_type.value} ({node.request.id})"
         ),
         on_node_completed=lambda node: print(
-            f"✓ completed: {node.request.agent_type.value} ({node.request.id})"
+            f"✓ integrated: {node.request.agent_type.value} ({node.request.id})"
         ),
         on_node_failed=lambda node: print(
             f"✗ failed: {node.request.agent_type.value} ({node.request.id})"
