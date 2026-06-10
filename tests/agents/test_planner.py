@@ -139,7 +139,8 @@ async def test_planner_follow_up_contains_only_work_nodes() -> None:
     request = _make_request()
     provider = _mock_provider(
         '{"kind": "plan", "tasks": ['
-        '{"objective": "A", "success_condition": "done", "adapter": "coding", "artifact": "codebase"}'
+        '{"objective": "A", "success_condition": "done", '
+        '"adapter": "coding", "artifact": "codebase"}'
         "]}"
     )
 
@@ -155,8 +156,10 @@ async def test_planner_dependency_wiring_is_task_to_task() -> None:
     request = _make_request()
     provider = _mock_provider(
         '{"kind": "plan", "tasks": ['
-        '{"objective": "A", "success_condition": "done", "adapter": "coding", "artifact": "codebase"},'
-        '{"objective": "B", "success_condition": "done", "adapter": "coding", "artifact": "codebase", "depends_on": [0]}'
+        '{"objective": "A", "success_condition": "done", '
+        '"adapter": "coding", "artifact": "codebase"},'
+        '{"objective": "B", "success_condition": "done", '
+        '"adapter": "coding", "artifact": "codebase", "depends_on": [0]}'
         "]}"
     )
 
@@ -184,8 +187,8 @@ async def test_planner_prompt_requires_testable_success_conditions() -> None:
     assert "verifiable by running tests" in user_prompt
 
 
-async def test_planner_prompt_bans_legacy_packaging_in_success_conditions() -> None:
-    """PLAN_PROMPT instructs the planner never to mention legacy packaging formats in success conditions."""
+async def test_planner_prompt_omits_python_packaging_policy() -> None:
+    """PLAN_PROMPT stays language-agnostic and does not include Python packaging policy."""
     request = _make_request()
     provider = _mock_provider()
 
@@ -193,6 +196,7 @@ async def test_planner_prompt_bans_legacy_packaging_in_success_conditions() -> N
 
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
-    assert "requirements.txt" in user_prompt
-    assert "setup.py" in user_prompt
+    assert "requirements.txt" not in user_prompt
+    assert "setup.py" not in user_prompt
+    assert "legacy Python packaging" not in user_prompt
     assert "observable outcomes" in user_prompt

@@ -30,9 +30,10 @@ Rules:
 - depends_on contains indices (0-based) of tasks this task depends on
 - adapter must be one of: coding, document, audit
 - No more than 5 tasks
-- Success conditions must describe observable outcomes (tests pass, output matches, endpoint returns X)
-- Every coding task success condition must be verifiable by running tests — phrase it as an observable test outcome, not as a description of the implementation
-- Never mention requirements.txt, setup.py, or other legacy Python packaging formats in success conditions
+- Success conditions must describe observable outcomes
+  (tests pass, output matches, endpoint returns X)
+- Every coding task success condition must be verifiable by running tests
+  — phrase it as an observable test outcome, not as a description of the implementation
 
 Goal: {northstar}
 """

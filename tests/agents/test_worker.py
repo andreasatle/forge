@@ -290,7 +290,7 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) 
 
 
 async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
-    """coding.yaml adapter prompt contains an explicit warning that empty DeltaState is always wrong."""
+    """coding.yaml warns that empty DeltaState is always wrong."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -319,7 +319,7 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
 
 
 async def test_language_not_appended_when_no_plugin(tmp_path) -> None:
-    """work_agent does not append 'Language:' to the prompt when no language plugin is configured."""
+    """work_agent omits 'Language:' when no language plugin is configured."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -395,6 +395,39 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "UNIQUE_SUPPLEMENT_MARKER" in user_prompt
+
+
+async def test_python_worker_prompt_includes_packaging_guidance(tmp_path) -> None:
+    """Python coding workers receive packaging guidance from the language supplement."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    language_registry = LanguageRegistry()
+    language_registry.load(Path(__file__).parents[2] / "languages")
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            language_registry,
+            provider,
+            _state_view(language="python"),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "pyproject.toml" in user_prompt
+    assert "uv" in user_prompt
+    assert "requirements.txt" in user_prompt
+    assert "setup.py" in user_prompt
 
 
 async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None:

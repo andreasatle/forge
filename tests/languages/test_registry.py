@@ -133,7 +133,7 @@ _STALE_WORKER_PHRASES = [
 
 
 def test_language_supplements_have_no_stale_worker_mutation_phrases() -> None:
-    """Language supplements must not contain workflow directives that assume workers edit files or run tests."""
+    """Language supplements must not contain stale worker mutation directives."""
     for path in LANGUAGES_DIR.glob("*.yaml"):
         data = yaml.safe_load(path.read_text())
         supplement = data["prompt_supplement"].lower()
@@ -149,3 +149,13 @@ def test_language_prompt_supplements_do_not_name_tools() -> None:
         assert "tool_call" not in supplement, path.name
         tool_like_names = set(TOOL_LIKE_NAME.findall(supplement)) - NON_TOOL_SUPPLEMENT_NAMES
         assert not tool_like_names, path.name
+
+
+def test_python_supplement_contains_packaging_guidance() -> None:
+    """Python packaging policy belongs in the Python language supplement."""
+    data = yaml.safe_load((LANGUAGES_DIR / "python.yaml").read_text())
+    supplement = data["prompt_supplement"]
+    assert "pyproject.toml" in supplement
+    assert "uv" in supplement
+    assert "requirements.txt" in supplement
+    assert "setup.py" in supplement
