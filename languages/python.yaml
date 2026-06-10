@@ -28,6 +28,9 @@ prompt_supplement: |
     correct:   from scraper import WebScraper
     incorrect: from src.scraper import WebScraper
   List required runtime packages in the final dependency output.
+  Never add Python stdlib modules as dependencies — csv, json, os,
+  re, pathlib, sys, and similar built-in modules are always available
+  without installation.
 delta_example: |
   Example of a valid DeltaState response:
   {{
