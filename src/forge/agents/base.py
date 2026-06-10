@@ -133,27 +133,39 @@ def _build_system_prompt(
     return "\n".join(lines)
 
 
+class ResponseParser:
+    """Parse raw model text into either a tool call or the final response model."""
+
+    def __init__(self, final_response_type: type[BaseModel]) -> None:
+        self.final_response_type = final_response_type
+
+    def parse(self, raw: str) -> ToolCallRequest | BaseModel:
+        text = raw.strip()
+        match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+        try:
+            data: object = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"response is not valid JSON: {e}") from e
+        data_dict = cast(dict[str, object], data) if isinstance(data, dict) else None
+        if data_dict is not None and data_dict.get("kind") == "tool_call":
+            try:
+                return ToolCallRequest.model_validate(data_dict)
+            except Exception as e:
+                raise ValueError(f"invalid tool_call format: {e}") from e
+        try:
+            return self.final_response_type.model_validate(data)
+        except Exception as e:
+            raise ValueError(
+                f"response does not match {self.final_response_type.__name__}: {e}"
+            ) from e
+
+
 def _parse_response(
     raw: str, tools: ToolRegistry | None, final_response_type: type[BaseModel]
 ) -> ToolCallRequest | BaseModel:
-    text = raw.strip()
-    match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-    if match:
-        text = match.group(1).strip()
-    try:
-        data: object = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"response is not valid JSON: {e}") from e
-    data_dict = cast(dict[str, object], data) if isinstance(data, dict) else None
-    if data_dict is not None and data_dict.get("kind") == "tool_call":
-        try:
-            return ToolCallRequest.model_validate(data_dict)
-        except Exception as e:
-            raise ValueError(f"invalid tool_call format: {e}") from e
-    try:
-        return final_response_type.model_validate(data)
-    except Exception as e:
-        raise ValueError(f"response does not match {final_response_type.__name__}: {e}") from e
+    return ResponseParser(final_response_type).parse(raw)
 
 
 async def _execute_tool(

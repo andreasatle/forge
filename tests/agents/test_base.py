@@ -11,6 +11,7 @@ import pytest
 from pydantic import BaseModel
 
 from forge.agents.base import (
+    ResponseParser,
     ToolError,
     _build_system_prompt,
     _classify_failure,
@@ -67,6 +68,12 @@ class _ExtendedResponse(BaseModel):
 
     alpha: str
     beta: int
+
+
+class _RequiredResponse(BaseModel):
+    """Synthetic response model used to prove parser schema rejection."""
+
+    required_value: str
 
 
 def _work_request() -> AgentRequest:
@@ -144,6 +151,34 @@ def _make_add_dependency_tool() -> Tool:
 
 
 # --- _parse_response ---
+
+
+def test_response_parser_parses_tool_call_request():
+    """ResponseParser returns ToolCallRequest when kind == 'tool_call'."""
+    raw = '{"kind": "tool_call", "name": "my_tool", "arguments": {}}'
+    result = ResponseParser(DeltaState).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.name == "my_tool"
+
+
+def test_response_parser_parses_valid_final_response():
+    """ResponseParser returns the configured final response model for valid JSON."""
+    raw = '{"required_value": "ok"}'
+    result = ResponseParser(_RequiredResponse).parse(raw)
+    assert isinstance(result, _RequiredResponse)
+    assert result.required_value == "ok"
+
+
+def test_response_parser_rejects_invalid_json():
+    """ResponseParser raises ValueError with the existing invalid JSON message."""
+    with pytest.raises(ValueError, match="not valid JSON"):
+        ResponseParser(DeltaState).parse("not json at all")
+
+
+def test_response_parser_rejects_schema_invalid_final_response():
+    """ResponseParser raises ValueError with the existing schema mismatch message."""
+    with pytest.raises(ValueError, match="response does not match _RequiredResponse"):
+        ResponseParser(_RequiredResponse).parse("{}")
 
 
 def test_parse_response_correctly_parses_tool_call_request():
