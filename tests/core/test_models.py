@@ -377,9 +377,9 @@ def test_agent_response_failure_kind_none_when_completed():
 # --- CriticDisposition ---
 
 
-def test_critic_disposition_has_exactly_three_values():
-    """CriticDisposition has exactly ACCEPT, REVISE, and REJECT."""
-    assert {d.name for d in CriticDisposition} == {"ACCEPT", "REVISE", "REJECT"}
+def test_critic_disposition_has_exactly_four_values():
+    """CriticDisposition has exactly ACCEPT, REVISE, REJECT, and ALREADY_DONE."""
+    assert {d.name for d in CriticDisposition} == {"ACCEPT", "REVISE", "REJECT", "ALREADY_DONE"}
 
 
 # --- CriticFinding ---

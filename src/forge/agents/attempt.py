@@ -3,7 +3,7 @@
 import logging
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import run_agent
+from forge.agents.base import _is_empty_delta, run_agent
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.core.models import (
@@ -11,6 +11,7 @@ from forge.core.models import (
     AgentResponse,
     CriticDisposition,
     DeltaState,
+    FailureKind,
     ResponseStatus,
     StateView,
     WorkSpec,
@@ -73,6 +74,63 @@ class TaskAttemptEngine:
                 max_retries=self._max_retries,
                 max_tool_iterations=self._max_tool_iterations,
             )
+
+            if (
+                response.status == ResponseStatus.FAILED
+                and response.failure_kind == FailureKind.VALIDATION_REJECTED
+                and response.delta is not None
+                and _is_empty_delta(response.delta)
+            ):
+                if self._critic_provider is None:
+                    _logger.info(
+                        "attempt %d/%d: empty delta, no critic — ALREADY_DONE",
+                        attempt + 1,
+                        self._max_attempts,
+                    )
+                    return response.delta
+                try:
+                    finding = await critic_agent(
+                        self._request,
+                        self._state_view,
+                        response.delta,
+                        self._critic_provider,
+                        self._registry,
+                    )
+                except ValueError as e:
+                    _logger.warning(
+                        "attempt %d/%d: critic failed on empty delta: %s — treating as ALREADY_DONE",
+                        attempt + 1,
+                        self._max_attempts,
+                        e,
+                    )
+                    return response.delta
+                if finding.disposition == CriticDisposition.ALREADY_DONE:
+                    _logger.info(
+                        "attempt %d/%d: critic confirmed ALREADY_DONE",
+                        attempt + 1,
+                        self._max_attempts,
+                    )
+                    return response.delta
+                _logger.info(
+                    "attempt %d/%d: critic=%s on empty delta — retrying",
+                    attempt + 1,
+                    self._max_attempts,
+                    finding.disposition.value,
+                )
+                last_delta = response.delta
+                hints_text = (
+                    "\n".join(f"{i + 1}. {h}" for i, h in enumerate(finding.hints))
+                    if finding.hints
+                    else "(none)"
+                )
+                feedback = (
+                    f"Your previous attempt received feedback:\n"
+                    f"Disposition: {finding.disposition.value}\n"
+                    f"Rationale: {finding.rationale}\n"
+                    f"Hints:\n{hints_text}\n\n"
+                    f"Revise your implementation addressing the feedback above."
+                )
+                continue
 
             if response.status != ResponseStatus.COMPLETED or response.delta is None:
                 raise RunAgentFailed(response)

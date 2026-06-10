@@ -64,6 +64,7 @@ class CriticDisposition(Enum):
     ACCEPT = "accept"
     REVISE = "revise"
     REJECT = "reject"
+    ALREADY_DONE = "already_done"
 
 
 class CriticFinding(BaseModel, frozen=True):

@@ -359,10 +359,12 @@ async def run_agent(
                     and _is_empty_delta(_merge_delta(tracked_delta, parsed))
                     and request.agent_type == AgentType.WORK
                 ):
-                    raise ValueError(
-                        "Your response contained an empty DeltaState with no new_files, edits, "
-                        "or dependencies. You MUST produce actual file content. Return a "
-                        "DeltaState with at least one entry in new_files or edits."
+                    return AgentResponse(
+                        request_id=request.id,
+                        status=ResponseStatus.FAILED,
+                        error="empty delta: no new_files, edits, or dependencies produced",
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
+                        delta=DeltaState(),
                     )
             except ValueError as e:
                 if retry_count >= max_retries:

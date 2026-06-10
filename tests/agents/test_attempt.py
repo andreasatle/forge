@@ -254,3 +254,98 @@ async def test_run_agent_failure_raises_run_agent_failed() -> None:
             assert False, "expected RunAgentFailed"
         except RunAgentFailed as e:
             assert e.response is failed_response
+
+
+async def test_empty_delta_no_critic_returns_already_done() -> None:
+    """Engine returns empty delta immediately when run_agent signals empty delta and no critic is configured."""
+    request = _request()
+    engine = _engine(request=request, critic_provider=None, referee_provider=None)
+
+    with (
+        patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            delta=DeltaState(),
+            error="empty delta",
+        )
+        result = await engine.run("base prompt")
+
+    assert result == DeltaState()
+    mock_run.assert_called_once()
+    mock_critic.assert_not_called()
+
+
+async def test_empty_delta_critic_already_done_accepts() -> None:
+    """Engine accepts empty delta when critic confirms the success condition is already met."""
+    request = _request()
+    engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
+
+    with (
+        patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            delta=DeltaState(),
+            error="empty delta",
+        )
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ALREADY_DONE,
+            rationale="success condition already met",
+        )
+        result = await engine.run("base prompt")
+
+    assert result == DeltaState()
+    mock_run.assert_called_once()
+    mock_critic.assert_called_once()
+
+
+async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
+    """Engine retries with feedback when critic returns REVISE on an empty delta attempt."""
+    request = _request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
+
+    with (
+        patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.side_effect = [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                delta=DeltaState(),
+                error="empty delta",
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                delta=delta,
+            ),
+        ]
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="needs implementation",
+                hints=["add some code"],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="done"),
+        ]
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+        )
+        result = await engine.run("base prompt")
+
+    assert result == delta
+    assert mock_run.call_count == 2
+    second_prompt = mock_run.call_args_list[1].args[3]
+    assert "Revise your implementation addressing the feedback above" in second_prompt
+    assert "add some code" in second_prompt

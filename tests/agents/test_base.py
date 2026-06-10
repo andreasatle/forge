@@ -47,7 +47,9 @@ from forge.tools.schemas import (
     WriteFileResponse,
 )
 
-_NONEMPTY_DELTA = '{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+_NONEMPTY_DELTA = (
+    '{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+)
 
 
 class _DoThingRequest(BaseModel):
@@ -90,19 +92,22 @@ def _mock_provider(chat_return: str = "{}") -> MagicMock:
 def _make_registry() -> tuple[ToolRegistry, AsyncMock]:
     registry = ToolRegistry()
     mock_fn: AsyncMock = AsyncMock(return_value=_DoThingResponse(result="done"))
-    registry.register(Tool(
-        name="do_thing",
-        description="does a thing",
-        request_type=_DoThingRequest,
-        response_type=_DoThingResponse,
-        fn=mock_fn,
-    ))
+    registry.register(
+        Tool(
+            name="do_thing",
+            description="does a thing",
+            request_type=_DoThingRequest,
+            response_type=_DoThingResponse,
+            fn=mock_fn,
+        )
+    )
     return registry, mock_fn
 
 
 def _make_write_file_tool() -> Tool:
     async def fn(req: WriteFileRequest) -> WriteFileResponse:
         return WriteFileResponse(path=req.path)
+
     return Tool(
         name="write_file",
         description="write a file",
@@ -115,6 +120,7 @@ def _make_write_file_tool() -> Tool:
 def _make_replace_in_file_tool() -> Tool:
     async def fn(req: ReplaceInFileRequest) -> ReplaceInFileResponse:
         return ReplaceInFileResponse(path=req.path)
+
     return Tool(
         name="replace_in_file",
         description="replace in a file",
@@ -127,6 +133,7 @@ def _make_replace_in_file_tool() -> Tool:
 def _make_add_dependency_tool() -> Tool:
     async def fn(req: AddDependencyRequest) -> AddDependencyResponse:
         return AddDependencyResponse(package=req.package, success=True, output="")
+
     return Tool(
         name="add_dependency",
         description="add a dependency",
@@ -267,13 +274,15 @@ async def test_execute_tool_returns_failed_response_when_replace_in_file_raises(
     async def failing_fn(req: ReplaceInFileRequest) -> ReplaceInFileResponse:
         raise ValueError("old string not found in file")
 
-    registry.register(Tool(
-        name="replace_in_file",
-        description="replace in a file",
-        request_type=ReplaceInFileRequest,
-        response_type=ReplaceInFileResponse,
-        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], failing_fn),
-    ))
+    registry.register(
+        Tool(
+            name="replace_in_file",
+            description="replace in a file",
+            request_type=ReplaceInFileRequest,
+            response_type=ReplaceInFileResponse,
+            fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], failing_fn),
+        )
+    )
     request = ToolCallRequest(
         kind="tool_call",
         name="replace_in_file",
@@ -342,10 +351,12 @@ async def test_run_agent_routes_tool_calls_correctly():
     registry, mock_fn = _make_registry()
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-        _NONEMPTY_DELTA,
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_DELTA,
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -369,10 +380,12 @@ async def test_run_agent_retries_on_invalid_format():
     """run_agent retries when the LLM returns invalid JSON and succeeds on the next attempt."""
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        "not valid json",
-        _NONEMPTY_DELTA,
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            "not valid json",
+            _NONEMPTY_DELTA,
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", max_retries=3)
 
@@ -387,7 +400,10 @@ async def test_run_agent_returns_failed_after_max_iterations():
     provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
 
     response = await run_agent(
-        request, WorkSpec, provider, "prompt",
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
         tools=registry,
         max_tool_iterations=2,
         max_retries=0,
@@ -403,10 +419,12 @@ async def test_run_agent_merges_tracked_write_file_into_delta():
     registry.register(_make_write_file_tool())
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/app.py", "content": "x = 1"}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/app.py", "content": "x = 1"}}',
+            '{"edits": [], "new_files": [], "dependencies": []}',
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -422,10 +440,12 @@ async def test_run_agent_tracked_write_wins_over_llm_reported():
     registry.register(_make_write_file_tool())
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "a.py", "content": "tracked"}}',
-        '{"edits": [], "new_files": [{"path": "a.py", "content": "reported"}], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "a.py", "content": "tracked"}}',
+            '{"edits": [], "new_files": [{"path": "a.py", "content": "reported"}], "dependencies": []}',
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -440,10 +460,12 @@ async def test_run_agent_merges_tracked_replace_in_file_into_delta():
     registry.register(_make_replace_in_file_tool())
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "replace_in_file", "arguments": {"path": "a.py", "old": "x=1", "new": "x=2"}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "replace_in_file", "arguments": {"path": "a.py", "old": "x=1", "new": "x=2"}}',
+            '{"edits": [], "new_files": [], "dependencies": []}',
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -458,10 +480,12 @@ async def test_run_agent_merges_tracked_add_dependency_into_delta():
     registry.register(_make_add_dependency_tool())
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "httpx"}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "add_dependency", "arguments": {"package": "httpx"}}',
+            '{"edits": [], "new_files": [], "dependencies": []}',
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -474,10 +498,12 @@ async def test_run_agent_returns_completed_with_llm_reported_delta_after_read_to
     registry, _ = _make_registry()
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-        _NONEMPTY_DELTA,
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_DELTA,
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -544,7 +570,10 @@ async def test_run_agent_sets_failure_kind_max_iterations_on_loop_exhaustion():
     provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
 
     response = await run_agent(
-        request, WorkSpec, provider, "prompt",
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
         tools=registry,
         max_tool_iterations=2,
         max_retries=0,
@@ -558,11 +587,13 @@ async def test_run_agent_sets_failure_kind_provider_error_on_http_error():
     """run_agent sets failure_kind=PROVIDER_ERROR when the provider raises HTTPStatusError."""
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=httpx.HTTPStatusError(
-        "server error",
-        request=httpx.Request("POST", "http://example.com"),
-        response=httpx.Response(500),
-    ))
+    provider.chat = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "server error",
+            request=httpx.Request("POST", "http://example.com"),
+            response=httpx.Response(500),
+        )
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt")
 
@@ -577,7 +608,9 @@ async def test_run_agent_never_calls_chat_with_tools_no_tools_path():
     """run_agent uses provider.chat only, never chat_with_tools, when no tools are registered."""
     request = _work_request()
     provider = _mock_provider(_NONEMPTY_DELTA)
-    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+    provider.chat_with_tools = AsyncMock(
+        side_effect=AssertionError("chat_with_tools must not be called")
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt")
 
@@ -589,11 +622,15 @@ async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
     registry, _ = _make_registry()
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-        _NONEMPTY_DELTA,
-    ])
-    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_DELTA,
+        ]
+    )
+    provider.chat_with_tools = AsyncMock(
+        side_effect=AssertionError("chat_with_tools must not be called")
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -653,7 +690,13 @@ def test_build_system_prompt_tool_guidance_uses_registered_tools_only():
     prompt = _build_system_prompt(registry, DeltaState)
 
     assert "do_thing" in prompt
-    for unavailable in ("list_files", "read_file", "run_tests", "add_dependency", "write_blackboard"):
+    for unavailable in (
+        "list_files",
+        "read_file",
+        "run_tests",
+        "add_dependency",
+        "write_blackboard",
+    ):
         assert unavailable not in prompt
 
 
@@ -664,7 +707,10 @@ async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made()
     provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
 
     response = await run_agent(
-        request, WorkSpec, provider, "prompt",
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
         tools=registry,
         max_retries=0,
     )
@@ -683,7 +729,7 @@ async def test_run_agent_rejects_empty_delta_for_work_agent_with_no_tools():
     response = await run_agent(request, WorkSpec, provider, "prompt", max_retries=0)
 
     assert response.status == ResponseStatus.FAILED
-    assert "empty DeltaState" in (response.error or "")
+    assert "empty delta" in (response.error or "")
 
 
 async def test_run_agent_rejects_empty_delta_after_read_only_tool_call():
@@ -691,19 +737,24 @@ async def test_run_agent_rejects_empty_delta_after_read_only_tool_call():
     registry, _ = _make_registry()
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            '{"edits": [], "new_files": [], "dependencies": []}',
+        ]
+    )
 
     response = await run_agent(
-        request, WorkSpec, provider, "prompt",
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
         tools=registry,
         max_retries=0,
     )
 
     assert response.status == ResponseStatus.FAILED
-    assert "empty DeltaState" in (response.error or "")
+    assert "empty delta" in (response.error or "")
 
 
 async def test_run_agent_accepts_delta_state_after_tool_work():
@@ -712,10 +763,12 @@ async def test_run_agent_accepts_delta_state_after_tool_work():
     registry.register(_make_write_file_tool())
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=[
-        '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/x.py", "content": "x = 1"}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
-    ])
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "src/x.py", "content": "x = 1"}}',
+            '{"edits": [], "new_files": [], "dependencies": []}',
+        ]
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
 
@@ -728,12 +781,17 @@ async def test_run_agent_accepts_delta_state_after_tool_work():
 
 def test_to_follow_up_emits_only_work_nodes():
     """_to_follow_up emits only WORK nodes — one per task, no INTEGRATE nodes."""
-    plan = PlanResponse(kind="plan", tasks=[TaskSpec(
-        objective="write code",
-        success_condition="tests pass",
-        adapter="coding",
-        artifact="codebase",
-    )])
+    plan = PlanResponse(
+        kind="plan",
+        tasks=[
+            TaskSpec(
+                objective="write code",
+                success_condition="tests pass",
+                adapter="coding",
+                artifact="codebase",
+            )
+        ],
+    )
 
     follow_ups = _to_follow_up(plan, _work_request())
 
@@ -743,10 +801,17 @@ def test_to_follow_up_emits_only_work_nodes():
 
 def test_to_follow_up_two_tasks_yields_two_work_nodes():
     """Two tasks produce exactly two work nodes."""
-    plan = PlanResponse(kind="plan", tasks=[
-        TaskSpec(objective="A", success_condition="done", adapter="coding", artifact="codebase"),
-        TaskSpec(objective="B", success_condition="done", adapter="coding", artifact="codebase"),
-    ])
+    plan = PlanResponse(
+        kind="plan",
+        tasks=[
+            TaskSpec(
+                objective="A", success_condition="done", adapter="coding", artifact="codebase"
+            ),
+            TaskSpec(
+                objective="B", success_condition="done", adapter="coding", artifact="codebase"
+            ),
+        ],
+    )
 
     follow_ups = _to_follow_up(plan, _work_request())
 
@@ -756,9 +821,14 @@ def test_to_follow_up_two_tasks_yields_two_work_nodes():
 
 def test_to_follow_up_work_nodes_carry_work_spec():
     """Every follow-up node carries a WorkSpec."""
-    plan = PlanResponse(kind="plan", tasks=[
-        TaskSpec(objective="X", success_condition="done", adapter="coding", artifact="codebase"),
-    ])
+    plan = PlanResponse(
+        kind="plan",
+        tasks=[
+            TaskSpec(
+                objective="X", success_condition="done", adapter="coding", artifact="codebase"
+            ),
+        ],
+    )
 
     follow_ups = _to_follow_up(plan, _work_request())
 
@@ -767,10 +837,21 @@ def test_to_follow_up_work_nodes_carry_work_spec():
 
 def test_to_follow_up_work_node_depends_on_predecessor_work_node():
     """Work node with depends_on=[0] depends directly on work_0."""
-    plan = PlanResponse(kind="plan", tasks=[
-        TaskSpec(objective="A", success_condition="done", adapter="coding", artifact="codebase"),
-        TaskSpec(objective="B", success_condition="done", adapter="coding", artifact="codebase", depends_on=[0]),
-    ])
+    plan = PlanResponse(
+        kind="plan",
+        tasks=[
+            TaskSpec(
+                objective="A", success_condition="done", adapter="coding", artifact="codebase"
+            ),
+            TaskSpec(
+                objective="B",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+                depends_on=[0],
+            ),
+        ],
+    )
 
     follow_ups = _to_follow_up(plan, _work_request())
 
