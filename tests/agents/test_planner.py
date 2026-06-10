@@ -172,6 +172,18 @@ async def test_planner_dependency_wiring_is_task_to_task() -> None:
     assert len(work_b.dependencies) == 1
 
 
+async def test_planner_prompt_requires_testable_success_conditions() -> None:
+    """PLAN_PROMPT requires coding task success conditions to be verifiable by running tests."""
+    request = _make_request()
+    provider = _mock_provider()
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "verifiable by running tests" in user_prompt
+
+
 async def test_planner_prompt_bans_legacy_packaging_in_success_conditions() -> None:
     """PLAN_PROMPT instructs the planner never to mention legacy packaging formats in success conditions."""
     request = _make_request()

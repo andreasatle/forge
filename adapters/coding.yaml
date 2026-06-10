@@ -11,6 +11,11 @@ prompt_template: |
   Example of a valid DeltaState response:
   {delta_example}
 
+  Verification rules:
+  - Before concluding the success condition is already met, you MUST call run_tests to verify
+  - If run_tests returns 0 tests collected, the task is NOT done — you must write tests
+  - If run_tests fails, the task is NOT done — fix the failures
+
   Package rules:
   - Declare all required packages in the dependencies field of your
     DeltaState response — this is the ONLY way to add packages
