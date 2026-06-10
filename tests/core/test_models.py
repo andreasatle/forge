@@ -8,6 +8,8 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
+    CriticDisposition,
+    CriticFinding,
     DAGNode,
     DeltaState,
     Edit,
@@ -17,6 +19,7 @@ from forge.core.models import (
     NodeState,
     PlanResponse,
     PlanSpec,
+    RefereeDecision,
     RequestSource,
     ResponseStatus,
     SchedulerState,
@@ -368,3 +371,62 @@ def test_agent_response_failure_kind_none_when_completed():
     request = _make_request()
     response = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
     assert response.failure_kind is None
+
+
+# --- CriticDisposition ---
+
+
+def test_critic_disposition_has_exactly_three_values():
+    """CriticDisposition has exactly ACCEPT, REVISE, and REJECT."""
+    assert {d.name for d in CriticDisposition} == {"ACCEPT", "REVISE", "REJECT"}
+
+
+# --- CriticFinding ---
+
+
+def test_critic_finding_is_frozen():
+    """CriticFinding raises on direct field mutation."""
+    finding = CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="looks good")
+    with pytest.raises(Exception):
+        finding.rationale = "changed"  # type: ignore[misc]
+
+
+def test_critic_finding_hints_defaults_to_empty_list():
+    """CriticFinding.hints defaults to an empty list."""
+    finding = CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="looks good")
+    assert finding.hints == []
+
+
+def test_critic_finding_with_hints():
+    """CriticFinding stores hints when provided."""
+    finding = CriticFinding(
+        disposition=CriticDisposition.REVISE,
+        rationale="close but needs work",
+        hints=["fix the edge case", "add a docstring"],
+    )
+    assert len(finding.hints) == 2
+
+
+# --- RefereeDecision ---
+
+
+def test_referee_decision_is_frozen():
+    """RefereeDecision raises on direct field mutation."""
+    decision = RefereeDecision(
+        disposition=CriticDisposition.ACCEPT, rationale="agreed", override=False
+    )
+    with pytest.raises(Exception):
+        decision.override = True  # type: ignore[misc]
+
+
+def test_referee_decision_override_true_when_overriding_critic():
+    """RefereeDecision.override is True when the referee disagrees with the critic."""
+    critic = CriticFinding(
+        disposition=CriticDisposition.REJECT, rationale="not good enough", hints=["redo it"]
+    )
+    decision = RefereeDecision(
+        disposition=CriticDisposition.ACCEPT,
+        rationale="actually meets the bar",
+        override=critic.disposition != CriticDisposition.ACCEPT,
+    )
+    assert decision.override is True

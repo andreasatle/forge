@@ -57,6 +57,30 @@ class FailureKind(Enum):
     UNKNOWN = "unknown"
 
 
+class CriticDisposition(Enum):
+    """Verdict returned by a critic agent."""
+
+    ACCEPT = "accept"
+    REVISE = "revise"
+    REJECT = "reject"
+
+
+class CriticFinding(BaseModel, frozen=True):
+    """A critic's assessment of a piece of work."""
+
+    disposition: CriticDisposition
+    rationale: str
+    hints: list[str] = Field(default_factory=list)
+
+
+class RefereeDecision(BaseModel, frozen=True):
+    """Final adjudication that may override the critic's finding."""
+
+    disposition: CriticDisposition
+    rationale: str
+    override: bool
+
+
 class PlanSpec(BaseModel):
     """Spec for a planning agent request carrying the northstar goal."""
 
