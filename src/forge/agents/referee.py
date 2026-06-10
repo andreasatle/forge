@@ -1,6 +1,7 @@
 """Referee agent — reviews critic finding and makes the final disposition."""
 
-from forge.agents.base import _build_system_prompt, _parse_response
+from forge.adapters.registry import AdapterRegistry
+from forge.agents.base import _build_system_prompt, _parse_response, _render_files
 from forge.core.models import (
     AgentRequest,
     CriticFinding,
@@ -12,45 +13,8 @@ from forge.core.models import (
 from forge.llm.providers import ChatMessage, LLMProvider
 
 
-def _build_referee_prompt(
-    spec: WorkSpec,
-    state_view: StateView,
-    delta: DeltaState,
-    finding: CriticFinding,
-) -> str:
-    lines = [
-        f"Objective: {spec.objective}",
-        f"Success condition: {spec.success_condition}",
-        "",
-        f"Critic disposition: {finding.disposition.value}",
-        f"Critic rationale: {finding.rationale}",
-    ]
-    if finding.hints:
-        lines.append("Critic hints:")
-        for hint in finding.hints:
-            lines.append(f"  - {hint}")
-    lines.append("")
-    if delta.new_files:
-        lines.append("Files produced:")
-        for fw in delta.new_files:
-            lines += [f"\nFile: {fw.path}", "```", fw.content, "```"]
-    if delta.edits:
-        lines.append("\nEdits applied:")
-        for edit in delta.edits:
-            lines += [f"\nFile: {edit.path}", "  old:", edit.old, "  new:", edit.new]
-    if not delta.new_files and not delta.edits:
-        lines.append("No files or edits were produced.")
-    if state_view.files:
-        lines.append("\nExisting artifact files:")
-        for fv in state_view.files:
-            lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
-    lines += [
-        "",
-        "Make the final accept/revise/reject decision.",
-        "You may agree with the critic or override. Set override=true if your disposition "
-        "differs from the critic's.",
-    ]
-    return "\n".join(lines)
+def _render_hints(hints: list[str]) -> str:
+    return ", ".join(hints) if hints else "(none)"
 
 
 async def referee_agent(
@@ -59,6 +23,7 @@ async def referee_agent(
     delta: DeltaState,
     critic_finding: CriticFinding,
     provider: LLMProvider,
+    registry: AdapterRegistry,
     max_retries: int = 3,
 ) -> RefereeDecision:
     """Review the critic's finding and worker's delta; return the final RefereeDecision."""
@@ -66,8 +31,17 @@ async def referee_agent(
     if not isinstance(spec, WorkSpec):
         raise TypeError(f"expected WorkSpec, got {type(spec).__name__}")
 
+    adapter = registry.get("referee")
+    user_prompt = adapter.prompt_template.format(
+        objective=spec.objective,
+        success_condition=spec.success_condition,
+        files=_render_files(delta, state_view),
+        language=spec.language or "not specified",
+        critic_disposition=critic_finding.disposition.value,
+        critic_rationale=critic_finding.rationale,
+        critic_hints=_render_hints(critic_finding.hints),
+    )
     system_prompt = _build_system_prompt(None, RefereeDecision)
-    user_prompt = _build_referee_prompt(spec, state_view, delta, critic_finding)
     messages: list[ChatMessage] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},

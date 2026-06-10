@@ -1,37 +1,9 @@
 """Critic agent — reviews worker output against the success condition."""
 
-from forge.agents.base import _build_system_prompt, _parse_response
+from forge.adapters.registry import AdapterRegistry
+from forge.agents.base import _build_system_prompt, _parse_response, _render_files
 from forge.core.models import AgentRequest, CriticFinding, DeltaState, StateView, WorkSpec
 from forge.llm.providers import ChatMessage, LLMProvider
-
-
-def _build_critic_prompt(spec: WorkSpec, state_view: StateView, delta: DeltaState) -> str:
-    lines = [
-        f"Objective: {spec.objective}",
-        f"Success condition: {spec.success_condition}",
-        "",
-    ]
-    if delta.new_files:
-        lines.append("Files produced:")
-        for fw in delta.new_files:
-            lines += [f"\nFile: {fw.path}", "```", fw.content, "```"]
-    if delta.edits:
-        lines.append("\nEdits applied:")
-        for edit in delta.edits:
-            lines += [f"\nFile: {edit.path}", "  old:", edit.old, "  new:", edit.new]
-    if not delta.new_files and not delta.edits:
-        lines.append("No files or edits were produced.")
-    if state_view.files:
-        lines.append("\nExisting artifact files:")
-        for fv in state_view.files:
-            lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
-    lines += [
-        "",
-        "Assess whether the work above meets the success condition.",
-        "Return ACCEPT if it does, REVISE if it is on the right track but incomplete or incorrect, "
-        "REJECT if it does not meet the success condition at all.",
-    ]
-    return "\n".join(lines)
 
 
 async def critic_agent(
@@ -39,6 +11,7 @@ async def critic_agent(
     state_view: StateView,
     delta: DeltaState,
     provider: LLMProvider,
+    registry: AdapterRegistry,
     max_retries: int = 3,
 ) -> CriticFinding:
     """Review a worker's DeltaState against the request's success condition."""
@@ -46,8 +19,14 @@ async def critic_agent(
     if not isinstance(spec, WorkSpec):
         raise TypeError(f"expected WorkSpec, got {type(spec).__name__}")
 
+    adapter = registry.get("critic")
+    user_prompt = adapter.prompt_template.format(
+        objective=spec.objective,
+        success_condition=spec.success_condition,
+        files=_render_files(delta, state_view),
+        language=spec.language or "not specified",
+    )
     system_prompt = _build_system_prompt(None, CriticFinding)
-    user_prompt = _build_critic_prompt(spec, state_view, delta)
     messages: list[ChatMessage] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},

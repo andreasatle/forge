@@ -1,10 +1,12 @@
 """Tests for referee_agent."""
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from forge.adapters.registry import AdapterRegistry
 from forge.agents.referee import referee_agent
 from forge.core.models import (
     AgentRequest,
@@ -18,6 +20,13 @@ from forge.core.models import (
     StateView,
     WorkSpec,
 )
+
+
+def _registry() -> AdapterRegistry:
+    adapters_dir = Path(__file__).parents[2] / "adapters"
+    registry = AdapterRegistry()
+    registry.load(adapters_dir)
+    return registry
 
 
 def _request() -> AgentRequest:
@@ -65,7 +74,12 @@ async def test_referee_agent_returns_referee_decision() -> None:
         {"disposition": "accept", "rationale": "I agree with the critic.", "override": False}
     )
     result = await referee_agent(
-        _request(), _state_view(), _delta_with_file(), _critic_accept(), _provider(decision_json)
+        _request(),
+        _state_view(),
+        _delta_with_file(),
+        _critic_accept(),
+        _provider(decision_json),
+        _registry(),
     )
     assert isinstance(result, RefereeDecision)
 
@@ -74,7 +88,12 @@ async def test_referee_agrees_with_critic_sets_override_false() -> None:
     """referee_agent returns override=False when it agrees with the critic."""
     decision_json = json.dumps({"disposition": "accept", "rationale": "Agreed.", "override": False})
     result = await referee_agent(
-        _request(), _state_view(), _delta_with_file(), _critic_accept(), _provider(decision_json)
+        _request(),
+        _state_view(),
+        _delta_with_file(),
+        _critic_accept(),
+        _provider(decision_json),
+        _registry(),
     )
     assert result.override is False
     assert result.disposition == CriticDisposition.ACCEPT
@@ -86,7 +105,12 @@ async def test_referee_overrides_critic_sets_override_true() -> None:
         {"disposition": "accept", "rationale": "Actually meets the bar.", "override": True}
     )
     result = await referee_agent(
-        _request(), _state_view(), _delta_with_file(), _critic_reject(), _provider(decision_json)
+        _request(),
+        _state_view(),
+        _delta_with_file(),
+        _critic_reject(),
+        _provider(decision_json),
+        _registry(),
     )
     assert result.override is True
     assert result.disposition == CriticDisposition.ACCEPT
@@ -100,7 +124,7 @@ async def test_referee_agent_retries_on_invalid_json() -> None:
     provider = MagicMock()
     provider.chat = AsyncMock(side_effect=["bad json", good_json])
     result = await referee_agent(
-        _request(), _state_view(), _delta_with_file(), _critic_accept(), provider
+        _request(), _state_view(), _delta_with_file(), _critic_accept(), provider, _registry()
     )
     assert isinstance(result, RefereeDecision)
     assert provider.chat.call_count == 2
@@ -112,5 +136,11 @@ async def test_referee_agent_raises_after_max_retries_exceeded() -> None:
     provider.chat = AsyncMock(return_value="not json")
     with pytest.raises(ValueError, match="referee_agent failed"):
         await referee_agent(
-            _request(), _state_view(), DeltaState(), _critic_accept(), provider, max_retries=1
+            _request(),
+            _state_view(),
+            DeltaState(),
+            _critic_accept(),
+            provider,
+            _registry(),
+            max_retries=1,
         )

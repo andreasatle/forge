@@ -1,10 +1,12 @@
 """Tests for critic_agent."""
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from forge.adapters.registry import AdapterRegistry
 from forge.agents.critic import critic_agent
 from forge.core.models import (
     AgentRequest,
@@ -17,6 +19,13 @@ from forge.core.models import (
     StateView,
     WorkSpec,
 )
+
+
+def _registry() -> AdapterRegistry:
+    adapters_dir = Path(__file__).parents[2] / "adapters"
+    registry = AdapterRegistry()
+    registry.load(adapters_dir)
+    return registry
 
 
 def _request() -> AgentRequest:
@@ -52,7 +61,7 @@ async def test_critic_agent_returns_accept_finding() -> None:
         {"disposition": "accept", "rationale": "The file prints Hello, World!", "hints": []}
     )
     result = await critic_agent(
-        _request(), _state_view(), _delta_with_file(), _provider(finding_json)
+        _request(), _state_view(), _delta_with_file(), _provider(finding_json), _registry()
     )
     assert isinstance(result, CriticFinding)
     assert result.disposition == CriticDisposition.ACCEPT
@@ -68,7 +77,7 @@ async def test_critic_agent_returns_revise_finding_with_hints() -> None:
         }
     )
     result = await critic_agent(
-        _request(), _state_view(), _delta_with_file(), _provider(finding_json)
+        _request(), _state_view(), _delta_with_file(), _provider(finding_json), _registry()
     )
     assert result.disposition == CriticDisposition.REVISE
     assert len(result.hints) == 1
@@ -83,7 +92,9 @@ async def test_critic_agent_returns_reject_finding() -> None:
             "hints": ["Create main.py", "Print Hello, World!"],
         }
     )
-    result = await critic_agent(_request(), _state_view(), DeltaState(), _provider(finding_json))
+    result = await critic_agent(
+        _request(), _state_view(), DeltaState(), _provider(finding_json), _registry()
+    )
     assert result.disposition == CriticDisposition.REJECT
 
 
@@ -92,7 +103,9 @@ async def test_critic_agent_retries_on_invalid_json() -> None:
     good_json = json.dumps({"disposition": "accept", "rationale": "Looks good.", "hints": []})
     provider = MagicMock()
     provider.chat = AsyncMock(side_effect=["not valid json", good_json])
-    result = await critic_agent(_request(), _state_view(), _delta_with_file(), provider)
+    result = await critic_agent(
+        _request(), _state_view(), _delta_with_file(), provider, _registry()
+    )
     assert isinstance(result, CriticFinding)
     assert provider.chat.call_count == 2
 
@@ -102,4 +115,6 @@ async def test_critic_agent_raises_after_max_retries_exceeded() -> None:
     provider = MagicMock()
     provider.chat = AsyncMock(return_value="invalid json always")
     with pytest.raises(ValueError, match="critic_agent failed"):
-        await critic_agent(_request(), _state_view(), DeltaState(), provider, max_retries=1)
+        await critic_agent(
+            _request(), _state_view(), DeltaState(), provider, _registry(), max_retries=1
+        )

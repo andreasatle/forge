@@ -19,6 +19,7 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
+    StateView,
     ToolCallRequest,
     ToolCallResponse,
     WorkSpec,
@@ -276,6 +277,30 @@ def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
 
 def _is_empty_delta(delta: DeltaState) -> bool:
     return not delta.new_files and not delta.edits and not delta.dependencies
+
+
+def _render_files(delta: DeltaState, state_view: StateView) -> str:
+    """Render produced files, applied edits, and existing artifact state as a readable block."""
+    lines: list[str] = []
+    if delta.new_files:
+        lines.append("Files produced:")
+        for fw in delta.new_files:
+            lines += [f"\nFile: {fw.path}", "```", fw.content, "```"]
+    if delta.edits:
+        if lines:
+            lines.append("")
+        lines.append("Edits applied:")
+        for edit in delta.edits:
+            lines += [f"\nFile: {edit.path}", "  old:", edit.old, "  new:", edit.new]
+    if not delta.new_files and not delta.edits:
+        lines.append("No files or edits were produced.")
+    if state_view.files:
+        if lines:
+            lines.append("")
+        lines.append("Existing artifact files:")
+        for fv in state_view.files:
+            lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
+    return "\n".join(lines)
 
 
 async def run_agent(
