@@ -17,13 +17,10 @@ from forge.core.models import (
     Edit,
     FailureKind,
     FileWrite,
-    PlanResponse,
-    RequestSource,
     ResponseStatus,
     StateView,
     ToolCallRequest,
     ToolCallResponse,
-    WorkSpec,
 )
 from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
 from forge.tools.registry import ToolRegistry
@@ -292,40 +289,6 @@ async def _execute_tool(
     return await TrackedToolExecutor(tools).execute(request, tracked_delta)
 
 
-def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentRequest]:
-    """Convert a PlanResponse into work follow-up nodes with remapped dependencies."""
-    if not plan.tasks:
-        return []
-
-    # Step 1: bare work nodes — stable IDs, no deps yet
-    work_nodes = [
-        AgentRequest(
-            agent_type=AgentType.WORK,
-            source=RequestSource.PLANNER,
-            spec=WorkSpec(
-                objective=task.objective,
-                success_condition=task.success_condition,
-                adapter=task.adapter,
-                artifact=task.artifact,
-                language=task.language,
-            ),
-        )
-        for task in plan.tasks
-    ]
-
-    # Step 2: remap work deps — depends_on=[i] means depend on work_nodes[i]
-    return [
-        work.model_copy(
-            update={
-                "dependencies": frozenset(
-                    work_nodes[j].id for j in task.depends_on if 0 <= j < len(work_nodes)
-                )
-            }
-        )
-        for work, task in zip(work_nodes, plan.tasks)
-    ]
-
-
 def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
     """Merge tracked (framework-observed) and reported (LLM-declared) deltas; tracked wins on conflict."""
     files: dict[str, FileWrite] = {fw.path: fw for fw in reported.new_files}
@@ -384,6 +347,7 @@ class ToolLoop:
         max_tool_iterations: int = 25,
         correction_prompt_fn: Callable[[Exception, str], str] | None = None,
         adapter_spec: AdapterSpec | None = None,
+        follow_up_builder: Callable[[BaseModel], list[AgentRequest]] | None = None,
     ) -> None:
         self.request = request
         self.provider = provider
@@ -394,6 +358,7 @@ class ToolLoop:
         self.max_tool_iterations = max_tool_iterations
         self.correction_prompt_fn = correction_prompt_fn
         self.adapter_spec = adapter_spec
+        self.follow_up_builder = follow_up_builder
         self.prompt_builder = PromptBuilder(tools, final_response_type)
         self.response_parser = ResponseParser(final_response_type)
         self.tool_executor = TrackedToolExecutor(tools)
@@ -491,8 +456,8 @@ class ToolLoop:
                 delta=_merge_delta(tracked_delta, parsed)
                 if isinstance(parsed, DeltaState)
                 else None,
-                follow_up=_to_follow_up(parsed, self.request)
-                if isinstance(parsed, PlanResponse)
+                follow_up=self.follow_up_builder(parsed)
+                if self.follow_up_builder is not None
                 else [],
             )
 
@@ -510,6 +475,7 @@ async def run_agent(
     max_tool_iterations: int = 25,
     correction_prompt_fn: Callable[[Exception, str], str] | None = None,
     adapter_spec: AdapterSpec | None = None,
+    follow_up_builder: Callable[[BaseModel], list[AgentRequest]] | None = None,
 ) -> AgentResponse:
     """Universal agent engine — plain chat loop with structured JSON parsing."""
     try:
@@ -526,6 +492,7 @@ async def run_agent(
             max_tool_iterations=max_tool_iterations,
             correction_prompt_fn=correction_prompt_fn,
             adapter_spec=adapter_spec,
+            follow_up_builder=follow_up_builder,
         ).run()
 
     except Exception as e:

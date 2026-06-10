@@ -22,7 +22,6 @@ from forge.agents.base import (
     _merge_delta,
     _parse_response,
     _render_response_schema,
-    _to_follow_up,
     run_agent,
 )
 from forge.core.models import (
@@ -36,7 +35,6 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
-    TaskSpec,
     ToolCallRequest,
     WorkSpec,
 )
@@ -998,97 +996,6 @@ async def test_run_agent_accepts_delta_state_after_tool_work():
 
     assert response.status == ResponseStatus.COMPLETED
     assert provider.chat.call_count == 2
-
-
-# --- _to_follow_up ---
-
-
-def test_to_follow_up_emits_only_work_nodes():
-    """_to_follow_up emits only WORK nodes — one per task, no INTEGRATE nodes."""
-    plan = PlanResponse(
-        kind="plan",
-        tasks=[
-            TaskSpec(
-                objective="write code",
-                success_condition="tests pass",
-                adapter="coding",
-                artifact="codebase",
-            )
-        ],
-    )
-
-    follow_ups = _to_follow_up(plan, _work_request())
-
-    assert len(follow_ups) == 1
-    assert follow_ups[0].agent_type == AgentType.WORK
-
-
-def test_to_follow_up_two_tasks_yields_two_work_nodes():
-    """Two tasks produce exactly two work nodes."""
-    plan = PlanResponse(
-        kind="plan",
-        tasks=[
-            TaskSpec(
-                objective="A", success_condition="done", adapter="coding", artifact="codebase"
-            ),
-            TaskSpec(
-                objective="B", success_condition="done", adapter="coding", artifact="codebase"
-            ),
-        ],
-    )
-
-    follow_ups = _to_follow_up(plan, _work_request())
-
-    assert len(follow_ups) == 2
-    assert all(r.agent_type == AgentType.WORK for r in follow_ups)
-
-
-def test_to_follow_up_work_nodes_carry_work_spec():
-    """Every follow-up node carries a WorkSpec."""
-    plan = PlanResponse(
-        kind="plan",
-        tasks=[
-            TaskSpec(
-                objective="X", success_condition="done", adapter="coding", artifact="codebase"
-            ),
-        ],
-    )
-
-    follow_ups = _to_follow_up(plan, _work_request())
-
-    assert all(isinstance(r.spec, WorkSpec) for r in follow_ups)
-
-
-def test_to_follow_up_work_node_depends_on_predecessor_work_node():
-    """Work node with depends_on=[0] depends directly on work_0."""
-    plan = PlanResponse(
-        kind="plan",
-        tasks=[
-            TaskSpec(
-                objective="A", success_condition="done", adapter="coding", artifact="codebase"
-            ),
-            TaskSpec(
-                objective="B",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-                depends_on=[0],
-            ),
-        ],
-    )
-
-    follow_ups = _to_follow_up(plan, _work_request())
-
-    work_a = next(r for r in follow_ups if isinstance(r.spec, WorkSpec) and r.spec.objective == "A")
-    work_b = next(r for r in follow_ups if isinstance(r.spec, WorkSpec) and r.spec.objective == "B")
-
-    assert work_a.id in work_b.dependencies
-
-
-def test_to_follow_up_empty_tasks_returns_empty_list():
-    """_to_follow_up returns an empty list when PlanResponse.tasks is empty."""
-    plan = PlanResponse(kind="plan", tasks=[])
-    assert _to_follow_up(plan, _work_request()) == []
 
 
 # --- adapter_spec / requires_nonempty_output ---
