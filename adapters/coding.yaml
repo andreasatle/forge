@@ -19,7 +19,7 @@ prompt_template: |
     ],
     "dependencies": ["requests"],
     "errors": [],
-    "base_version": 0
+    "base_version": {base_version}
   }}
 
   Package rules:

@@ -51,6 +51,7 @@ async def work_agent(
     prompt = adapter.prompt_template.format(
         objective=spec.objective,
         success_condition=spec.success_condition,
+        base_version=state_view.version,
     )
     if plugin:
         prompt += f"\n\n{plugin.prompt_supplement}"
