@@ -16,6 +16,7 @@ from forge.core.models import (
     NodeState,
     RequestId,
     RequestSource,
+    ResponseStatus,
     SchedulerState,
     WorkSpec,
 )
@@ -68,7 +69,9 @@ class Scheduler:
                     for n in state.dag.values()
                 ):
                     break
-                new_planner = global_planner.model_copy(update={"id": uuid4(), "source": RequestSource.PLANNER})
+                new_planner = global_planner.model_copy(
+                    update={"id": uuid4(), "source": RequestSource.PLANNER}
+                )
                 state = state.add_nodes([DAGNode(request=new_planner)])
                 continue
 
@@ -96,20 +99,33 @@ class Scheduler:
                     state = state.update_node(updated)
 
                     if updated.node_state == NodeState.INTEGRATED:
-                        if node.request.agent_type == AgentType.WORK and self._state_services is not None:
+                        integration_failed = False
+                        if (
+                            node.request.agent_type == AgentType.WORK
+                            and self._state_services is not None
+                        ):
                             spec = node.request.spec
                             if isinstance(spec, WorkSpec):
                                 ss = self._state_services.get(spec.artifact)
                                 if ss is not None:
-                                    await integrate_agent(
+                                    integration_response = await integrate_agent(
                                         request=node.request,
                                         state_service=ss,
                                         delta=response.delta or DeltaState(),
                                     )
-                        follow_ups = [DAGNode(request=r) for r in response.follow_up]
-                        if follow_ups:
-                            state = state.add_nodes(follow_ups)
-                        self._fire_node(self._callbacks.on_node_completed, updated)
+                                    if integration_response.status == ResponseStatus.FAILED:
+                                        integration_failed = True
+
+                        if integration_failed:
+                            failed_node = updated.with_state(NodeState.FAILED)
+                            state = state.update_node(failed_node)
+                            self._fire_node(self._callbacks.on_node_failed, failed_node)
+                            state = self._cancel_dependents(state, node.request.id)
+                        else:
+                            follow_ups = [DAGNode(request=r) for r in response.follow_up]
+                            if follow_ups:
+                                state = state.add_nodes(follow_ups)
+                            self._fire_node(self._callbacks.on_node_completed, updated)
                     else:
                         self._fire_node(self._callbacks.on_node_failed, updated)
                         state = self._cancel_dependents(state, node.request.id)

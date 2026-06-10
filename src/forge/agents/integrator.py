@@ -24,7 +24,7 @@ async def integrate_agent(
         errors.append(IntegrationError(kind="apply_failed", description=str(e)))
         return AgentResponse(
             request_id=request.id,
-            status=ResponseStatus.COMPLETED,
+            status=ResponseStatus.FAILED,
             delta=delta.model_copy(update={"errors": errors}),
         )
 
@@ -33,6 +33,11 @@ async def integrate_agent(
         lines = [test_result.summary, *test_result.failures]
         description = "\n".join(line for line in lines if line)
         errors.append(IntegrationError(kind="test_failed", description=description))
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            delta=delta.model_copy(update={"errors": errors}),
+        )
 
     return AgentResponse(
         request_id=request.id,

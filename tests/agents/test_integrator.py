@@ -29,7 +29,9 @@ def _integrate_request(artifact: str = "codebase") -> AgentRequest:
     )
 
 
-def _mock_ss(passed: bool = True, failures: list[str] | None = None, summary: str = "") -> MagicMock:
+def _mock_ss(
+    passed: bool = True, failures: list[str] | None = None, summary: str = ""
+) -> MagicMock:
     ss = MagicMock(spec=StateService)
     ss.run_tests.return_value = RunResult(passed=passed, failures=failures or [], summary=summary)
     return ss
@@ -78,7 +80,9 @@ async def test_apply_failure_adds_apply_failed_error():
     """When apply_delta raises, the response contains an apply_failed IntegrationError."""
     ss = _mock_ss()
     ss.apply_delta.side_effect = ValueError("cannot apply")
-    response = await integrate_agent(request=_integrate_request(), state_service=ss, delta=DeltaState())
+    response = await integrate_agent(
+        request=_integrate_request(), state_service=ss, delta=DeltaState()
+    )
     assert response.delta is not None
     errors = [e for e in response.delta.errors if e.kind == "apply_failed"]
     assert len(errors) == 1
@@ -93,12 +97,14 @@ async def test_run_tests_not_called_when_apply_fails():
     ss.run_tests.assert_not_called()
 
 
-async def test_returns_completed_even_when_apply_fails():
-    """integrate_agent always returns COMPLETED — errors live in delta.errors."""
+async def test_returns_failed_when_apply_raises():
+    """integrate_agent returns FAILED status when apply_delta raises."""
     ss = _mock_ss()
     ss.apply_delta.side_effect = RuntimeError("boom")
-    response = await integrate_agent(request=_integrate_request(), state_service=ss, delta=DeltaState())
-    assert response.status == ResponseStatus.COMPLETED
+    response = await integrate_agent(
+        request=_integrate_request(), state_service=ss, delta=DeltaState()
+    )
+    assert response.status == ResponseStatus.FAILED
 
 
 # --- test failure ---
@@ -107,11 +113,22 @@ async def test_returns_completed_even_when_apply_fails():
 async def test_adds_test_failed_error_when_tests_fail():
     """A failing test run adds IntegrationError(kind='test_failed') to delta.errors."""
     ss = _mock_ss(passed=False, failures=["FAILED tests/test_foo.py::test_x"], summary="1 failed")
-    response = await integrate_agent(request=_integrate_request(), state_service=ss, delta=DeltaState())
+    response = await integrate_agent(
+        request=_integrate_request(), state_service=ss, delta=DeltaState()
+    )
     assert response.delta is not None
     test_errors = [e for e in response.delta.errors if e.kind == "test_failed"]
     assert len(test_errors) == 1
     assert "1 failed" in test_errors[0].description
+
+
+async def test_returns_failed_when_tests_fail():
+    """integrate_agent returns FAILED status when run_tests returns passed=False."""
+    ss = _mock_ss(passed=False, failures=["FAILED tests/test_foo.py::test_x"], summary="1 failed")
+    response = await integrate_agent(
+        request=_integrate_request(), state_service=ss, delta=DeltaState()
+    )
+    assert response.status == ResponseStatus.FAILED
 
 
 # --- clean integration ---
