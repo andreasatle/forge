@@ -17,6 +17,7 @@ from forge.core.models import (
     RequestId,
     RequestSource,
     SchedulerState,
+    WorkSpec,
 )
 from forge.core.state_service import StateService
 
@@ -41,11 +42,11 @@ class Scheduler:
     def __init__(
         self,
         runner: AgentRunner,
-        state_service: StateService | None = None,
+        state_services: dict[str, StateService] | None = None,
         callbacks: SchedulerCallbacks | None = None,
     ) -> None:
         self._runner = runner
-        self._state_service = state_service
+        self._state_services = state_services
         self._callbacks = callbacks or SchedulerCallbacks()
 
     async def run(
@@ -95,12 +96,16 @@ class Scheduler:
                     state = state.update_node(updated)
 
                     if updated.node_state == NodeState.INTEGRATED:
-                        if node.request.agent_type == AgentType.WORK and self._state_service is not None:
-                            await integrate_agent(
-                                request=node.request,
-                                state_service=self._state_service,
-                                delta=response.delta or DeltaState(),
-                            )
+                        if node.request.agent_type == AgentType.WORK and self._state_services is not None:
+                            spec = node.request.spec
+                            if isinstance(spec, WorkSpec):
+                                ss = self._state_services.get(spec.artifact)
+                                if ss is not None:
+                                    await integrate_agent(
+                                        request=node.request,
+                                        state_service=ss,
+                                        delta=response.delta or DeltaState(),
+                                    )
                         follow_ups = [DAGNode(request=r) for r in response.follow_up]
                         if follow_ups:
                             state = state.add_nodes(follow_ups)

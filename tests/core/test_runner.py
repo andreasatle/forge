@@ -422,6 +422,6 @@ async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: P
     runner = Runner()
     runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider))
 
-    await Scheduler(runner=runner, state_service=ss).run(state, _plan_request())
+    await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
     ss.apply_delta.assert_called_once()

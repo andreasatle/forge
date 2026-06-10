@@ -64,12 +64,11 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     workspace = Workspace(config.workspace)
     workspace.init()
 
-    state_service: StateService | None = None
+    state_services: dict[str, StateService] = {}
     for artifact in config.artifacts:
         plugin = language_registry.get(artifact.language) if artifact.language else None
         workspace.init_artifact(artifact.name, plugin)
-        if state_service is None:
-            state_service = StateService(workspace, artifact.name, plugin)
+        state_services[artifact.name] = StateService(workspace, artifact.name, plugin)
 
     if workspace.state_path().exists():
         print(f"resuming: {workspace.path}")
@@ -112,7 +111,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         on_idle=lambda state: print(f"~ idle: {len(state.dag)} nodes in DAG"),
     )
 
-    final = await Scheduler(runner=runner, state_service=state_service, callbacks=callbacks).run(state, global_planner)
+    final = await Scheduler(runner=runner, state_services=state_services, callbacks=callbacks).run(state, global_planner)
 
     path = save_run(final, workspace)
     print(f"run saved: {path}")

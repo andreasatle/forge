@@ -262,7 +262,7 @@ async def test_integrate_agent_called_inline_after_work_completes() -> None:
 
     with patch("forge.core.scheduler.integrate_agent", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(request_id=work.id, status=ResponseStatus.COMPLETED)
-        await Scheduler(runner=runner, state_service=ss).run(state, _plan_request())
+        await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
     mock_integrate.assert_called_once()
     assert mock_integrate.call_args.kwargs["state_service"] is ss
