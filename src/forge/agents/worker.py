@@ -60,10 +60,14 @@ async def work_agent(
 
     prompt += f"\n\nLanguage: {spec.language or 'not specified'}"
     if state_view.files:
-        files_list = "\n".join(f"  - {f}" for f in state_view.files)
-        prompt += f"\n\nExisting files in '{spec.artifact}':\n{files_list}"
+        sections = "\n\n".join(
+            f"File: {fv.path}\n```\n{fv.content}\n```" for fv in state_view.files
+        )
+        prompt += f"\n\nExisting files in '{spec.artifact}':\n\n{sections}"
     else:
-        prompt += f"\n\nArtifact '{spec.artifact}' has no files yet — create all files from scratch."
+        prompt += (
+            f"\n\nArtifact '{spec.artifact}' has no files yet — create all files from scratch."
+        )
 
     prompt += (
         "\n\nUse the available tools to understand the existing codebase and verify current state."

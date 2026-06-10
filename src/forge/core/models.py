@@ -170,12 +170,19 @@ class AgentResponse(BaseModel):
     failure_kind: FailureKind | None = None
 
 
+class FileView(BaseModel, frozen=True):
+    """A file in the artifact directory with its path and full content."""
+
+    path: str
+    content: str
+
+
 class StateView(BaseModel, frozen=True):
     """A high-level projection of the current artifact state for LLM context."""
 
     artifact_name: str
     language: str | None
-    files: list[str]
+    files: list[FileView]
     dependencies: list[str]
     test_summary: str | None = None
 

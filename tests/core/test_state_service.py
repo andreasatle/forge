@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge.core.models import DeltaState, Edit, FileWrite, RunResult
+from forge.core.models import DeltaState, Edit, FileView, FileWrite, RunResult
 from forge.core.state_service import StateService, _parse_test_result
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
@@ -43,7 +43,10 @@ def test_build_state_view_returns_correct_file_listing(tmp_path: Path) -> None:
 
     view = StateService(ws, "app").build_state_view()
 
-    assert sorted(view.files) == ["README.md", "src/main.py"]
+    assert sorted(view.files, key=lambda f: f.path) == [
+        FileView(path="README.md", content="# hi"),
+        FileView(path="src/main.py", content="x = 1"),
+    ]
 
 
 def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path: Path) -> None:
@@ -124,7 +127,7 @@ def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:
 
     view = StateService(ws, "app").build_state_view()
 
-    assert view.files == ["src/main.py"]
+    assert view.files == [FileView(path="src/main.py", content="x = 1")]
 
 
 def test_apply_delta_is_single_write_boundary(tmp_path: Path) -> None:

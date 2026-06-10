@@ -12,6 +12,7 @@ from forge.core.models import (
     DeltaState,
     Edit,
     FailureKind,
+    FileView,
     IntegrationError,
     NodeState,
     PlanResponse,
@@ -264,15 +265,19 @@ def test_delta_state_with_errors_serializes_correctly():
 # --- StateView ---
 
 
-def test_state_view_stores_files_as_paths():
-    """StateView accepts a list of string paths for the files field."""
+def test_state_view_stores_files_as_file_views():
+    """StateView accepts a list of FileView objects for the files field."""
+    files = [
+        FileView(path="src/main.py", content="x = 1"),
+        FileView(path="src/utils.py", content="# utils"),
+    ]
     view = StateView(
         artifact_name="myapp",
         language="python",
-        files=["src/main.py", "src/utils.py"],
+        files=files,
         dependencies=["requests"],
     )
-    assert view.files == ["src/main.py", "src/utils.py"]
+    assert view.files == files
 
 
 # --- PlanResponse ---

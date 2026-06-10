@@ -5,7 +5,7 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from forge.core.models import DeltaState, RunResult, StateView
+from forge.core.models import DeltaState, FileView, RunResult, StateView
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
@@ -70,7 +70,9 @@ def _parse_test_result(raw: str) -> RunResult:
 class StateService:
     """Single mutation boundary for artifact state — builds StateView and applies DeltaState."""
 
-    def __init__(self, workspace: Workspace, artifact_name: str, plugin: LanguagePlugin | None = None) -> None:
+    def __init__(
+        self, workspace: Workspace, artifact_name: str, plugin: LanguagePlugin | None = None
+    ) -> None:
         self._workspace = workspace
         self._artifact_name = artifact_name
         self._plugin = plugin
@@ -81,18 +83,29 @@ class StateService:
         language = self._plugin.name if self._plugin else None
 
         if not artifact_dir.exists():
-            return StateView(artifact_name=self._artifact_name, language=language, files=[], dependencies=[])
+            return StateView(
+                artifact_name=self._artifact_name, language=language, files=[], dependencies=[]
+            )
 
-        files = sorted(
-            str(f.relative_to(artifact_dir))
-            for f in artifact_dir.rglob("*")
-            if f.is_file() and not _is_noise(f, artifact_dir)
-        )
+        file_views: list[FileView] = []
+        for f in sorted(artifact_dir.rglob("*")):
+            if not f.is_file() or _is_noise(f, artifact_dir):
+                continue
+            try:
+                content = f.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            file_views.append(FileView(path=str(f.relative_to(artifact_dir)), content=content))
 
         reader = _DEPS_READERS.get(self._plugin.name) if self._plugin else None
         deps = reader(artifact_dir) if reader else []
 
-        return StateView(artifact_name=self._artifact_name, language=language, files=files, dependencies=deps)
+        return StateView(
+            artifact_name=self._artifact_name,
+            language=language,
+            files=file_views,
+            dependencies=deps,
+        )
 
     def apply_delta(self, delta: DeltaState) -> None:
         """Apply a DeltaState to the artifact directory — writes files and applies edits."""
@@ -112,7 +125,9 @@ class StateService:
             if count == 0:
                 raise ValueError(f"old string not found in {edit.path}")
             if count > 1:
-                raise ValueError(f"old string not unique in {edit.path} — found {count} occurrences")
+                raise ValueError(
+                    f"old string not unique in {edit.path} — found {count} occurrences"
+                )
             target.write_text(content.replace(edit.old, edit.new, 1), encoding="utf-8")
 
         if self._plugin and delta.dependencies:
