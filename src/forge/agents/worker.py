@@ -10,6 +10,7 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     CriticDisposition,
+    FailureKind,
     ResponseStatus,
     StateView,
     WorkSpec,
@@ -142,12 +143,17 @@ async def work_agent(
             )
         except ValueError as e:
             _logger.warning(
-                "work_agent: validation parsing failed on attempt %d/%d, skipping: %s",
+                "work_agent: validation parsing failed on attempt %d/%d: %s",
                 _attempt + 1,
                 max_attempts,
                 e,
             )
-            return response
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"validation parsing failed on attempt {_attempt + 1}: {e}",
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+            )
 
         _logger.info(
             "work_agent attempt %d/%d: critic=%s referee=%s — %s",
@@ -160,6 +166,19 @@ async def work_agent(
 
         if decision.disposition == CriticDisposition.ACCEPT:
             return response
+
+        if decision.disposition == CriticDisposition.REJECT:
+            _logger.warning(
+                "work_agent attempt %d/%d: rejected; failing immediately",
+                _attempt + 1,
+                max_attempts,
+            )
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"validation rejected on attempt {_attempt + 1}: {decision.rationale}",
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+            )
 
         hints_text = (
             "\n".join(f"{i + 1}. {h}" for i, h in enumerate(finding.hints))
@@ -175,7 +194,11 @@ async def work_agent(
         )
 
     _logger.warning(
-        "work_agent: max_attempts (%d) exhausted; returning best-effort delta", max_attempts
+        "work_agent: max_attempts (%d) exhausted without acceptance; failing", max_attempts
     )
-    assert last_response is not None
-    return last_response
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        error=f"validation exhausted after {max_attempts} attempts without acceptance",
+        failure_kind=FailureKind.VALIDATION_REJECTED,
+    )

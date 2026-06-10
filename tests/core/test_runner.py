@@ -13,6 +13,8 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    FailureKind,
+    NodeState,
     PlanSpec,
     RequestSource,
     ResponseStatus,
@@ -519,3 +521,29 @@ async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: P
     await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
     ss.apply_delta.assert_called_once()
+
+
+async def test_validation_failed_work_response_does_not_call_apply_delta(tmp_path: Path) -> None:
+    """StateService.apply_delta is never called when work_agent returns a validation-rejected FAILED response."""
+    ss = _mock_ss()
+    work = _work_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=work)])
+
+    runner = Runner()
+
+    async def validation_failed_handler(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            error="validation rejected on attempt 1: output does not meet success condition",
+        )
+
+    runner.register(AgentType.WORK, validation_failed_handler)
+
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
+
+    ss.apply_delta.assert_not_called()
+    assert final.dag[work.id].node_state == NodeState.FAILED

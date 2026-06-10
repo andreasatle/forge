@@ -14,6 +14,7 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     DeltaState,
+    FailureKind,
     FileWrite,
     RefereeDecision,
     RequestSource,
@@ -553,8 +554,8 @@ async def test_revise_triggers_retry_with_feedback(tmp_path) -> None:
     assert "add type annotations" in second_prompt
 
 
-async def test_max_attempts_exhaustion_returns_last_delta(tmp_path) -> None:
-    """work_agent returns the last delta as best effort when max_attempts is exhausted."""
+async def test_reject_disposition_returns_failed_immediately(tmp_path) -> None:
+    """work_agent returns FAILED immediately on REJECT without retrying further attempts."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -591,11 +592,13 @@ async def test_max_attempts_exhaustion_returns_last_delta(tmp_path) -> None:
             _state_view(),
             critic_provider=critic_provider,
             referee_provider=referee_provider,
-            max_attempts=2,
+            max_attempts=3,
         )
 
-    assert response.status == ResponseStatus.COMPLETED
-    assert mock_run.call_count == 2
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert response.delta is None
+    mock_run.assert_called_once()
 
 
 async def test_e2e_revise_then_accept_returns_improved_delta(tmp_path) -> None:
@@ -656,8 +659,8 @@ async def test_e2e_revise_then_accept_returns_improved_delta(tmp_path) -> None:
     assert "Revise your implementation addressing the feedback above" in second_prompt
 
 
-async def test_validation_parse_error_skips_validation_and_returns(tmp_path) -> None:
-    """work_agent returns the worker response without crashing when critic_agent raises ValueError."""
+async def test_validation_parse_error_returns_failed(tmp_path) -> None:
+    """work_agent returns FAILED with VALIDATION_REJECTED when critic_agent raises ValueError."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -667,15 +670,15 @@ async def test_validation_parse_error_skips_validation_and_returns(tmp_path) -> 
     critic_provider = MagicMock()
     referee_provider = MagicMock()
 
-    expected_delta = DeltaState(new_files=[FileWrite(path="main.py", content="content")])
-
     with (
         patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
         patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
         patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
     ):
         mock_run.return_value = AgentResponse(
-            request_id=request.id, status=ResponseStatus.COMPLETED, delta=expected_delta
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="main.py", content="content")]),
         )
         mock_critic.side_effect = ValueError("critic_agent failed after 3 retries: invalid json")
         response = await work_agent(
@@ -690,7 +693,101 @@ async def test_validation_parse_error_skips_validation_and_returns(tmp_path) -> 
             max_attempts=3,
         )
 
-    assert response.status == ResponseStatus.COMPLETED
-    assert response.delta == expected_delta
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert response.delta is None
     mock_run.assert_called_once()
     mock_referee.assert_not_called()
+
+
+async def test_revise_exhausted_returns_failed(tmp_path) -> None:
+    """work_agent returns FAILED when all attempts are exhausted with only REVISE dispositions."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    critic_provider = MagicMock()
+    referee_provider = MagicMock()
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="main.py", content="partial")]),
+        )
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="still incomplete",
+            hints=["add tests"],
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE, rationale="needs more work", override=False
+        )
+        response = await work_agent(
+            request,
+            _registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view(),
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
+            max_attempts=3,
+        )
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert response.delta is None
+    assert mock_run.call_count == 3
+
+
+async def test_accepted_validation_returns_completed_with_delta(tmp_path) -> None:
+    """work_agent returns COMPLETED with the accepted delta when validation passes."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    critic_provider = MagicMock()
+    referee_provider = MagicMock()
+
+    accepted_delta = DeltaState(new_files=[FileWrite(path="main.py", content="good code")])
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=accepted_delta,
+        )
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT, rationale="meets requirements"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+        )
+        response = await work_agent(
+            request,
+            _registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view(),
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
+            max_attempts=3,
+        )
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta == accepted_delta
+    mock_run.assert_called_once()
