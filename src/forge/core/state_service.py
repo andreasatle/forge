@@ -76,6 +76,11 @@ class StateService:
         self._workspace = workspace
         self._artifact_name = artifact_name
         self._plugin = plugin
+        self._version: int = 0
+
+    @property
+    def current_version(self) -> int:
+        return self._version
 
     def build_state_view(self) -> StateView:
         """Build a StateView from the current artifact directory."""
@@ -84,7 +89,11 @@ class StateService:
 
         if not artifact_dir.exists():
             return StateView(
-                artifact_name=self._artifact_name, language=language, files=[], dependencies=[]
+                artifact_name=self._artifact_name,
+                language=language,
+                files=[],
+                dependencies=[],
+                version=self._version,
             )
 
         file_views: list[FileView] = []
@@ -105,6 +114,7 @@ class StateService:
             language=language,
             files=file_views,
             dependencies=deps,
+            version=self._version,
         )
 
     def apply_delta(self, delta: DeltaState) -> None:
@@ -134,6 +144,8 @@ class StateService:
             for dep in delta.dependencies:
                 cmd = self._plugin.add_dependency_command.format(package=dep)
                 subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
+
+        self._version += 1
 
     def run_tests(self) -> RunResult:
         """Run the language plugin test command and return structured result."""

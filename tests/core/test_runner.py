@@ -92,6 +92,7 @@ def _mock_provider() -> MagicMock:
 def _mock_ss() -> MagicMock:
     ss = MagicMock(spec=StateService)
     ss.run_tests.return_value = RunResult(passed=True)
+    ss.current_version = 0
     return ss
 
 

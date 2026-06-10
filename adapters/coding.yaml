@@ -18,7 +18,8 @@ prompt_template: |
       {{"path": "pyproject.toml", "old": "name = \"old\"", "new": "name = \"new\""}}
     ],
     "dependencies": ["requests"],
-    "errors": []
+    "errors": [],
+    "base_version": 0
   }}
 
   Package rules:

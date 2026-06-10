@@ -144,6 +144,44 @@ def test_apply_delta_is_single_write_boundary(tmp_path: Path) -> None:
     assert before == after
 
 
+# --- versioning ---
+
+
+def test_version_starts_at_zero(tmp_path: Path) -> None:
+    """StateService.current_version is 0 before any apply_delta call."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+
+    ss = StateService(ws, "app")
+
+    assert ss.current_version == 0
+
+
+def test_apply_delta_increments_version(tmp_path: Path) -> None:
+    """current_version increments by 1 on each successful apply_delta call."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+
+    ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
+    assert ss.current_version == 1
+
+    ss.apply_delta(DeltaState(new_files=[FileWrite(path="b.py", content="x = 2")]))
+    assert ss.current_version == 2
+
+
+def test_build_state_view_includes_current_version(tmp_path: Path) -> None:
+    """build_state_view returns a StateView whose version matches current_version."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+    ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
+
+    view = ss.build_state_view()
+
+    assert view.version == ss.current_version == 1
+
+
 # --- run_tests ---
 
 

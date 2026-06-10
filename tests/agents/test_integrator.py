@@ -14,11 +14,44 @@ from forge.core.state_service import StateService
 
 
 def _mock_ss(
-    passed: bool = True, failures: list[str] | None = None, summary: str = ""
+    passed: bool = True, failures: list[str] | None = None, summary: str = "", version: int = 0
 ) -> MagicMock:
     ss = MagicMock(spec=StateService)
     ss.run_tests.return_value = RunResult(passed=passed, failures=failures or [], summary=summary)
+    ss.current_version = version
     return ss
+
+
+# --- version check ---
+
+
+async def test_stale_delta_returns_failed():
+    """integrate returns FAILED when delta.base_version does not match state_service.current_version."""
+    ss = _mock_ss(version=1)
+    delta = DeltaState(base_version=0)
+    response = await integrate(request_id=uuid4(), state_service=ss, delta=delta)
+    assert response.status == ResponseStatus.FAILED
+    assert response.error is not None
+    assert "Stale delta" in response.error
+    assert "0" in response.error
+    assert "1" in response.error
+
+
+async def test_stale_delta_does_not_call_apply_delta():
+    """apply_delta is never called when a version mismatch is detected."""
+    ss = _mock_ss(version=2)
+    delta = DeltaState(base_version=0)
+    await integrate(request_id=uuid4(), state_service=ss, delta=delta)
+    ss.apply_delta.assert_not_called()
+
+
+async def test_matching_version_proceeds():
+    """integrate proceeds to apply_delta when base_version matches current_version."""
+    ss = _mock_ss(version=3)
+    delta = DeltaState(base_version=3)
+    response = await integrate(request_id=uuid4(), state_service=ss, delta=delta)
+    ss.apply_delta.assert_called_once_with(delta)
+    assert response.status == ResponseStatus.COMPLETED
 
 
 # --- apply ---

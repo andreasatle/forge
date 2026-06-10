@@ -143,6 +143,7 @@ class DeltaState(BaseModel, frozen=True):
     edits: list[Edit] = Field(default_factory=_empty_edits)
     dependencies: list[str] = Field(default_factory=_empty_strings)
     errors: list[IntegrationError] = Field(default_factory=_empty_integration_errors)
+    base_version: int = 0
 
 
 class RunResult(BaseModel, frozen=True):
@@ -185,6 +186,7 @@ class StateView(BaseModel, frozen=True):
     files: list[FileView]
     dependencies: list[str]
     test_summary: str | None = None
+    version: int = 0
 
 
 def _empty_ints() -> list[int]:

@@ -59,6 +59,7 @@ async def work_agent(
         prompt += f"\n\n{plugin.prompt_supplement}"
 
     prompt += f"\n\nLanguage: {spec.language or 'not specified'}"
+    prompt += f"\n\nState version: {state_view.version}"
     if state_view.files:
         sections = "\n\n".join(
             f"File: {fv.path}\n```\n{fv.content}\n```" for fv in state_view.files

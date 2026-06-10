@@ -19,6 +19,16 @@ async def integrate(
     """Apply delta via StateService, run tests, return AgentResponse."""
     errors: list[IntegrationError] = []
 
+    if delta.base_version != state_service.current_version:
+        return AgentResponse(
+            request_id=request_id,
+            status=ResponseStatus.FAILED,
+            error=(
+                f"Stale delta: based on version {delta.base_version}, "
+                f"current state is version {state_service.current_version}"
+            ),
+        )
+
     try:
         state_service.apply_delta(delta)
     except Exception as e:
