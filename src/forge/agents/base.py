@@ -136,6 +136,14 @@ class PromptBuilder:
                     "  - Include complete file contents for newly created files.",
                     "  - Existing-file edits must identify exact unique text to replace.",
                     "  - Do not return an empty change set if you created or modified files.",
+                    "",
+                    "Format rules:",
+                    "- new_files: create files that do not exist yet",
+                    '  each entry: {"path": "...", "content": "full file content"}',
+                    "- edits: replace existing text in existing files",
+                    '  each entry: {"path": "...", "old": "exact text to replace", "new": "replacement"}',
+                    "- Never put file content in edits.",
+                    "- Never put old/new strings in new_files.",
                 ]
         return "\n".join(lines)
 

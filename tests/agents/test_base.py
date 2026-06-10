@@ -920,6 +920,16 @@ def test_prompt_builder_tool_guidance_uses_registered_tools_only():
         assert unavailable not in prompt
 
 
+def test_prompt_builder_includes_new_files_vs_edits_format_clarification():
+    """PromptBuilder includes new_files/edits format rules in the DeltaState system prompt."""
+    prompt = PromptBuilder(None, DeltaState).build()
+    assert "Format rules:" in prompt
+    assert "new_files: create files that do not exist yet" in prompt
+    assert "edits: replace existing text in existing files" in prompt
+    assert "Never put file content in edits." in prompt
+    assert "Never put old/new strings in new_files." in prompt
+
+
 async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made():
     """With tools and no prior tool calls, an empty DeltaState is rejected with tool-call format in the error."""
     registry, _ = _make_registry()
