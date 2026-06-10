@@ -17,7 +17,6 @@ from forge.core.models import (
 from forge.core.persistence import load_run, save_run
 from forge.core.runner import (
     Runner,
-    make_integrate_handler,
     make_plan_handler,
     make_work_handler,
 )
@@ -87,7 +86,6 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, planner_provider, config.max_retries))
     runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider, max_tool_iterations=config.max_tool_iterations))
-    runner.register(AgentType.INTEGRATE, make_integrate_handler(workspace, language_registry, completed_work_deltas))
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)
 
@@ -119,10 +117,10 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     path = save_run(final, workspace)
     print(f"run saved: {path}")
 
-    completed = sum(1 for n in final.dag.values() if n.node_state.value == "completed")
+    completed = sum(1 for n in final.dag.values() if n.node_state.value == "integrated")
     failed = sum(1 for n in final.dag.values() if n.node_state.value == "failed")
     cancelled = sum(1 for n in final.dag.values() if n.node_state.value == "cancelled")
-    print(f"\nDone — completed: {completed}, failed: {failed}, cancelled: {cancelled}")
+    print(f"\nDone — integrated: {completed}, failed: {failed}, cancelled: {cancelled}")
 
     if verbose:
         print("\nDAG summary:")

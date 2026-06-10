@@ -6,9 +6,9 @@ from forge.core.models import (
     DeltaState,
     Edit,
     FileWrite,
-    IntegrateSpec,
     IntegrationError,
     ResponseStatus,
+    WorkSpec,
 )
 from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
@@ -32,16 +32,7 @@ async def integrate_agent(
 ) -> AgentResponse:
     """Merge worker DeltaStates, apply to disk via StateService, run tests, return AgentResponse."""
     spec = request.spec
-    if not isinstance(spec, IntegrateSpec):
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(errors=[IntegrationError(
-                kind="invalid_spec",
-                description=f"expected IntegrateSpec, got {type(spec).__name__}",
-            )]),
-        )
-
+    assert isinstance(spec, WorkSpec)
     plugin = language_registry.get(spec.language) if spec.language else None
     state_service = StateService(workspace, spec.artifact, plugin)
     errors: list[IntegrationError] = []

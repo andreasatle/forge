@@ -12,7 +12,6 @@ from forge.core.models import (
     DeltaState,
     Edit,
     FailureKind,
-    IntegrateSpec,
     IntegrationError,
     NodeState,
     PlanResponse,
@@ -28,43 +27,14 @@ from forge.core.models import (
     WorkSpec,
 )
 
-# --- IntegrateSpec ---
+# --- IntegrateSpec removed ---
 
 
-def test_integrate_spec_is_frozen():
-    """IntegrateSpec raises on direct field mutation."""
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=uuid4())
-    with pytest.raises(Exception):
-        spec.objective = "other"  # type: ignore[misc]
-
-
-def test_integrate_spec_stores_work_request_id():
-    """IntegrateSpec stores the single work_request_id it was constructed with."""
-    wid = uuid4()
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=wid)
-    assert spec.work_request_id == wid
-
-
-def test_integrate_spec_kind_discriminator():
-    """IntegrateSpec.kind is 'integrate' by default."""
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=uuid4())
-    assert spec.kind == "integrate"
-
-
-def test_integrate_spec_resolves_in_agent_spec_discriminated_union():
-    """AgentRequest accepts IntegrateSpec and the discriminated union round-trips correctly."""
-    wid = uuid4()
-    spec = IntegrateSpec(objective="merge worker results", artifact="codebase", work_request_id=wid)
-    request = AgentRequest(
-        agent_type=AgentType.INTEGRATE,
-        source=RequestSource.WORKER,
-        spec=spec,
-    )
-    data = request.model_dump()
-    restored = AgentRequest.model_validate(data)
-    assert isinstance(restored.spec, IntegrateSpec)
-    assert restored.spec.objective == "merge worker results"
-    assert restored.spec.work_request_id == wid
+def test_integrate_spec_no_longer_exists():
+    """IntegrateSpec and AgentType.INTEGRATE have been removed from the public API."""
+    import forge.core.models as m
+    assert not hasattr(m, "IntegrateSpec")
+    assert not hasattr(AgentType, "INTEGRATE")
 
 
 def _make_request(
@@ -118,12 +88,12 @@ def test_with_state_returns_new_instance_with_updated_state():
 # --- DAGNode.with_response ---
 
 
-def test_with_response_sets_completed_for_completed_status():
-    """with_response() sets node_state to COMPLETED when response status is COMPLETED."""
+def test_with_response_sets_integrated_for_completed_status():
+    """with_response() sets node_state to INTEGRATED when response status is COMPLETED."""
     node = _make_node()
     response = _make_response(node.request.id, status=ResponseStatus.COMPLETED)
     updated = node.with_response(response)
-    assert updated.node_state == NodeState.COMPLETED
+    assert updated.node_state == NodeState.INTEGRATED
     assert updated.response is response
 
 
@@ -139,9 +109,9 @@ def test_with_response_sets_failed_for_failed_status():
 # --- SchedulerState.ready_nodes ---
 
 
-def test_ready_nodes_returns_pending_node_with_all_deps_completed():
-    """ready_nodes() includes a PENDING node whose only dependency is COMPLETED."""
-    dep = _make_node(node_state=NodeState.COMPLETED)
+def test_ready_nodes_returns_pending_node_with_all_deps_integrated():
+    """ready_nodes() includes a PENDING node whose only dependency is INTEGRATED."""
+    dep = _make_node(node_state=NodeState.INTEGRATED)
     candidate = _make_node(dependencies=frozenset({dep.request.id}))
     state = _make_state([dep, candidate])
     assert candidate in state.ready_nodes()
@@ -155,14 +125,14 @@ def test_ready_nodes_excludes_pending_node_with_unsatisfied_dep():
     assert blocked not in state.ready_nodes()
 
 
-def test_ready_nodes_excludes_running_and_completed_nodes():
-    """ready_nodes() excludes nodes that are already RUNNING or COMPLETED."""
+def test_ready_nodes_excludes_running_and_integrated_nodes():
+    """ready_nodes() excludes nodes that are already RUNNING or INTEGRATED."""
     running = _make_node(node_state=NodeState.RUNNING)
-    completed = _make_node(node_state=NodeState.COMPLETED)
-    state = _make_state([running, completed])
+    integrated = _make_node(node_state=NodeState.INTEGRATED)
+    state = _make_state([running, integrated])
     result = state.ready_nodes()
     assert running not in result
-    assert completed not in result
+    assert integrated not in result
 
 
 # --- SchedulerState.add_nodes ---

@@ -14,11 +14,10 @@ def _empty_request_ids() -> frozenset[RequestId]:
 
 
 class AgentType(Enum):
-    """Discriminator enum for the three agent roles in the system."""
+    """Discriminator enum for the two agent roles in the system."""
 
     PLAN = "plan"
     WORK = "work"
-    INTEGRATE = "integrate"
 
 
 class RequestSource(Enum):
@@ -42,7 +41,7 @@ class NodeState(Enum):
     PENDING = "pending"
     READY = "ready"
     RUNNING = "running"
-    COMPLETED = "completed"
+    INTEGRATED = "integrated"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -87,18 +86,8 @@ class WorkSpec(BaseModel):
     language: str | None = None
 
 
-class IntegrateSpec(BaseModel, frozen=True):
-    """Specification for an integration task — merges a single worker DeltaState into committed state."""
-
-    kind: Literal["integrate"] = "integrate"
-    objective: str
-    artifact: str
-    language: str | None = None
-    work_request_id: RequestId
-
-
 AgentSpec = Annotated[
-    PlanSpec | WorkSpec | IntegrateSpec,
+    PlanSpec | WorkSpec,
     Field(discriminator="kind"),
 ]
 
@@ -256,7 +245,7 @@ class DAGNode(BaseModel):
     def with_response(self, response: AgentResponse) -> "DAGNode":
         """Return a copy of this node with the response set and state derived from its status."""
         node_state = (
-            NodeState.COMPLETED if response.status == ResponseStatus.COMPLETED else NodeState.FAILED
+            NodeState.INTEGRATED if response.status == ResponseStatus.COMPLETED else NodeState.FAILED
         )
         return self.model_copy(update={"node_state": node_state, "response": response})
 
@@ -283,10 +272,10 @@ class SchedulerState(BaseModel):
         return self.model_copy(update={"dag": {**self.dag, node.request.id: node}})
 
     def ready_nodes(self) -> list[DAGNode]:
-        """Return all PENDING nodes whose dependencies are all COMPLETED."""
-        completed = {nid for nid, n in self.dag.items() if n.node_state == NodeState.COMPLETED}
+        """Return all PENDING nodes whose dependencies are all INTEGRATED."""
+        integrated = {nid for nid, n in self.dag.items() if n.node_state == NodeState.INTEGRATED}
         return [
             n
             for n in self.dag.values()
-            if n.node_state == NodeState.PENDING and n.request.dependencies <= completed
+            if n.node_state == NodeState.PENDING and n.request.dependencies <= integrated
         ]

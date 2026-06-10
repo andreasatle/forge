@@ -83,13 +83,13 @@ def test_load_run_resets_running_to_pending(workspace: Workspace) -> None:
     assert loaded.dag[node.request.id].node_state == NodeState.PENDING
 
 
-def test_load_run_leaves_completed_unchanged(workspace: Workspace) -> None:
-    """load_run() preserves COMPLETED node state across a save/load cycle."""
-    node = _make_node(NodeState.COMPLETED)
+def test_load_run_leaves_integrated_unchanged(workspace: Workspace) -> None:
+    """load_run() preserves INTEGRATED node state across a save/load cycle."""
+    node = _make_node(NodeState.INTEGRATED)
     s = SchedulerState(northstar="test").add_nodes([node])
     save_run(s, workspace)
     loaded = load_run(workspace)
-    assert loaded.dag[node.request.id].node_state == NodeState.COMPLETED
+    assert loaded.dag[node.request.id].node_state == NodeState.INTEGRATED
 
 
 def test_load_run_leaves_failed_unchanged(workspace: Workspace) -> None:

@@ -88,7 +88,7 @@ class Scheduler:
                     updated = current.with_response(response)
                     state = state.update_node(updated)
 
-                    if updated.node_state == NodeState.COMPLETED:
+                    if updated.node_state == NodeState.INTEGRATED:
                         follow_ups = [DAGNode(request=r) for r in response.follow_up]
                         if follow_ups:
                             state = state.add_nodes(follow_ups)

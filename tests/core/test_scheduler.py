@@ -64,7 +64,7 @@ def _base_state(max_concurrency: int = 1) -> SchedulerState:
 
 
 async def test_single_work_node_completes() -> None:
-    """A single pre-seeded work node reaches COMPLETED state after the scheduler runs."""
+    """A single pre-seeded work node reaches INTEGRATED state after the scheduler runs."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
 
@@ -73,7 +73,7 @@ async def test_single_work_node_completes() -> None:
 
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
-    assert final.dag[work.id].node_state == NodeState.COMPLETED
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
 
 async def test_follow_up_requests_added_and_executed() -> None:
@@ -89,8 +89,8 @@ async def test_follow_up_requests_added_and_executed() -> None:
     state = _base_state().add_nodes([DAGNode(request=work_a)])
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
-    assert final.dag[work_a.id].node_state == NodeState.COMPLETED
-    assert final.dag[work_b.id].node_state == NodeState.COMPLETED
+    assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
+    assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
 
 
 async def test_failed_node_cancels_dependents() -> None:
@@ -238,7 +238,7 @@ async def test_callback_exceptions_do_not_crash() -> None:
 
 
 async def test_final_state_reflects_all_node_updates() -> None:
-    """Final state correctly records COMPLETED, FAILED, and COMPLETED nodes for a mixed run."""
+    """Final state correctly records INTEGRATED, FAILED, and INTEGRATED nodes for a mixed run."""
     work_a = _work_request()
     work_b = _work_request()
     work_c = _work_request(deps=frozenset({work_a.id}))
@@ -253,6 +253,6 @@ async def test_final_state_reflects_all_node_updates() -> None:
     )
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
-    assert final.dag[work_a.id].node_state == NodeState.COMPLETED
+    assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
     assert final.dag[work_b.id].node_state == NodeState.FAILED
-    assert final.dag[work_c.id].node_state == NodeState.COMPLETED
+    assert final.dag[work_c.id].node_state == NodeState.INTEGRATED

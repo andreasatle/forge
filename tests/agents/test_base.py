@@ -29,7 +29,6 @@ from forge.core.models import (
     Edit,
     FailureKind,
     FileWrite,
-    IntegrateSpec,
     PlanResponse,
     RequestSource,
     ResponseStatus,
@@ -696,8 +695,8 @@ async def test_run_agent_accepts_delta_state_after_tool_work():
 # --- _to_follow_up ---
 
 
-def test_to_follow_up_emits_integrate_node_as_last_follow_up():
-    """_to_follow_up appends an INTEGRATE node as the last element for non-empty tasks."""
+def test_to_follow_up_emits_only_work_nodes():
+    """_to_follow_up emits only WORK nodes — one per task, no INTEGRATE nodes."""
     plan = PlanResponse(kind="plan", tasks=[TaskSpec(
         objective="write code",
         success_condition="tests pass",
@@ -707,13 +706,12 @@ def test_to_follow_up_emits_integrate_node_as_last_follow_up():
 
     follow_ups = _to_follow_up(plan, _work_request())
 
-    assert follow_ups[-1].agent_type == AgentType.INTEGRATE
-    assert len([r for r in follow_ups if r.agent_type == AgentType.WORK]) == 1
-    assert len([r for r in follow_ups if r.agent_type == AgentType.INTEGRATE]) == 1
+    assert len(follow_ups) == 1
+    assert follow_ups[0].agent_type == AgentType.WORK
 
 
-def test_to_follow_up_each_integrate_node_depends_only_on_its_work_node():
-    """Each INTEGRATE node depends solely on its paired work node, not on all work nodes."""
+def test_to_follow_up_two_tasks_yields_two_work_nodes():
+    """Two tasks produce exactly two work nodes."""
     plan = PlanResponse(kind="plan", tasks=[
         TaskSpec(objective="A", success_condition="done", adapter="coding", artifact="codebase"),
         TaskSpec(objective="B", success_condition="done", adapter="coding", artifact="codebase"),
@@ -721,41 +719,23 @@ def test_to_follow_up_each_integrate_node_depends_only_on_its_work_node():
 
     follow_ups = _to_follow_up(plan, _work_request())
 
-    work_nodes = [r for r in follow_ups if r.agent_type == AgentType.WORK]
-    integrate_nodes = [r for r in follow_ups if r.agent_type == AgentType.INTEGRATE]
-    for work, integrate in zip(work_nodes, integrate_nodes):
-        assert integrate.dependencies == frozenset({work.id})
+    assert len(follow_ups) == 2
+    assert all(r.agent_type == AgentType.WORK for r in follow_ups)
 
 
-def test_to_follow_up_integrate_spec_has_work_request_id():
-    """IntegrateSpec.work_request_id is the ID of its paired work node."""
+def test_to_follow_up_work_nodes_carry_work_spec():
+    """Every follow-up node carries a WorkSpec."""
     plan = PlanResponse(kind="plan", tasks=[
         TaskSpec(objective="X", success_condition="done", adapter="coding", artifact="codebase"),
     ])
 
     follow_ups = _to_follow_up(plan, _work_request())
 
-    work = next(r for r in follow_ups if r.agent_type == AgentType.WORK)
-    integrate = next(r for r in follow_ups if r.agent_type == AgentType.INTEGRATE)
-    assert isinstance(integrate.spec, IntegrateSpec)
-    assert integrate.spec.work_request_id == work.id
+    assert all(isinstance(r.spec, WorkSpec) for r in follow_ups)
 
 
-def test_to_follow_up_two_tasks_yields_two_integrate_nodes():
-    """Two tasks produce two work nodes and two integrate nodes."""
-    plan = PlanResponse(kind="plan", tasks=[
-        TaskSpec(objective="A", success_condition="done", adapter="coding", artifact="codebase"),
-        TaskSpec(objective="B", success_condition="done", adapter="coding", artifact="codebase"),
-    ])
-
-    follow_ups = _to_follow_up(plan, _work_request())
-
-    assert len([r for r in follow_ups if r.agent_type == AgentType.WORK]) == 2
-    assert len([r for r in follow_ups if r.agent_type == AgentType.INTEGRATE]) == 2
-
-
-def test_to_follow_up_work_node_depends_on_predecessor_integrate_node():
-    """Work node with depends_on=[0] depends on integrate_0, not work_0."""
+def test_to_follow_up_work_node_depends_on_predecessor_work_node():
+    """Work node with depends_on=[0] depends directly on work_0."""
     plan = PlanResponse(kind="plan", tasks=[
         TaskSpec(objective="A", success_condition="done", adapter="coding", artifact="codebase"),
         TaskSpec(objective="B", success_condition="done", adapter="coding", artifact="codebase", depends_on=[0]),
@@ -763,12 +743,10 @@ def test_to_follow_up_work_node_depends_on_predecessor_integrate_node():
 
     follow_ups = _to_follow_up(plan, _work_request())
 
-    work_a = next(r for r in follow_ups if r.agent_type == AgentType.WORK and isinstance(r.spec, WorkSpec) and r.spec.objective == "A")
-    work_b = next(r for r in follow_ups if r.agent_type == AgentType.WORK and isinstance(r.spec, WorkSpec) and r.spec.objective == "B")
-    integrate_a = next(r for r in follow_ups if r.agent_type == AgentType.INTEGRATE and work_a.id in r.dependencies)
+    work_a = next(r for r in follow_ups if isinstance(r.spec, WorkSpec) and r.spec.objective == "A")
+    work_b = next(r for r in follow_ups if isinstance(r.spec, WorkSpec) and r.spec.objective == "B")
 
-    assert work_a.id not in work_b.dependencies
-    assert integrate_a.id in work_b.dependencies
+    assert work_a.id in work_b.dependencies
 
 
 def test_to_follow_up_empty_tasks_returns_empty_list():

@@ -11,7 +11,6 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DeltaState,
-    IntegrateSpec,
     RequestId,
     RequestSource,
     ResponseStatus,
@@ -67,15 +66,7 @@ def make_integrate_handler(
     """Return a handler that delegates integrate requests to integrate_agent."""
 
     async def integrate_handler(request: AgentRequest) -> AgentResponse:
-        spec = request.spec
-        if not isinstance(spec, IntegrateSpec):
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.FAILED,
-                error=f"expected IntegrateSpec, got {type(spec).__name__}",
-            )
-        rid = spec.work_request_id
-        deltas = [completed_work_deltas[rid]] if rid in completed_work_deltas else []
+        deltas = list(completed_work_deltas.values())
         return await integrate_agent(
             request=request,
             workspace=workspace,

@@ -16,7 +16,6 @@ from forge.core.models import (
     Edit,
     FailureKind,
     FileWrite,
-    IntegrateSpec,
     PlanResponse,
     RequestSource,
     ResponseStatus,
@@ -209,12 +208,7 @@ async def _execute_tool(
 
 
 def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentRequest]:
-    """Convert a PlanResponse into interleaved work+integrate follow-up nodes.
-
-    Each work node gets its own integrate node. Work dependencies are remapped to
-    the integrate node of the predecessor, not the work node directly:
-    Work0 → Integrate0 → Work1 → Integrate1
-    """
+    """Convert a PlanResponse into work follow-up nodes with remapped dependencies."""
     if not plan.tasks:
         return []
 
@@ -234,40 +228,17 @@ def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentReques
         for task in plan.tasks
     ]
 
-    # Step 2: one integrate node per work node — depends only on its paired work node
-    integrate_nodes = [
-        AgentRequest(
-            agent_type=AgentType.INTEGRATE,
-            source=RequestSource.PLANNER,
-            spec=IntegrateSpec(
-                objective="integrate completed work",
-                artifact=task.artifact,
-                language=task.language,
-                work_request_id=work.id,
-            ),
-            dependencies=frozenset({work.id}),
-        )
-        for work, task in zip(work_nodes, plan.tasks)
-    ]
-
-    # Step 3: remap work deps — depends_on=[i] means depend on integrate_nodes[i], not work_nodes[i]
-    work_with_deps = [
+    # Step 2: remap work deps — depends_on=[i] means depend on work_nodes[i]
+    return [
         work.model_copy(update={
             "dependencies": frozenset(
-                integrate_nodes[j].id
+                work_nodes[j].id
                 for j in task.depends_on
                 if 0 <= j < len(work_nodes)
             )
         })
         for work, task in zip(work_nodes, plan.tasks)
     ]
-
-    # Interleave: [work0, integrate0, work1, integrate1, ...]
-    result: list[AgentRequest] = []
-    for work, integrate in zip(work_with_deps, integrate_nodes):
-        result.append(work)
-        result.append(integrate)
-    return result
 
 
 def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:

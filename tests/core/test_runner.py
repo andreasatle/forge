@@ -15,7 +15,6 @@ from forge.core.models import (
     AgentType,
     DeltaState,
     FileWrite,
-    IntegrateSpec,
     PlanSpec,
     Priority,
     RequestSource,
@@ -60,9 +59,9 @@ def _work_request() -> AgentRequest:
 
 def _integrate_request() -> AgentRequest:
     return AgentRequest(
-        agent_type=AgentType.INTEGRATE,
+        agent_type=AgentType.WORK,
         source=RequestSource.WORKER,
-        spec=IntegrateSpec(objective="integrate work", artifact="codebase", work_request_id=uuid4()),
+        spec=WorkSpec(objective="integrate work", success_condition="integrated", adapter="coding", artifact="codebase"),
     )
 
 
@@ -190,8 +189,8 @@ async def test_runner_routes_work_to_work_handler() -> None:
     assert received[0] is request
 
 
-async def test_runner_routes_integrate_to_integrate_handler() -> None:
-    """Runner invokes the registered INTEGRATE handler for an integrate request."""
+async def test_runner_routes_work_to_work_handler_via_integrate_request() -> None:
+    """Runner invokes the registered WORK handler for a request built by _integrate_request()."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -199,7 +198,7 @@ async def test_runner_routes_integrate_to_integrate_handler() -> None:
         return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
 
     runner = Runner()
-    runner.register(AgentType.INTEGRATE, handler)
+    runner.register(AgentType.WORK, handler)
     request = _integrate_request()
     await runner(request)
 
@@ -282,7 +281,6 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
     runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()))
-    runner.register(AgentType.INTEGRATE, stub_integrate_handler)
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())
@@ -355,7 +353,7 @@ async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes(tm
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
-    completed = [n for n in final.dag.values() if n.node_state.value == "completed"]
+    completed = [n for n in final.dag.values() if n.node_state.value == "integrated"]
     assert len(completed) == 5
 
 
@@ -423,18 +421,14 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Path) -> None:
-    """make_integrate_handler passes the delta for the work_request_id in the spec."""
+async def test_make_integrate_handler_passes_all_deltas(tmp_path: Path) -> None:
+    """make_integrate_handler passes all completed deltas to integrate_agent."""
     wid = uuid4()
     delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
     unrelated_wid = uuid4()
     completed = {wid: delta, unrelated_wid: DeltaState()}
 
-    request = AgentRequest(
-        agent_type=AgentType.INTEGRATE,
-        source=RequestSource.WORKER,
-        spec=IntegrateSpec(objective="merge", artifact="codebase", work_request_id=wid),
-    )
+    request = _integrate_request()
 
     with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
@@ -443,7 +437,7 @@ async def test_make_integrate_handler_passes_only_requested_deltas(tmp_path: Pat
 
     assert response.status == ResponseStatus.COMPLETED
     mock_integrate.assert_called_once()
-    assert mock_integrate.call_args.kwargs["completed_deltas"] == [delta]
+    assert mock_integrate.call_args.kwargs["completed_deltas"] == list(completed.values())
     assert "provider" not in mock_integrate.call_args.kwargs
 
 
