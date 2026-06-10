@@ -55,10 +55,12 @@ class TaskAttemptEngine:
         self._max_retries = max_retries
         self._max_tool_iterations = max_tool_iterations
 
-    async def run(self, prompt: str) -> DeltaState:
-        """Run attempts with validation/retry; return best DeltaState.
+    async def run(self, prompt: str) -> AgentResponse:
+        """Run attempts with validation/retry; return AgentResponse.
 
-        Raises RunAgentFailed if run_agent returns a non-COMPLETED response.
+        Returns ALREADY_DONE status when the success condition is already met (empty delta).
+        Raises RunAgentFailed if run_agent returns a non-COMPLETED response that does not
+        qualify as ALREADY_DONE.
         """
         last_delta: DeltaState | None = None
         feedback: str | None = None
@@ -87,7 +89,11 @@ class TaskAttemptEngine:
                         attempt + 1,
                         self._max_attempts,
                     )
-                    return response.delta
+                    return AgentResponse(
+                        request_id=self._request.id,
+                        status=ResponseStatus.ALREADY_DONE,
+                        delta=response.delta,
+                    )
                 try:
                     finding = await critic_agent(
                         self._request,
@@ -103,14 +109,22 @@ class TaskAttemptEngine:
                         self._max_attempts,
                         e,
                     )
-                    return response.delta
+                    return AgentResponse(
+                        request_id=self._request.id,
+                        status=ResponseStatus.ALREADY_DONE,
+                        delta=response.delta,
+                    )
                 if finding.disposition == CriticDisposition.ALREADY_DONE:
                     _logger.info(
                         "attempt %d/%d: critic confirmed ALREADY_DONE",
                         attempt + 1,
                         self._max_attempts,
                     )
-                    return response.delta
+                    return AgentResponse(
+                        request_id=self._request.id,
+                        status=ResponseStatus.ALREADY_DONE,
+                        delta=response.delta,
+                    )
                 _logger.info(
                     "attempt %d/%d: critic=%s on empty delta — retrying",
                     attempt + 1,
@@ -138,7 +152,11 @@ class TaskAttemptEngine:
             last_delta = response.delta
 
             if self._critic_provider is None or self._referee_provider is None:
-                return last_delta
+                return AgentResponse(
+                    request_id=self._request.id,
+                    status=ResponseStatus.COMPLETED,
+                    delta=last_delta,
+                )
 
             try:
                 finding = await critic_agent(
@@ -163,7 +181,11 @@ class TaskAttemptEngine:
                     self._max_attempts,
                     e,
                 )
-                return last_delta
+                return AgentResponse(
+                    request_id=self._request.id,
+                    status=ResponseStatus.COMPLETED,
+                    delta=last_delta,
+                )
 
             _logger.info(
                 "attempt %d/%d: critic=%s referee=%s — %s",
@@ -175,7 +197,11 @@ class TaskAttemptEngine:
             )
 
             if decision.disposition == CriticDisposition.ACCEPT:
-                return last_delta
+                return AgentResponse(
+                    request_id=self._request.id,
+                    status=ResponseStatus.COMPLETED,
+                    delta=last_delta,
+                )
 
             hints_text = (
                 "\n".join(f"{i + 1}. {h}" for i, h in enumerate(finding.hints))
@@ -192,4 +218,8 @@ class TaskAttemptEngine:
 
         _logger.warning("max_attempts (%d) exhausted; returning last delta", self._max_attempts)
         assert last_delta is not None, "max_attempts must be >= 1"
-        return last_delta
+        return AgentResponse(
+            request_id=self._request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=last_delta,
+        )

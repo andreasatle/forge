@@ -43,6 +43,7 @@ class ResponseStatus(Enum):
 
     COMPLETED = "completed"
     FAILED = "failed"
+    ALREADY_DONE = "already_done"
 
 
 class FailureKind(Enum):
@@ -273,7 +274,7 @@ class DAGNode(BaseModel):
         """Return a copy of this node with the response set and state derived from its status."""
         node_state = (
             NodeState.INTEGRATED
-            if response.status == ResponseStatus.COMPLETED
+            if response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE)
             else NodeState.FAILED
         )
         return self.model_copy(update={"node_state": node_state, "response": response})

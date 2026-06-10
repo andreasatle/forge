@@ -117,12 +117,6 @@ async def work_agent(
     )
 
     try:
-        delta = await engine.run(base_prompt)
+        return await engine.run(base_prompt)
     except RunAgentFailed as e:
         return e.response
-
-    return AgentResponse(
-        request_id=request.id,
-        status=ResponseStatus.COMPLETED,
-        delta=delta,
-    )

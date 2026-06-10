@@ -8,6 +8,7 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DeltaState,
     FailureKind,
     NodeState,
     PlanSpec,
@@ -55,6 +56,14 @@ def _ok(request: AgentRequest, *, follow_up: list[AgentRequest] | None = None) -
 
 def _fail(request: AgentRequest) -> AgentResponse:
     return AgentResponse(request_id=request.id, status=ResponseStatus.FAILED, error="test error")
+
+
+def _already_done(request: AgentRequest) -> AgentResponse:
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.ALREADY_DONE,
+        delta=DeltaState(),
+    )
 
 
 def _base_state(max_concurrency: int = 1) -> SchedulerState:
@@ -442,3 +451,51 @@ async def test_non_stale_integration_failure_marks_failed_immediately() -> None:
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     mock_integrate.assert_called_once()
+
+
+async def test_already_done_node_skips_integration() -> None:
+    """Scheduler does not call integrate() when a WORK node returns ALREADY_DONE status."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _already_done(request)
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    mock_integrate.assert_not_called()
+
+
+async def test_already_done_state_version_unchanged() -> None:
+    """State version does not increment for ALREADY_DONE — integrate() is never invoked."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _already_done(request)
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
+
+    mock_integrate.assert_not_called()
+
+
+async def test_already_done_fires_on_node_completed() -> None:
+    """on_node_completed callback fires for ALREADY_DONE nodes (bypasses integration)."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    completed: list[DAGNode] = []
+    callbacks = SchedulerCallbacks(on_node_completed=completed.append)
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _already_done(request)
+
+    await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
+
+    assert any(n.request.id == work.id for n in completed)

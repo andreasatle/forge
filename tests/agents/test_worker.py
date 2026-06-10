@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
-from forge.agents.attempt import RunAgentFailed
 from forge.agents.base import _build_system_prompt
 from forge.agents.worker import work_agent
 from forge.core.models import (

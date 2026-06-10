@@ -83,7 +83,8 @@ async def test_accept_on_first_attempt_returns_immediately() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result == delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
     mock_run.assert_called_once()
 
 
@@ -117,7 +118,8 @@ async def test_revise_injects_feedback_and_retries() -> None:
         ]
         result = await engine.run("base prompt")
 
-    assert result == delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
     assert mock_run.call_count == 2
     second_prompt = mock_run.call_args_list[1].args[3]
     assert "Revise your implementation addressing the feedback above" in second_prompt
@@ -156,7 +158,8 @@ async def test_reject_retries_with_feedback() -> None:
         ]
         result = await engine.run("base prompt")
 
-    assert result == delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
     assert mock_run.call_count == 2
     second_prompt = mock_run.call_args_list[1].args[3]
     assert "Revise your implementation addressing the feedback above" in second_prompt
@@ -190,7 +193,8 @@ async def test_max_attempts_exhaustion_returns_last_delta() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result == last_delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == last_delta
     assert mock_run.call_count == 2
 
 
@@ -211,7 +215,8 @@ async def test_critic_parse_failure_degrades_gracefully() -> None:
         mock_critic.side_effect = ValueError("critic_agent failed after 3 retries: invalid json")
         result = await engine.run("base prompt")
 
-    assert result == delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
     mock_run.assert_called_once()
     mock_referee.assert_not_called()
 
@@ -231,7 +236,8 @@ async def test_no_providers_skips_validation() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result == delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
     mock_run.assert_called_once()
     mock_critic.assert_not_called()
 
@@ -274,7 +280,8 @@ async def test_empty_delta_no_critic_returns_already_done() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result == DeltaState()
+    assert result.status == ResponseStatus.ALREADY_DONE
+    assert result.delta == DeltaState()
     mock_run.assert_called_once()
     mock_critic.assert_not_called()
 
@@ -301,7 +308,8 @@ async def test_empty_delta_critic_already_done_accepts() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result == DeltaState()
+    assert result.status == ResponseStatus.ALREADY_DONE
+    assert result.delta == DeltaState()
     mock_run.assert_called_once()
     mock_critic.assert_called_once()
 
@@ -344,7 +352,8 @@ async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result == delta
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
     assert mock_run.call_count == 2
     second_prompt = mock_run.call_args_list[1].args[3]
     assert "Revise your implementation addressing the feedback above" in second_prompt

@@ -106,6 +106,7 @@ class Scheduler:
                         if (
                             node.request.agent_type == AgentType.WORK
                             and self._state_services is not None
+                            and response.status != ResponseStatus.ALREADY_DONE
                         ):
                             spec = node.request.spec
                             if isinstance(spec, WorkSpec):
