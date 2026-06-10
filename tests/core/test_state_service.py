@@ -251,3 +251,11 @@ def test_parse_test_result_timeout():
     result = _parse_test_result("timed out after 60 seconds")
     assert result.passed is False
     assert "timed out" in result.failures
+
+
+def test_run_tests_treats_collection_error_as_failure():
+    """_parse_test_result returns passed=False when pytest reports a collection error."""
+    output = "ImportError while importing test file 'tests/test_foo.py'.\nInterrupted: 1 error during collection"
+    result = _parse_test_result(output)
+    assert result.passed is False
+    assert len(result.failures) >= 1

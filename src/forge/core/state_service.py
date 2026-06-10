@@ -54,6 +54,12 @@ def _parse_test_result(raw: str) -> RunResult:
     if "timed out" in raw:
         return RunResult(passed=False, failures=["timed out"], summary=raw.strip())
     lines = raw.splitlines()
+    non_empty = [line.strip() for line in lines if line.strip()]
+    summary = non_empty[-1] if non_empty else raw.strip()
+    if "error during collection" in raw.lower() or "interrupted" in raw.lower():
+        error_lines = [line.strip() for line in lines if line.strip() and not line.startswith("=")]
+        error_msg = error_lines[0] if error_lines else "collection error"
+        return RunResult(passed=False, failures=[error_msg], summary=summary)
     failures = [line.strip() for line in lines if line.strip().startswith("FAILED ")]
     failed_match = re.search(r"(\d+) failed", raw)
     passed_match = re.search(r"(\d+) passed", raw)
@@ -63,8 +69,6 @@ def _parse_test_result(raw: str) -> RunResult:
         passed = True
     else:
         passed = len(failures) == 0
-    non_empty = [line.strip() for line in lines if line.strip()]
-    summary = non_empty[-1] if non_empty else raw.strip()
     return RunResult(passed=passed, failures=failures, summary=summary)
 
 
