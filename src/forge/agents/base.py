@@ -52,34 +52,105 @@ def _classify_failure(exc: Exception) -> FailureKind:
     return FailureKind.UNKNOWN
 
 
+class PromptBuilder:
+    """Build the generic system prompt for tool use and final response schemas."""
+
+    def __init__(
+        self,
+        tools: ToolRegistry | None,
+        final_response_type: type[BaseModel],
+    ) -> None:
+        self.tools = tools
+        self.final_response_type = final_response_type
+
+    @staticmethod
+    def compact_response_schema(response_type: type[BaseModel]) -> dict[str, object]:
+        """Return a compact JSON schema view derived from a Pydantic response model."""
+        schema = response_type.model_json_schema()
+        compact: dict[str, object] = {
+            "title": schema.get("title", response_type.__name__),
+            "type": schema.get("type", "object"),
+            "properties": schema.get("properties", {}),
+        }
+        if "required" in schema:
+            compact["required"] = schema["required"]
+        if "$defs" in schema:
+            compact["$defs"] = schema["$defs"]
+        return compact
+
+    @classmethod
+    def render_response_schema(cls, response_type: type[BaseModel]) -> str:
+        """Render final-response schema instructions from the actual Pydantic model."""
+        schema = cls.compact_response_schema(response_type)
+        fields = (
+            ", ".join(schema["properties"].keys())
+            if isinstance(schema["properties"], dict)
+            else ""
+        )
+        lines = [
+            f"Final response model: {response_type.__name__}",
+            f"Top-level fields: {fields}",
+            "Generated JSON schema:",
+            json.dumps(schema, indent=2),
+        ]
+        return "\n".join(lines)
+
+    def build(self, tracked_delta: DeltaState | None = None) -> str:
+        tracked_delta = tracked_delta or DeltaState()
+        has_tools = self.tools is not None and bool(self.tools)
+        show_final = self.tools is None or not _is_empty_delta(tracked_delta)
+        step2 = "2. " if has_tools and show_final else ""
+        lines: list[str] = [
+            "You must respond with JSON only — no markdown, no explanation.",
+            "",
+        ]
+        if self.tools is not None:
+            lines += [
+                "You have two valid response formats:",
+                "",
+                "1. To call a tool — use this exact format:",
+                '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
+                "",
+                "Available tools:",
+            ]
+            for tool in self.tools:
+                lines.append(f"  {tool.name}: {tool.description}")
+                lines.append(
+                    f"    input schema: {json.dumps(tool.request_type.model_json_schema())}"
+                )
+                lines.append(
+                    f"    response schema: {json.dumps(tool.response_type.model_json_schema())}"
+                )
+                lines.append("")
+            lines += [
+                "Tool-use rules:",
+                "  - Only call tools listed above, using exactly those tool names.",
+                "  - Do not invent or reference tools that are not listed above.",
+                "  - If a needed capability is not listed, include the requested result in your final JSON response instead.",
+                "",
+            ]
+        if show_final:
+            lines += [
+                f"{step2}When you have completed your task, respond with JSON matching this generated schema:",
+                self.render_response_schema(self.final_response_type),
+            ]
+            if self.final_response_type is DeltaState:
+                lines += [
+                    "",
+                    "Rules for your final response:",
+                    "  - Include complete file contents for newly created files.",
+                    "  - Existing-file edits must identify exact unique text to replace.",
+                    "  - Do not return an empty change set if you created or modified files.",
+                ]
+        return "\n".join(lines)
+
+
 def _compact_response_schema(response_type: type[BaseModel]) -> dict[str, object]:
-    """Return a compact JSON schema view derived from a Pydantic response model."""
-    schema = response_type.model_json_schema()
-    compact: dict[str, object] = {
-        "title": schema.get("title", response_type.__name__),
-        "type": schema.get("type", "object"),
-        "properties": schema.get("properties", {}),
-    }
-    if "required" in schema:
-        compact["required"] = schema["required"]
-    if "$defs" in schema:
-        compact["$defs"] = schema["$defs"]
-    return compact
+    return PromptBuilder.compact_response_schema(response_type)
 
 
 def _render_response_schema(response_type: type[BaseModel]) -> str:
-    """Render final-response schema instructions from the actual Pydantic model."""
-    schema = _compact_response_schema(response_type)
-    fields = (
-        ", ".join(schema["properties"].keys()) if isinstance(schema["properties"], dict) else ""
-    )
-    lines = [
-        f"Final response model: {response_type.__name__}",
-        f"Top-level fields: {fields}",
-        "Generated JSON schema:",
-        json.dumps(schema, indent=2),
-    ]
-    return "\n".join(lines)
+    return PromptBuilder.render_response_schema(response_type)
 
 
 def _build_system_prompt(
@@ -87,50 +158,7 @@ def _build_system_prompt(
     final_response_type: type[BaseModel],
     tracked_delta: DeltaState = DeltaState(),
 ) -> str:
-    has_tools = tools is not None and bool(tools)
-    show_final = tools is None or not _is_empty_delta(tracked_delta)
-    step2 = "2. " if has_tools and show_final else ""
-    lines: list[str] = [
-        "You must respond with JSON only — no markdown, no explanation.",
-        "",
-    ]
-    if tools is not None:
-        lines += [
-            "You have two valid response formats:",
-            "",
-            "1. To call a tool — use this exact format:",
-            '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
-            "",
-            "Available tools:",
-        ]
-        for tool in tools:
-            lines.append(f"  {tool.name}: {tool.description}")
-            lines.append(f"    input schema: {json.dumps(tool.request_type.model_json_schema())}")
-            lines.append(
-                f"    response schema: {json.dumps(tool.response_type.model_json_schema())}"
-            )
-            lines.append("")
-        lines += [
-            "Tool-use rules:",
-            "  - Only call tools listed above, using exactly those tool names.",
-            "  - Do not invent or reference tools that are not listed above.",
-            "  - If a needed capability is not listed, include the requested result in your final JSON response instead.",
-            "",
-        ]
-    if show_final:
-        lines += [
-            f"{step2}When you have completed your task, respond with JSON matching this generated schema:",
-            _render_response_schema(final_response_type),
-        ]
-        if final_response_type is DeltaState:
-            lines += [
-                "",
-                "Rules for your final response:",
-                "  - Include complete file contents for newly created files.",
-                "  - Existing-file edits must identify exact unique text to replace.",
-                "  - Do not return an empty change set if you created or modified files.",
-            ]
-    return "\n".join(lines)
+    return PromptBuilder(tools, final_response_type).build(tracked_delta)
 
 
 class ResponseParser:

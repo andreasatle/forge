@@ -11,6 +11,7 @@ import pytest
 from pydantic import BaseModel
 
 from forge.agents.base import (
+    PromptBuilder,
     ResponseParser,
     ToolError,
     _build_system_prompt,
@@ -673,6 +674,50 @@ async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
 
 
 # --- _build_system_prompt ---
+
+
+def test_prompt_builder_builds_prompt_with_tools():
+    """PromptBuilder includes tool-call instructions when tools are configured."""
+    registry, _ = _make_registry()
+    prompt = PromptBuilder(registry, DeltaState).build()
+    assert "You have two valid response formats" in prompt
+    assert "tool_call" in prompt
+    assert "do_thing" in prompt
+
+
+def test_prompt_builder_builds_prompt_without_tools():
+    """PromptBuilder omits tool-call instructions when tools are not configured."""
+    prompt = PromptBuilder(None, DeltaState).build()
+    assert "JSON only" in prompt
+    assert "tool_call" not in prompt
+    assert "Generated JSON schema" in prompt
+
+
+def test_prompt_builder_includes_generated_pydantic_schema():
+    """PromptBuilder renders schema from the configured final response model."""
+    prompt = PromptBuilder(None, _ExtendedResponse).build()
+    assert "Final response model: _ExtendedResponse" in prompt
+    assert "alpha" in prompt
+    assert "beta" in prompt
+    assert "Generated JSON schema" in prompt
+
+
+def test_prompt_builder_uses_tool_registry_descriptions():
+    """PromptBuilder uses tool descriptions from the provided ToolRegistry."""
+    registry, _ = _make_registry()
+    prompt = PromptBuilder(registry, DeltaState).build()
+    assert "do_thing: does a thing" in prompt
+
+
+def test_prompt_builder_preserves_tracked_delta_schema_visibility():
+    """PromptBuilder hides final schema before tool work and shows it after tracked delta exists."""
+    registry, _ = _make_registry()
+    first_turn = PromptBuilder(registry, DeltaState).build()
+    after_tool_work = PromptBuilder(registry, DeltaState).build(
+        DeltaState(new_files=[FileWrite(path="src/x.py", content="x")])
+    )
+    assert "new_files" not in first_turn
+    assert "new_files" in after_tool_work
 
 
 def test_build_system_prompt_hides_delta_schema_on_first_turn_with_tools():
