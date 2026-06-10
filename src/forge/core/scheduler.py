@@ -6,15 +6,19 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
+from forge.agents.integrator import integrate_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
+    AgentType,
     DAGNode,
+    DeltaState,
     NodeState,
     RequestId,
     RequestSource,
     SchedulerState,
 )
+from forge.core.state_service import StateService
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
@@ -37,9 +41,11 @@ class Scheduler:
     def __init__(
         self,
         runner: AgentRunner,
+        state_service: StateService | None = None,
         callbacks: SchedulerCallbacks | None = None,
     ) -> None:
         self._runner = runner
+        self._state_service = state_service
         self._callbacks = callbacks or SchedulerCallbacks()
 
     async def run(
@@ -47,20 +53,22 @@ class Scheduler:
         state: SchedulerState,
         global_planner: AgentRequest,
     ) -> SchedulerState:
-        """Drive state forward until the global planner returns with no follow-ups."""
+        """Drive state forward until no PENDING or RUNNING nodes remain."""
         if not state.dag:
             state = state.add_nodes([DAGNode(request=global_planner)])
-
-        pending_termination_id: RequestId | None = None
 
         while True:
             ready = state.ready_nodes()
 
             if not ready:
                 self._fire_state(self._callbacks.on_idle, state)
+                if not any(
+                    n.node_state in (NodeState.PENDING, NodeState.RUNNING)
+                    for n in state.dag.values()
+                ):
+                    break
                 new_planner = global_planner.model_copy(update={"id": uuid4(), "source": RequestSource.PLANNER})
                 state = state.add_nodes([DAGNode(request=new_planner)])
-                pending_termination_id = new_planner.id
                 continue
 
             to_dispatch = ready[: state.max_concurrency]
@@ -72,8 +80,6 @@ class Scheduler:
 
             coros = [self._runner(node.request) for node in to_dispatch]
             raw = await asyncio.gather(*coros, return_exceptions=True)
-
-            should_terminate = False
 
             for node, result in zip(to_dispatch, raw):
                 current = state.dag[node.request.id]
@@ -89,19 +95,19 @@ class Scheduler:
                     state = state.update_node(updated)
 
                     if updated.node_state == NodeState.INTEGRATED:
+                        if node.request.agent_type == AgentType.WORK and self._state_service is not None:
+                            await integrate_agent(
+                                request=node.request,
+                                state_service=self._state_service,
+                                delta=response.delta or DeltaState(),
+                            )
                         follow_ups = [DAGNode(request=r) for r in response.follow_up]
                         if follow_ups:
                             state = state.add_nodes(follow_ups)
                         self._fire_node(self._callbacks.on_node_completed, updated)
-
-                        if pending_termination_id == node.request.id and not response.follow_up:
-                            should_terminate = True
                     else:
                         self._fire_node(self._callbacks.on_node_failed, updated)
                         state = self._cancel_dependents(state, node.request.id)
-
-            if should_terminate:
-                break
 
         return state
 

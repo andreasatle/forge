@@ -346,8 +346,8 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
 
 
 @pytest.mark.slow
-async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes(tmp_path: Path) -> None:
-    """End-to-end run with scripted_plan_handler produces exactly five COMPLETED nodes."""
+async def test_scripted_plan_handler_end_to_end_produces_four_completed_nodes(tmp_path: Path) -> None:
+    """End-to-end run with scripted_plan_handler produces exactly four INTEGRATED nodes."""
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
     runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()))
@@ -356,11 +356,11 @@ async def test_scripted_plan_handler_end_to_end_produces_five_completed_nodes(tm
     final = await Scheduler(runner=runner).run(state, _plan_request())
 
     completed = [n for n in final.dag.values() if n.node_state.value == "integrated"]
-    assert len(completed) == 5
+    assert len(completed) == 4
 
 
-async def test_scheduler_reinjects_global_planner_with_planner_source() -> None:
-    """Scheduler re-injects the global planner with PLANNER source when the DAG goes idle."""
+async def test_scheduler_dispatches_global_planner_with_user_source() -> None:
+    """Scheduler dispatches the global planner with USER source on the initial run."""
     captured_sources: list[RequestSource] = []
 
     async def capturing_plan_handler(request: AgentRequest) -> AgentResponse:
@@ -373,7 +373,7 @@ async def test_scheduler_reinjects_global_planner_with_planner_source() -> None:
     state = SchedulerState(northstar="test northstar")
     await Scheduler(runner=runner).run(state, _plan_request())
 
-    assert captured_sources[1] == RequestSource.PLANNER
+    assert RequestSource.USER in captured_sources
 
 
 async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() -> None:

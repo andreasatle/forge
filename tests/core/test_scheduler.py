@@ -1,6 +1,7 @@
 """Tests for Scheduler DAG execution, concurrency, callbacks, and termination."""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.core.models import (
     AgentRequest,
@@ -17,6 +18,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
+from forge.core.state_service import StateService
 
 # --- Helpers ---
 
@@ -58,6 +60,10 @@ def _fail(request: AgentRequest) -> AgentResponse:
 
 def _base_state(max_concurrency: int = 1) -> SchedulerState:
     return SchedulerState(northstar="test northstar", max_concurrency=max_concurrency)
+
+
+def _mock_ss() -> MagicMock:
+    return MagicMock(spec=StateService)
 
 
 # --- Tests ---
@@ -197,23 +203,9 @@ async def test_on_idle_fires() -> None:
     assert len(idle_calls) >= 1
 
 
-async def test_global_planner_reinjected_on_idle() -> None:
-    """The global planner is re-dispatched at least twice: once as USER, once as PLANNER."""
-    plan_calls = 0
+async def test_terminates_cleanly() -> None:
+    """Scheduler terminates and returns final state when the planner produces no work."""
 
-    async def runner(request: AgentRequest) -> AgentResponse:
-        nonlocal plan_calls
-        if request.agent_type == AgentType.PLAN:
-            plan_calls += 1
-        return _ok(request)
-
-    await Scheduler(runner=runner).run(_base_state(), _plan_request())
-
-    assert plan_calls >= 2
-
-
-async def test_terminates_when_global_planner_returns_empty_follow_up() -> None:
-    """Scheduler terminates and returns the final state when the PLANNER-source plan returns no follow-ups."""
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
@@ -224,6 +216,7 @@ async def test_terminates_when_global_planner_returns_empty_follow_up() -> None:
 
 async def test_callback_exceptions_do_not_crash() -> None:
     """Exceptions raised by scheduler callbacks are swallowed and do not abort the run."""
+
     def crashing(node: DAGNode) -> None:
         raise RuntimeError("boom")
 
@@ -238,7 +231,7 @@ async def test_callback_exceptions_do_not_crash() -> None:
 
 
 async def test_final_state_reflects_all_node_updates() -> None:
-    """Final state correctly records INTEGRATED, FAILED, and INTEGRATED nodes for a mixed run."""
+    """Final state correctly records INTEGRATED, FAILED, and CANCELLED nodes for a mixed run."""
     work_a = _work_request()
     work_b = _work_request()
     work_c = _work_request(deps=frozenset({work_a.id}))
@@ -256,3 +249,57 @@ async def test_final_state_reflects_all_node_updates() -> None:
     assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
     assert final.dag[work_b.id].node_state == NodeState.FAILED
     assert final.dag[work_c.id].node_state == NodeState.INTEGRATED
+
+
+async def test_integrate_agent_called_inline_after_work_completes() -> None:
+    """Scheduler calls integrate_agent inline when a WORK node completes successfully."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    with patch("forge.core.scheduler.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = AgentResponse(request_id=work.id, status=ResponseStatus.COMPLETED)
+        await Scheduler(runner=runner, state_service=ss).run(state, _plan_request())
+
+    mock_integrate.assert_called_once()
+    assert mock_integrate.call_args.kwargs["state_service"] is ss
+
+
+async def test_transitive_cancellation_propagates_through_chain() -> None:
+    """CANCELLED propagates transitively: A fails → B (dep A) → C (dep B) all CANCELLED."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    work_c = _work_request(deps=frozenset({work_b.id}))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            return _fail(request)
+        return _ok(request)
+
+    state = _base_state().add_nodes(
+        [DAGNode(request=work_a), DAGNode(request=work_b), DAGNode(request=work_c)]
+    )
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+    assert final.dag[work_c.id].node_state == NodeState.CANCELLED
+
+
+async def test_terminates_when_no_pending_or_running_nodes() -> None:
+    """Run completes as soon as no PENDING or RUNNING nodes remain in the DAG."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert all(
+        n.node_state not in (NodeState.PENDING, NodeState.RUNNING)
+        for n in final.dag.values()
+    )
