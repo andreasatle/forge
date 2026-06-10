@@ -21,6 +21,7 @@ from forge.core.runner import (
     make_work_handler,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
+from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.factory import make_provider
@@ -62,9 +63,13 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
 
     workspace = Workspace(config.workspace)
     workspace.init()
+
+    state_service: StateService | None = None
     for artifact in config.artifacts:
         plugin = language_registry.get(artifact.language) if artifact.language else None
         workspace.init_artifact(artifact.name, plugin)
+        if state_service is None:
+            state_service = StateService(workspace, artifact.name, plugin)
 
     if workspace.state_path().exists():
         print(f"resuming: {workspace.path}")
@@ -81,8 +86,6 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     planner_provider = make_provider(config.models.planner, config.max_tokens)
     worker_provider = make_provider(config.models.worker, config.max_tokens)
 
-    completed_work_deltas = {}
-
     runner = Runner()
     runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, planner_provider, config.max_retries))
     runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider, max_tool_iterations=config.max_tool_iterations))
@@ -96,23 +99,20 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         priority=Priority.HIGH,
     )
 
-    def _on_node_completed(node) -> None:
-        print(f"✓ completed: {node.request.agent_type.value} ({node.request.id})")
-        if node.request.agent_type == AgentType.WORK and node.response and node.response.delta:
-            completed_work_deltas[node.request.id] = node.response.delta
-
     callbacks = SchedulerCallbacks(
         on_node_dispatched=lambda node: print(
             f"→ dispatched: {node.request.agent_type.value} ({node.request.id})"
         ),
-        on_node_completed=_on_node_completed,
+        on_node_completed=lambda node: print(
+            f"✓ completed: {node.request.agent_type.value} ({node.request.id})"
+        ),
         on_node_failed=lambda node: print(
             f"✗ failed: {node.request.agent_type.value} ({node.request.id})"
         ),
         on_idle=lambda state: print(f"~ idle: {len(state.dag)} nodes in DAG"),
     )
 
-    final = await Scheduler(runner=runner, callbacks=callbacks).run(state, global_planner)
+    final = await Scheduler(runner=runner, state_service=state_service, callbacks=callbacks).run(state, global_planner)
 
     path = save_run(final, workspace)
     print(f"run saved: {path}")

@@ -3,19 +3,15 @@
 from collections.abc import Awaitable, Callable
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.integrator import integrate_agent
 from forge.agents.planner import plan_agent
 from forge.agents.worker import work_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
-    DeltaState,
-    RequestId,
     RequestSource,
     ResponseStatus,
 )
-from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
@@ -57,19 +53,6 @@ def make_work_handler(
         return await work_agent(request, registry, workspace, language_registry, provider, max_tool_iterations=max_tool_iterations)
 
     return work_handler
-
-
-def make_integrate_handler(
-    state_service: StateService,
-    completed_work_deltas: dict[RequestId, DeltaState],
-) -> Handler:
-    """Return a handler that delegates integrate requests to integrate_agent."""
-
-    async def integrate_handler(request: AgentRequest) -> AgentResponse:
-        delta = completed_work_deltas.get(request.id, DeltaState())
-        return await integrate_agent(request=request, state_service=state_service, delta=delta)
-
-    return integrate_handler
 
 
 def make_plan_handler(

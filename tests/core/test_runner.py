@@ -3,7 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,18 +12,17 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
-    DeltaState,
-    FileWrite,
+    DAGNode,
     PlanSpec,
     Priority,
     RequestSource,
     ResponseStatus,
+    RunResult,
     SchedulerState,
     WorkSpec,
 )
 from forge.core.runner import (
     Runner,
-    make_integrate_handler,
     make_plan_handler,
     make_work_handler,
 )
@@ -31,8 +30,6 @@ from forge.core.scheduler import Scheduler
 from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
-
-_MOCK_STATE_SERVICE = MagicMock(spec=StateService)
 
 # --- Helpers ---
 
@@ -59,11 +56,11 @@ def _work_request() -> AgentRequest:
     )
 
 
-def _integrate_request() -> AgentRequest:
+def _worker_sourced_work_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.WORK,
         source=RequestSource.WORKER,
-        spec=WorkSpec(objective="integrate work", success_condition="integrated", adapter="coding", artifact="codebase"),
+        spec=WorkSpec(objective="do work", success_condition="done", adapter="coding", artifact="codebase"),
     )
 
 
@@ -92,17 +89,14 @@ def _mock_provider() -> MagicMock:
     return provider
 
 
+def _mock_ss() -> MagicMock:
+    ss = MagicMock(spec=StateService)
+    ss.run_tests.return_value = RunResult(passed=True)
+    return ss
+
+
 async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
     """Return a completed response with a placeholder plan delta, for testing."""
-    return AgentResponse(
-        request_id=request.id,
-        status=ResponseStatus.COMPLETED,
-        delta=None,
-    )
-
-
-async def stub_integrate_handler(request: AgentRequest) -> AgentResponse:
-    """Return a completed response with a placeholder integration delta, for testing."""
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
@@ -191,8 +185,8 @@ async def test_runner_routes_work_to_work_handler() -> None:
     assert received[0] is request
 
 
-async def test_runner_routes_work_to_work_handler_via_integrate_request() -> None:
-    """Runner invokes the registered WORK handler for a request built by _integrate_request()."""
+async def test_runner_routes_worker_sourced_work_to_work_handler() -> None:
+    """Runner routes a WORKER-sourced WORK request to the registered WORK handler."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -201,7 +195,7 @@ async def test_runner_routes_work_to_work_handler_via_integrate_request() -> Non
 
     runner = Runner()
     runner.register(AgentType.WORK, handler)
-    request = _integrate_request()
+    request = _worker_sourced_work_request()
     await runner(request)
 
     assert len(received) == 1
@@ -267,13 +261,6 @@ async def test_work_handler_returns_completed(tmp_path: Path) -> None:
     provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
     handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
     response = await handler(_work_request())
-
-    assert response.status == ResponseStatus.COMPLETED
-
-
-async def test_stub_integrate_handler_returns_completed() -> None:
-    """stub_integrate_handler returns a COMPLETED response."""
-    response = await stub_integrate_handler(_integrate_request())
 
     assert response.status == ResponseStatus.COMPLETED
 
@@ -423,35 +410,18 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_make_integrate_handler_passes_delta_for_request_id() -> None:
-    """make_integrate_handler looks up completed_work_deltas by request.id."""
-    request = _integrate_request()
-    delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
-    completed = {request.id: delta}
-    ss = MagicMock(spec=StateService)
+async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: Path) -> None:
+    """Scheduler calls state_service.apply_delta when a work node completes successfully."""
+    provider = _mock_provider()
+    provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
 
-    with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
-        handler = make_integrate_handler(ss, completed)
-        response = await handler(request)
+    ss = _mock_ss()
+    work = _work_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=work)])
 
-    assert response.status == ResponseStatus.COMPLETED
-    mock_integrate.assert_called_once()
-    assert mock_integrate.call_args.kwargs["state_service"] is ss
-    assert mock_integrate.call_args.kwargs["delta"] is delta
-    assert "provider" not in mock_integrate.call_args.kwargs
+    runner = Runner()
+    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider))
 
+    await Scheduler(runner=runner, state_service=ss).run(state, _plan_request())
 
-async def test_make_integrate_handler_uses_empty_delta_when_not_found() -> None:
-    """make_integrate_handler passes an empty DeltaState when request.id is not in the map."""
-    request = _integrate_request()
-    ss = MagicMock(spec=StateService)
-
-    with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
-        handler = make_integrate_handler(ss, {})
-        response = await handler(request)
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert mock_integrate.call_args.kwargs["delta"] == DeltaState()
-    assert "provider" not in mock_integrate.call_args.kwargs
+    ss.apply_delta.assert_called_once()
