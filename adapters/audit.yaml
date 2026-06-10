@@ -1,7 +1,13 @@
 name: audit
 description: Audits code or documents for quality
+requires_nonempty_output: false
+work_noun: findings
 tools:
   - read_file
 prompt_template: |
   Audit the following: {objective}
   Success condition: {success_condition}
+
+  Read the relevant files, then respond with a DeltaState.
+  - If you find issues, report them as markdown files in new_files.
+  - If there are no issues, you may return an empty DeltaState.

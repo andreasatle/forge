@@ -8,6 +8,7 @@ from typing import TypeVar, cast
 import httpx
 from pydantic import BaseModel
 
+from forge.adapters.registry import AdapterSpec
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -313,6 +314,7 @@ async def run_agent(
     max_retries: int = 3,
     max_tool_iterations: int = 25,
     correction_prompt_fn: Callable[[Exception, str], str] | None = None,
+    adapter_spec: AdapterSpec | None = None,
 ) -> AgentResponse:
     """Universal agent engine — plain chat loop with structured JSON parsing."""
     try:
@@ -328,6 +330,9 @@ async def run_agent(
             {"role": "user", "content": prompt},
         ]
 
+        requires_nonempty = (
+            adapter_spec.requires_nonempty_output if adapter_spec is not None else True
+        )
         tracked_delta = DeltaState()
         any_tool_called = False
         retry_count = 0
@@ -346,6 +351,7 @@ async def run_agent(
                     and not any_tool_called
                     and isinstance(parsed, DeltaState)
                     and _is_empty_delta(parsed)
+                    and requires_nonempty
                 ):
                     available_tools = ", ".join(tool.name for tool in tools) or "(none)"
                     raise ValueError(
@@ -358,6 +364,7 @@ async def run_agent(
                     isinstance(parsed, DeltaState)
                     and _is_empty_delta(_merge_delta(tracked_delta, parsed))
                     and request.agent_type == AgentType.WORK
+                    and requires_nonempty
                 ):
                     return AgentResponse(
                         request_id=request.id,

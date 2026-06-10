@@ -865,3 +865,65 @@ def test_to_follow_up_empty_tasks_returns_empty_list():
     """_to_follow_up returns an empty list when PlanResponse.tasks is empty."""
     plan = PlanResponse(kind="plan", tasks=[])
     assert _to_follow_up(plan, _work_request()) == []
+
+
+# --- adapter_spec / requires_nonempty_output ---
+
+
+def _audit_adapter_spec() -> "AdapterSpec":
+    from forge.adapters.registry import AdapterSpec
+
+    return AdapterSpec(
+        name="audit",
+        description="audit",
+        tools=[],
+        prompt_template="",
+        requires_nonempty_output=False,
+        work_noun="findings",
+    )
+
+
+async def test_run_agent_allows_empty_delta_after_tool_call_when_adapter_allows_it():
+    """run_agent accepts empty DeltaState after tool use when adapter allows empty output."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            '{"edits": [], "new_files": [], "dependencies": []}',
+        ]
+    )
+
+    response = await run_agent(
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
+        tools=registry,
+        adapter_spec=_audit_adapter_spec(),
+        max_retries=0,
+    )
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta == DeltaState()
+
+
+async def test_run_agent_allows_empty_delta_without_tool_calls_when_adapter_allows_it():
+    """run_agent accepts empty DeltaState with no tool calls when adapter allows empty output."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+
+    response = await run_agent(
+        request,
+        WorkSpec,
+        provider,
+        "prompt",
+        tools=registry,
+        adapter_spec=_audit_adapter_spec(),
+        max_retries=0,
+    )
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta == DeltaState()

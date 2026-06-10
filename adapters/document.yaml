@@ -1,5 +1,7 @@
 name: document
 description: Reads and writes documents
+requires_nonempty_output: true
+work_noun: document
 tools:
   - read_file
   - list_files
@@ -10,3 +12,7 @@ prompt_template: |
   Produce your output as markdown files in new_files.
   Example: README.md, USAGE.md, API.md etc.
   Write complete, detailed content — do not truncate.
+
+  Your final JSON response MUST be a non-empty DeltaState:
+  - new_files must contain every document you produce
+  - Write complete file contents — do not truncate or summarise

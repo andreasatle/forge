@@ -1,8 +1,9 @@
 """TaskAttemptEngine — owns the attempt/validation/retry loop for worker tasks."""
 
 import logging
+from typing import cast
 
-from forge.adapters.registry import AdapterRegistry
+from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.base import _is_empty_delta, run_agent
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
@@ -54,6 +55,8 @@ class TaskAttemptEngine:
         self._max_attempts = max_attempts
         self._max_retries = max_retries
         self._max_tool_iterations = max_tool_iterations
+        spec = cast(WorkSpec, request.spec)
+        self._adapter: AdapterSpec = registry.get(spec.adapter)
 
     async def run(self, prompt: str) -> AgentResponse:
         """Run attempts with validation/retry; return AgentResponse.
@@ -75,6 +78,7 @@ class TaskAttemptEngine:
                 tools=self._tools,
                 max_retries=self._max_retries,
                 max_tool_iterations=self._max_tool_iterations,
+                adapter_spec=self._adapter,
             )
 
             if (
@@ -142,7 +146,7 @@ class TaskAttemptEngine:
                     f"Disposition: {finding.disposition.value}\n"
                     f"Rationale: {finding.rationale}\n"
                     f"Hints:\n{hints_text}\n\n"
-                    f"Revise your implementation addressing the feedback above."
+                    f"Revise your {self._adapter.work_noun} addressing the feedback above."
                 )
                 continue
 
@@ -213,7 +217,7 @@ class TaskAttemptEngine:
                 f"Disposition: {decision.disposition.value}\n"
                 f"Rationale: {decision.rationale}\n"
                 f"Hints:\n{hints_text}\n\n"
-                f"Revise your implementation addressing the feedback above."
+                f"Revise your {self._adapter.work_noun} addressing the feedback above."
             )
 
         _logger.warning("max_attempts (%d) exhausted; returning last delta", self._max_attempts)

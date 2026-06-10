@@ -1,5 +1,7 @@
 name: coding
 description: Writes and edits code
+requires_nonempty_output: true
+work_noun: implementation
 tools:
   - list_files
   - read_file
@@ -22,3 +24,9 @@ prompt_template: |
   - Never attempt to install packages via tools, shell commands, or
     any other mechanism
   - csv, json, os, re, and other stdlib modules are never dependencies
+
+  IMPORTANT — your final JSON response MUST be a non-empty DeltaState:
+  - new_files must contain the complete content of every file you create
+  - edits must contain every change to existing files
+  - An empty DeltaState is always wrong
+  - Do not summarise what you would do — write the actual file contents

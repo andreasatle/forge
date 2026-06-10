@@ -63,10 +63,13 @@ async def work_agent(
     for tool in tool_list:
         tools.register(tool)
 
-    if plugin:
-        delta_example = plugin.delta_example.format(base_version=state_view.version)
+    if "{delta_example}" in adapter.prompt_template:
+        if plugin:
+            delta_example = plugin.delta_example.format(base_version=state_view.version)
+        else:
+            delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=state_view.version)
     else:
-        delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=state_view.version)
+        delta_example = ""
 
     base_prompt = adapter.prompt_template.format(
         objective=spec.objective,
@@ -76,8 +79,8 @@ async def work_agent(
     )
     if plugin:
         base_prompt += f"\n\n{plugin.prompt_supplement}"
+        base_prompt += f"\n\nLanguage: {spec.language}"
 
-    base_prompt += f"\n\nLanguage: {spec.language or 'not specified'}"
     base_prompt += f"\n\nState version: {state_view.version}"
     if state_view.files:
         sections = "\n\n".join(
@@ -90,17 +93,9 @@ async def work_agent(
         )
 
     base_prompt += (
-        "\n\nUse the available tools to understand the existing codebase and verify current state."
+        "\n\nUse the available tools to understand the existing files and verify current state."
         "\nProduce ALL new files and edits in your final JSON response."
         "\nDo not attempt to write files via tools — workers are read-only."
-    )
-
-    base_prompt += (
-        "\n\nIMPORTANT — your final JSON response MUST be a non-empty DeltaState:"
-        "\n- new_files must contain the complete content of every file you create"
-        "\n- edits must contain every change to existing files"
-        "\n- An empty DeltaState is always wrong for a coding task"
-        "\n- Do not summarise what you would do — write the actual file contents"
     )
 
     engine = TaskAttemptEngine(

@@ -14,6 +14,8 @@ class AdapterSpec:
     description: str
     tools: list[str]
     prompt_template: str
+    requires_nonempty_output: bool = True
+    work_noun: str = "implementation"
 
 
 _REQUIRED_FIELDS = ("name", "description", "tools", "prompt_template")
@@ -38,6 +40,8 @@ class AdapterRegistry:
                 description=data["description"],
                 tools=data["tools"],
                 prompt_template=data["prompt_template"],
+                requires_nonempty_output=data.get("requires_nonempty_output", True),
+                work_noun=data.get("work_noun", "implementation"),
             )
             self._adapters[spec.name] = spec
             print(f"loaded adapter: {spec.name}")

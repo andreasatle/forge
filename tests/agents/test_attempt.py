@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from forge.adapters.registry import AdapterRegistry
+from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.attempt import RunAgentFailed, TaskAttemptEngine
 from forge.core.models import (
     AgentRequest,
@@ -39,6 +39,19 @@ def _state_view() -> StateView:
     return StateView(artifact_name="codebase", language=None, files=[], dependencies=[])
 
 
+def _registry_with_coding() -> AdapterRegistry:
+    registry = AdapterRegistry()
+    registry._adapters["coding"] = AdapterSpec(
+        name="coding",
+        description="test",
+        tools=[],
+        prompt_template="",
+        requires_nonempty_output=True,
+        work_noun="implementation",
+    )
+    return registry
+
+
 def _engine(
     request: AgentRequest | None = None,
     critic_provider: MagicMock | None = None,
@@ -53,7 +66,7 @@ def _engine(
         request=request,
         state_view=_state_view(),
         provider=provider,
-        registry=AdapterRegistry(),
+        registry=_registry_with_coding(),
         tools=ToolRegistry(),
         critic_provider=critic_provider,
         referee_provider=referee_provider,
@@ -358,3 +371,67 @@ async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
     second_prompt = mock_run.call_args_list[1].args[3]
     assert "Revise your implementation addressing the feedback above" in second_prompt
     assert "add some code" in second_prompt
+
+
+async def test_work_noun_comes_from_adapter_spec() -> None:
+    """Engine uses adapter.work_noun in retry feedback rather than a hardcoded string."""
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write docs",
+            success_condition="docs complete",
+            adapter="document",
+            artifact="docs",
+        ),
+    )
+    delta = DeltaState(new_files=[FileWrite(path="README.md", content="# Hello")])
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    registry = AdapterRegistry()
+    registry._adapters["document"] = AdapterSpec(
+        name="document",
+        description="docs",
+        tools=[],
+        prompt_template="",
+        requires_nonempty_output=True,
+        work_noun="document",
+    )
+    engine = TaskAttemptEngine(
+        request=request,
+        state_view=StateView(artifact_name="docs", language=None, files=[], dependencies=[]),
+        provider=provider,
+        registry=registry,
+        tools=ToolRegistry(),
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
+        )
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="needs more detail",
+                hints=["expand section 1"],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale="agreed", override=False
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    second_prompt = mock_run.call_args_list[1].args[3]
+    assert "Revise your document addressing the feedback above" in second_prompt
+    assert "Revise your implementation" not in second_prompt
