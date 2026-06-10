@@ -11,7 +11,10 @@ from forge.core.models import (
     AgentType,
     RequestSource,
     ResponseStatus,
+    StateView,
+    WorkSpec,
 )
+from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
@@ -45,12 +48,31 @@ def make_work_handler(
     workspace: Workspace,
     language_registry: LanguageRegistry,
     provider: LLMProvider,
+    state_services: dict[str, StateService] | None = None,
     max_tool_iterations: int = 25,
 ) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
 
     async def work_handler(request: AgentRequest) -> AgentResponse:
-        return await work_agent(request, registry, workspace, language_registry, provider, max_tool_iterations=max_tool_iterations)
+        spec = request.spec
+        if isinstance(spec, WorkSpec):
+            ss = (state_services or {}).get(spec.artifact)
+            if ss is not None:
+                state_view = ss.build_state_view()
+            else:
+                plugin = language_registry.get(spec.language) if spec.language else None
+                state_view = StateService(workspace, spec.artifact, plugin).build_state_view()
+        else:
+            state_view = StateView(artifact_name="", language=None, files=[], dependencies=[])
+        return await work_agent(
+            request,
+            registry,
+            workspace,
+            language_registry,
+            provider,
+            state_view,
+            max_tool_iterations=max_tool_iterations,
+        )
 
     return work_handler
 
@@ -66,7 +88,9 @@ def make_plan_handler(
 
     async def plan_handler(request: AgentRequest) -> AgentResponse:
         if request.source == RequestSource.PLANNER:
-            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+            return AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[]
+            )
         return await plan_agent(request, artifact_names, artifact_languages, provider, max_retries)
 
     return plan_handler

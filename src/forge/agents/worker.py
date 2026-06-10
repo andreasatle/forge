@@ -2,8 +2,7 @@
 
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import run_agent
-from forge.core.models import AgentRequest, AgentResponse, ResponseStatus, WorkSpec
-from forge.core.state_service import StateService
+from forge.core.models import AgentRequest, AgentResponse, ResponseStatus, StateView, WorkSpec
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
@@ -17,6 +16,7 @@ async def work_agent(
     workspace: Workspace,
     language_registry: LanguageRegistry,
     provider: LLMProvider,
+    state_view: StateView,
     max_retries: int = 3,
     max_tool_iterations: int = 25,
 ) -> AgentResponse:
@@ -47,9 +47,6 @@ async def work_agent(
     tools = ToolRegistry()
     for tool in tool_list:
         tools.register(tool)
-
-    state_service = StateService(workspace, spec.artifact, plugin)
-    state_view = state_service.build_state_view()
 
     prompt = adapter.prompt_template.format(
         objective=spec.objective,

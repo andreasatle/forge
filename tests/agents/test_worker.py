@@ -14,6 +14,7 @@ from forge.core.models import (
     DeltaState,
     RequestSource,
     ResponseStatus,
+    StateView,
     WorkSpec,
 )
 from forge.core.workspace import Workspace
@@ -77,6 +78,10 @@ def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
     return lr
 
 
+def _state_view(artifact: str = "codebase", language: str | None = None) -> StateView:
+    return StateView(artifact_name=artifact, language=language, files=[], dependencies=[])
+
+
 def _work_request(adapter: str, language: str | None = None) -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.WORK,
@@ -105,7 +110,9 @@ async def test_worker_tools_do_not_include_blackboard_tools(tmp_path) -> None:
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert _tool_names(tools).isdisjoint(BLACKBOARD_TOOL_NAMES)
@@ -125,7 +132,9 @@ async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path) -> None:
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
@@ -150,7 +159,9 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
@@ -190,7 +201,14 @@ async def test_coding_adapter_receives_exactly_declared_tools(tmp_path) -> None:
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, adapter_registry, workspace, _language_registry_with_tests(), provider)
+        await work_agent(
+            request,
+            adapter_registry,
+            workspace,
+            _language_registry_with_tests(),
+            provider,
+            _state_view(language="python"),
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert _tool_names(tools) == expected
@@ -212,7 +230,9 @@ async def test_document_adapter_receives_exactly_declared_tools(tmp_path) -> Non
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, adapter_registry, workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert _tool_names(tools) == expected
@@ -234,7 +254,9 @@ async def test_audit_adapter_receives_exactly_declared_tools(tmp_path) -> None:
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, adapter_registry, workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert _tool_names(tools) == expected
@@ -255,7 +277,9 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) 
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, adapter_registry, workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert "list_files" not in _tool_names(tools)
@@ -276,7 +300,9 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider)
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "non-empty DeltaState" in user_prompt
@@ -307,7 +333,9 @@ async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None
     )
     provider = MagicMock()
 
-    response = await work_agent(request, adapter_registry, workspace, LanguageRegistry(), provider)
+    response = await work_agent(
+        request, adapter_registry, workspace, LanguageRegistry(), provider, _state_view()
+    )
 
     assert response.status == ResponseStatus.FAILED
     assert "nonexistent_tool" in (response.error or "")

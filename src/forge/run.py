@@ -98,6 +98,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             workspace,
             language_registry,
             worker_provider,
+            state_services=state_services,
             max_tool_iterations=config.max_tool_iterations,
         ),
     )
