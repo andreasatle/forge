@@ -14,6 +14,7 @@ from forge.agents.base import (
     PromptBuilder,
     ResponseParser,
     ToolError,
+    TrackedToolExecutor,
     _build_system_prompt,
     _classify_failure,
     _execute_tool,
@@ -212,6 +213,68 @@ def test_parse_response_raises_value_error_on_unknown_format():
 
 
 # --- _execute_tool ---
+
+
+async def test_tracked_tool_executor_executes_valid_tool():
+    """TrackedToolExecutor returns a successful tool response for a valid tool call."""
+    registry, mock_fn = _make_registry()
+    request = ToolCallRequest(kind="tool_call", name="do_thing", arguments={})
+    response, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
+    assert response.success is True
+    assert response.result == {"result": "done"}
+    assert mock_fn.call_count == 1
+    assert delta == DeltaState()
+
+
+async def test_tracked_tool_executor_rejects_unknown_tool():
+    """TrackedToolExecutor returns the existing failed response for an unknown tool."""
+    registry = ToolRegistry()
+    request = ToolCallRequest(kind="tool_call", name="nonexistent", arguments={})
+    response, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
+    assert response.success is False
+    assert response.error is not None
+    assert delta == DeltaState()
+
+
+async def test_tracked_tool_executor_validates_tool_arguments():
+    """TrackedToolExecutor returns a failed response and unchanged delta for invalid arguments."""
+    original_delta = DeltaState(dependencies=["existing"])
+    registry = ToolRegistry()
+    registry.register(_make_write_file_tool())
+    request = ToolCallRequest(
+        kind="tool_call",
+        name="write_file",
+        arguments={"path": "src/hello.py"},
+    )
+    response, delta = await TrackedToolExecutor(registry).execute(request, original_delta)
+    assert response.success is False
+    assert "content" in (response.error or "")
+    assert delta == original_delta
+
+
+async def test_tracked_tool_executor_tracks_write_file_delta():
+    """TrackedToolExecutor tracks write_file calls exactly as _execute_tool does."""
+    registry = ToolRegistry()
+    registry.register(_make_write_file_tool())
+    request = ToolCallRequest(
+        kind="tool_call",
+        name="write_file",
+        arguments={"path": "src/hello.py", "content": "print(1)\n"},
+    )
+    _, delta = await TrackedToolExecutor(registry).execute(request, DeltaState())
+    assert delta.new_files == [FileWrite(path="src/hello.py", content="print(1)\n")]
+    assert delta.edits == []
+    assert delta.dependencies == []
+
+
+async def test_tracked_tool_executor_leaves_read_only_tool_delta_unchanged():
+    """TrackedToolExecutor does not modify tracked_delta for non-mutating tools."""
+    registry, _ = _make_registry()
+    original_delta = DeltaState(dependencies=["existing"])
+    request = ToolCallRequest(kind="tool_call", name="do_thing", arguments={})
+    response, delta = await TrackedToolExecutor(registry).execute(request, original_delta)
+    assert response.success is True
+    assert delta == original_delta
 
 
 async def test_execute_tool_returns_correct_tool_call_response():

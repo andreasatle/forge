@@ -196,75 +196,100 @@ def _parse_response(
     return ResponseParser(final_response_type).parse(raw)
 
 
+class TrackedToolExecutor:
+    """Execute tool calls and track framework-observed DeltaState changes."""
+
+    def __init__(self, tools: ToolRegistry | None) -> None:
+        self.tools = tools
+
+    async def execute(
+        self,
+        request: ToolCallRequest,
+        tracked_delta: DeltaState,
+    ) -> tuple[ToolCallResponse, DeltaState]:
+        if self.tools is None:
+            return (
+                ToolCallResponse(
+                    kind="tool_response",
+                    name=request.name,
+                    success=False,
+                    result=None,
+                    error="no tools registered",
+                ),
+                tracked_delta,
+            )
+        try:
+            tool = self.tools.get(request.name)
+        except KeyError as e:
+            return (
+                ToolCallResponse(
+                    kind="tool_response",
+                    name=request.name,
+                    success=False,
+                    result=None,
+                    error=str(e),
+                ),
+                tracked_delta,
+            )
+        try:
+            request_obj = tool.request_type.model_validate(request.arguments)
+            result = await tool.fn(request_obj)
+            if not isinstance(result, tool.response_type):
+                raise ValueError(
+                    f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}"
+                )
+            updated = tracked_delta
+            if request.name == "write_file":
+                fw = FileWrite(path=request.arguments["path"], content=request.arguments["content"])
+                new_files = [f for f in updated.new_files if f.path != fw.path] + [fw]
+                updated = updated.model_copy(update={"new_files": new_files})
+            elif request.name == "replace_in_file":
+                edit = Edit(
+                    path=request.arguments["path"],
+                    old=request.arguments["old"],
+                    new=request.arguments["new"],
+                )
+                updated = updated.model_copy(update={"edits": list(updated.edits) + [edit]})
+            elif request.name == "add_dependency":
+                pkg = request.arguments["package"]
+                if pkg not in updated.dependencies:
+                    updated = updated.model_copy(
+                        update={"dependencies": list(updated.dependencies) + [pkg]}
+                    )
+            print(
+                f"[debug] tracked: tool={request.name}"
+                f" delta_files={len(updated.new_files)}"
+                f" delta_edits={len(updated.edits)}"
+                f" delta_deps={len(updated.dependencies)}"
+            )
+            return (
+                ToolCallResponse(
+                    kind="tool_response",
+                    name=request.name,
+                    success=True,
+                    result=result.model_dump(),
+                ),
+                updated,
+            )
+        except Exception as e:
+            return (
+                ToolCallResponse(
+                    kind="tool_response",
+                    name=request.name,
+                    success=False,
+                    result=None,
+                    error=str(e),
+                ),
+                tracked_delta,
+            )
+
+
 async def _execute_tool(
     request: ToolCallRequest,
     tools: ToolRegistry | None,
     tracked_delta: DeltaState,
 ) -> tuple[ToolCallResponse, DeltaState]:
-    if tools is None:
-        return (
-            ToolCallResponse(
-                kind="tool_response",
-                name=request.name,
-                success=False,
-                result=None,
-                error="no tools registered",
-            ),
-            tracked_delta,
-        )
-    try:
-        tool = tools.get(request.name)
-    except KeyError as e:
-        return (
-            ToolCallResponse(
-                kind="tool_response", name=request.name, success=False, result=None, error=str(e)
-            ),
-            tracked_delta,
-        )
-    try:
-        request_obj = tool.request_type.model_validate(request.arguments)
-        result = await tool.fn(request_obj)
-        if not isinstance(result, tool.response_type):
-            raise ValueError(
-                f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}"
-            )
-        updated = tracked_delta
-        if request.name == "write_file":
-            fw = FileWrite(path=request.arguments["path"], content=request.arguments["content"])
-            new_files = [f for f in updated.new_files if f.path != fw.path] + [fw]
-            updated = updated.model_copy(update={"new_files": new_files})
-        elif request.name == "replace_in_file":
-            edit = Edit(
-                path=request.arguments["path"],
-                old=request.arguments["old"],
-                new=request.arguments["new"],
-            )
-            updated = updated.model_copy(update={"edits": list(updated.edits) + [edit]})
-        elif request.name == "add_dependency":
-            pkg = request.arguments["package"]
-            if pkg not in updated.dependencies:
-                updated = updated.model_copy(
-                    update={"dependencies": list(updated.dependencies) + [pkg]}
-                )
-        print(
-            f"[debug] tracked: tool={request.name}"
-            f" delta_files={len(updated.new_files)}"
-            f" delta_edits={len(updated.edits)}"
-            f" delta_deps={len(updated.dependencies)}"
-        )
-        return (
-            ToolCallResponse(
-                kind="tool_response", name=request.name, success=True, result=result.model_dump()
-            ),
-            updated,
-        )
-    except Exception as e:
-        return (
-            ToolCallResponse(
-                kind="tool_response", name=request.name, success=False, result=None, error=str(e)
-            ),
-            tracked_delta,
-        )
+    return await TrackedToolExecutor(tools).execute(request, tracked_delta)
 
 
 def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentRequest]:
