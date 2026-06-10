@@ -91,9 +91,8 @@ async def work_agent(
         )
 
     base_prompt += (
-        "\n\nUse the available tools to understand the existing files and verify current state."
-        "\nProduce ALL new files and edits in your final JSON response."
-        "\nDo not attempt to write files via tools — workers are read-only."
+        "\n\nWorkers are read-only: do not attempt to write files via tools."
+        "\nPropose file creations and edits only through your task result."
     )
 
     engine = TaskAttemptEngine(

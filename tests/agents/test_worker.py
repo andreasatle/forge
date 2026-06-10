@@ -13,6 +13,7 @@ from forge.core.models import (
     AgentType,
     DeltaState,
     FailureKind,
+    FileView,
     FileWrite,
     RequestSource,
     ResponseStatus,
@@ -175,6 +176,97 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
     for unavailable in MUTATING_TOOL_NAMES - tool_names:
         assert unavailable not in system_prompt
         assert unavailable not in user_prompt
+
+
+async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path) -> None:
+    """worker.py does not duplicate generic tool, JSON, or schema mechanics."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    user_prompt = mock_run_agent.call_args.args[3]
+    system_prompt = _build_system_prompt(tools, DeltaState)
+    schema_system_prompt = _build_system_prompt(
+        tools,
+        DeltaState,
+        DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+    )
+
+    assert "tool_call" in system_prompt
+    assert "Generated JSON schema" in schema_system_prompt
+    assert "JSON only" in system_prompt
+    assert "tool_call" not in user_prompt
+    assert "Generated JSON schema" not in user_prompt
+    assert "JSON only" not in user_prompt
+    assert "final JSON response" not in user_prompt
+    assert "Produce ALL" not in user_prompt
+
+
+async def test_worker_prompt_keeps_read_only_policy(tmp_path) -> None:
+    """worker.py still tells workers to propose changes without mutating through tools."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "Workers are read-only" in user_prompt
+    assert "do not attempt to write files via tools" in user_prompt
+    assert "task result" in user_prompt
+
+
+async def test_worker_prompt_includes_state_version_and_file_context(tmp_path) -> None:
+    """worker.py still includes StateView version and existing file context."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    state_view = StateView(
+        artifact_name="codebase",
+        language=None,
+        files=[FileView(path="src/app.py", content="print('hi')")],
+        dependencies=[],
+        version=7,
+    )
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider, state_view)
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "State version: 7" in user_prompt
+    assert "Existing files in 'codebase'" in user_prompt
+    assert "File: src/app.py" in user_prompt
+    assert "print('hi')" in user_prompt
 
 
 def test_production_adapter_yamls_expose_no_blackboard_tools() -> None:
@@ -348,18 +440,22 @@ async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path) -> None:
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
+    state_view = StateView(
+        artifact_name="codebase",
+        language=None,
+        files=[FileView(path="README.md", content="hello")],
+        dependencies=[],
+    )
 
     with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
         )
-        await work_agent(
-            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
-        )
+        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider, state_view)
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "existing files" in user_prompt
+    assert "Existing files" in user_prompt
     assert "existing codebase" not in user_prompt
 
 
