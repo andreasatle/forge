@@ -1,16 +1,10 @@
 """Worker agent that executes a task using an adapter and tool registry."""
 
-import logging
-
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import run_agent
-from forge.agents.critic import critic_agent
-from forge.agents.referee import referee_agent
+from forge.agents.attempt import RunAgentFailed, TaskAttemptEngine
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
-    CriticDisposition,
-    FailureKind,
     ResponseStatus,
     StateView,
     WorkSpec,
@@ -20,8 +14,6 @@ from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
 from forge.tools.builtin import build_read_registry
 from forge.tools.registry import ToolRegistry
-
-_logger = logging.getLogger(__name__)
 
 _FALLBACK_DELTA_EXAMPLE = (
     '{{\n  "new_files": [{{"path": "output/result.txt", "content": "..."}}],\n'
@@ -111,94 +103,26 @@ async def work_agent(
         "\n- Do not summarise what you would do — write the actual file contents"
     )
 
-    last_response: AgentResponse | None = None
-    feedback: str | None = None
-
-    for _attempt in range(max_attempts):
-        prompt = base_prompt if feedback is None else f"{base_prompt}\n\n{feedback}"
-
-        response = await run_agent(
-            request,
-            WorkSpec,
-            provider,
-            prompt,
-            tools=tools,
-            max_retries=max_retries,
-            max_tool_iterations=max_tool_iterations,
-        )
-        last_response = response
-
-        if critic_provider is None or referee_provider is None:
-            return response
-
-        if response.status != ResponseStatus.COMPLETED or response.delta is None:
-            return response
-
-        try:
-            finding = await critic_agent(
-                request, state_view, response.delta, critic_provider, registry
-            )
-            decision = await referee_agent(
-                request, state_view, response.delta, finding, referee_provider, registry
-            )
-        except ValueError as e:
-            _logger.warning(
-                "work_agent: validation parsing failed on attempt %d/%d: %s",
-                _attempt + 1,
-                max_attempts,
-                e,
-            )
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.FAILED,
-                error=f"validation parsing failed on attempt {_attempt + 1}: {e}",
-                failure_kind=FailureKind.VALIDATION_REJECTED,
-            )
-
-        _logger.info(
-            "work_agent attempt %d/%d: critic=%s referee=%s — %s",
-            _attempt + 1,
-            max_attempts,
-            finding.disposition.value,
-            decision.disposition.value,
-            "returning" if decision.disposition == CriticDisposition.ACCEPT else "retrying",
-        )
-
-        if decision.disposition == CriticDisposition.ACCEPT:
-            return response
-
-        if decision.disposition == CriticDisposition.REJECT:
-            _logger.warning(
-                "work_agent attempt %d/%d: rejected; failing immediately",
-                _attempt + 1,
-                max_attempts,
-            )
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.FAILED,
-                error=f"validation rejected on attempt {_attempt + 1}: {decision.rationale}",
-                failure_kind=FailureKind.VALIDATION_REJECTED,
-            )
-
-        hints_text = (
-            "\n".join(f"{i + 1}. {h}" for i, h in enumerate(finding.hints))
-            if finding.hints
-            else "(none)"
-        )
-        feedback = (
-            f"Your previous attempt received feedback:\n"
-            f"Disposition: {decision.disposition.value}\n"
-            f"Rationale: {decision.rationale}\n"
-            f"Hints:\n{hints_text}\n\n"
-            f"Revise your implementation addressing the feedback above."
-        )
-
-    _logger.warning(
-        "work_agent: max_attempts (%d) exhausted without acceptance; failing", max_attempts
+    engine = TaskAttemptEngine(
+        request=request,
+        state_view=state_view,
+        provider=provider,
+        registry=registry,
+        tools=tools,
+        critic_provider=critic_provider,
+        referee_provider=referee_provider,
+        max_attempts=max_attempts,
+        max_retries=max_retries,
+        max_tool_iterations=max_tool_iterations,
     )
+
+    try:
+        delta = await engine.run(base_prompt)
+    except RunAgentFailed as e:
+        return e.response
+
     return AgentResponse(
         request_id=request.id,
-        status=ResponseStatus.FAILED,
-        error=f"validation exhausted after {max_attempts} attempts without acceptance",
-        failure_kind=FailureKind.VALIDATION_REJECTED,
+        status=ResponseStatus.COMPLETED,
+        delta=delta,
     )

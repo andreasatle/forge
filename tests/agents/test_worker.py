@@ -1,22 +1,20 @@
-"""Tests for worker agent prompt/tool wiring."""
+"""Tests for worker agent prompt assembly and response wrapping."""
 
 import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
+from forge.agents.attempt import RunAgentFailed
 from forge.agents.base import _build_system_prompt
 from forge.agents.worker import work_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
-    CriticDisposition,
-    CriticFinding,
     DeltaState,
     FailureKind,
     FileWrite,
-    RefereeDecision,
     RequestSource,
     ResponseStatus,
     StateView,
@@ -111,7 +109,7 @@ async def test_worker_tools_do_not_include_blackboard_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -133,7 +131,7 @@ async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -160,7 +158,7 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -202,7 +200,7 @@ async def test_coding_adapter_receives_exactly_declared_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -231,7 +229,7 @@ async def test_document_adapter_receives_exactly_declared_tools(tmp_path) -> Non
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -255,7 +253,7 @@ async def test_audit_adapter_receives_exactly_declared_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -278,7 +276,7 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) 
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -301,7 +299,7 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -336,7 +334,7 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
         delta_example="",
     )
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -370,7 +368,7 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None
         delta_example='{{"path": "DELTA_EXAMPLE_MARKER"}}',
     )
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -420,374 +418,49 @@ async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None
     assert "nonexistent_tool" in (response.error or "")
 
 
-async def test_validation_skipped_without_critic_provider(tmp_path) -> None:
-    """work_agent does not call critic_agent when critic_provider is None."""
+async def test_run_agent_failure_propagates_as_failed_response(tmp_path) -> None:
+    """work_agent returns the failed AgentResponse when TaskAttemptEngine raises RunAgentFailed."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
+    failed_response = AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        error="provider error",
+        failure_kind=FailureKind.PROVIDER_ERROR,
+    )
 
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-    ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(),
-        )
-        await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=None,
-        )
-
-    mock_critic.assert_not_called()
-    mock_run.assert_called_once()
-
-
-async def test_accept_disposition_returns_immediately(tmp_path) -> None:
-    """work_agent returns after a single attempt when the referee disposition is ACCEPT."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(),
-        )
-        mock_critic.return_value = CriticFinding(
-            disposition=CriticDisposition.ACCEPT,
-            rationale="looks good",
-        )
-        mock_referee.return_value = RefereeDecision(
-            disposition=CriticDisposition.ACCEPT,
-            rationale="agreed",
-            override=False,
-        )
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run:
+        mock_run.return_value = failed_response
         response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
-        )
-
-    assert response.status == ResponseStatus.COMPLETED
-    mock_run.assert_called_once()
-
-
-async def test_revise_triggers_retry_with_feedback(tmp_path) -> None:
-    """work_agent retries and includes referee feedback in the prompt when disposition is REVISE."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(),
-        )
-        mock_critic.side_effect = [
-            CriticFinding(
-                disposition=CriticDisposition.REVISE,
-                rationale="needs work",
-                hints=["add type annotations", "fix naming"],
-            ),
-            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
-        ]
-        mock_referee.side_effect = [
-            RefereeDecision(
-                disposition=CriticDisposition.REVISE, rationale="agreed", override=False
-            ),
-            RefereeDecision(
-                disposition=CriticDisposition.ACCEPT, rationale="good now", override=False
-            ),
-        ]
-        response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
-        )
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert mock_run.call_count == 2
-    second_prompt = mock_run.call_args_list[1].args[3]
-    assert "Revise your implementation addressing the feedback above" in second_prompt
-    assert "add type annotations" in second_prompt
-
-
-async def test_reject_disposition_returns_failed_immediately(tmp_path) -> None:
-    """work_agent returns FAILED immediately on REJECT without retrying further attempts."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(),
-        )
-        mock_critic.return_value = CriticFinding(
-            disposition=CriticDisposition.REJECT,
-            rationale="bad output",
-            hints=["fix everything"],
-        )
-        mock_referee.return_value = RefereeDecision(
-            disposition=CriticDisposition.REJECT, rationale="still bad", override=False
-        )
-        response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
         )
 
     assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
-    assert response.delta is None
-    mock_run.assert_called_once()
+    assert response.failure_kind == FailureKind.PROVIDER_ERROR
+    assert response.error == "provider error"
 
 
-async def test_e2e_revise_then_accept_returns_improved_delta(tmp_path) -> None:
-    """Full attempt loop: REVISE on attempt 1 triggers retry; ACCEPT on attempt 2 returns second delta."""
+async def test_successful_engine_result_wrapped_in_completed_response(tmp_path) -> None:
+    """work_agent returns AgentResponse(COMPLETED, delta=...) for a successful engine run."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
 
-    delta_v1 = DeltaState(new_files=[FileWrite(path="main.py", content="v1")])
-    delta_v2 = DeltaState(new_files=[FileWrite(path="main.py", content="v2 improved")])
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
-        mock_run.side_effect = [
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta_v1),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta_v2),
-        ]
-        mock_critic.side_effect = [
-            CriticFinding(
-                disposition=CriticDisposition.REVISE,
-                rationale="needs improvement",
-                hints=["add error handling", "cover edge cases"],
-            ),
-            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="looks good now"),
-        ]
-        mock_referee.side_effect = [
-            RefereeDecision(
-                disposition=CriticDisposition.REVISE, rationale="agree with critic", override=False
-            ),
-            RefereeDecision(
-                disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
-            ),
-        ]
-        response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
-        )
-
-    assert response.delta == delta_v2
-    assert mock_run.call_count == 2
-    second_prompt = mock_run.call_args_list[1].args[3]
-    assert "add error handling" in second_prompt
-    assert "Revise your implementation addressing the feedback above" in second_prompt
-
-
-async def test_validation_parse_error_returns_failed(tmp_path) -> None:
-    """work_agent returns FAILED with VALIDATION_REJECTED when critic_agent raises ValueError."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="main.py", content="content")]),
-        )
-        mock_critic.side_effect = ValueError("critic_agent failed after 3 retries: invalid json")
-        response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
-        )
-
-    assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
-    assert response.delta is None
-    mock_run.assert_called_once()
-    mock_referee.assert_not_called()
-
-
-async def test_revise_exhausted_returns_failed(tmp_path) -> None:
-    """work_agent returns FAILED when all attempts are exhausted with only REVISE dispositions."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="main.py", content="partial")]),
-        )
-        mock_critic.return_value = CriticFinding(
-            disposition=CriticDisposition.REVISE,
-            rationale="still incomplete",
-            hints=["add tests"],
-        )
-        mock_referee.return_value = RefereeDecision(
-            disposition=CriticDisposition.REVISE, rationale="needs more work", override=False
+            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
         )
         response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
-        )
-
-    assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
-    assert response.delta is None
-    assert mock_run.call_count == 3
-
-
-async def test_accepted_validation_returns_completed_with_delta(tmp_path) -> None:
-    """work_agent returns COMPLETED with the accepted delta when validation passes."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-    critic_provider = MagicMock()
-    referee_provider = MagicMock()
-
-    accepted_delta = DeltaState(new_files=[FileWrite(path="main.py", content="good code")])
-
-    with (
-        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
-        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
-        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
-    ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=accepted_delta,
-        )
-        mock_critic.return_value = CriticFinding(
-            disposition=CriticDisposition.ACCEPT, rationale="meets requirements"
-        )
-        mock_referee.return_value = RefereeDecision(
-            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
-        )
-        response = await work_agent(
-            request,
-            _registry(),
-            workspace,
-            LanguageRegistry(),
-            provider,
-            _state_view(),
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
-            max_attempts=3,
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
         )
 
     assert response.status == ResponseStatus.COMPLETED
-    assert response.delta == accepted_delta
-    mock_run.assert_called_once()
+    assert response.delta == delta
