@@ -161,18 +161,10 @@ def test_python_supplement_contains_packaging_guidance() -> None:
     assert "setup.py" in supplement
 
 
-def test_language_examples_do_not_redefine_delta_state_schema() -> None:
-    """Pydantic owns DeltaState structure; language examples stay convention-focused."""
-    schema_key_markers = {
-        '"new_files"',
-        '"edits"',
-        '"dependencies"',
-        '"errors"',
-        '"base_version"',
-    }
+def test_language_delta_examples_are_str_format_safe() -> None:
+    """delta_example must be safe to call str.format(base_version=N) on — all literal braces escaped."""
     for path in LANGUAGES_DIR.glob("*.yaml"):
         data = yaml.safe_load(path.read_text())
         example = data["delta_example"]
-        assert "{{" not in example, path.name
-        for marker in schema_key_markers:
-            assert marker not in example, path.name
+        if example:
+            example.format(base_version=0)
