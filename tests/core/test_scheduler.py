@@ -10,7 +10,6 @@ from forge.core.models import (
     DAGNode,
     NodeState,
     PlanSpec,
-    Priority,
     RequestId,
     RequestSource,
     ResponseStatus,
@@ -28,7 +27,6 @@ def _plan_request() -> AgentRequest:
         agent_type=AgentType.PLAN,
         source=RequestSource.USER,
         spec=PlanSpec(northstar="test northstar"),
-        priority=Priority.HIGH,
     )
 
 
@@ -251,8 +249,8 @@ async def test_final_state_reflects_all_node_updates() -> None:
     assert final.dag[work_c.id].node_state == NodeState.INTEGRATED
 
 
-async def test_integrate_agent_called_inline_after_work_completes() -> None:
-    """Scheduler calls integrate_agent inline when a WORK node completes successfully."""
+async def test_integrate_called_inline_after_work_completes() -> None:
+    """Scheduler calls integrate inline when a WORK node completes successfully."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -260,7 +258,7 @@ async def test_integrate_agent_called_inline_after_work_completes() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(
             request_id=work.id, status=ResponseStatus.COMPLETED
         )
@@ -307,7 +305,7 @@ async def test_terminates_when_no_pending_or_running_nodes() -> None:
 
 
 async def test_integration_failure_marks_node_failed() -> None:
-    """Node is marked FAILED when integrate_agent returns FAILED status."""
+    """Node is marked FAILED when integrate returns FAILED status."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -315,7 +313,7 @@ async def test_integration_failure_marks_node_failed() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(
             request_id=work.id, status=ResponseStatus.FAILED
         )
@@ -339,7 +337,7 @@ async def test_integration_failure_cancels_transitive_dependents() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(
             request_id=work_a.id, status=ResponseStatus.FAILED
         )
@@ -361,7 +359,7 @@ async def test_integration_success_marks_node_integrated() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate_agent", new_callable=AsyncMock) as mock_integrate:
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(
             request_id=work.id, status=ResponseStatus.COMPLETED
         )

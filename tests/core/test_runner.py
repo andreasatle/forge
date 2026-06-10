@@ -14,7 +14,6 @@ from forge.core.models import (
     AgentType,
     DAGNode,
     PlanSpec,
-    Priority,
     RequestSource,
     ResponseStatus,
     RunResult,
@@ -39,7 +38,6 @@ def _plan_request() -> AgentRequest:
         agent_type=AgentType.PLAN,
         source=RequestSource.USER,
         spec=PlanSpec(northstar="test northstar"),
-        priority=Priority.HIGH,
     )
 
 
@@ -56,11 +54,13 @@ def _work_request() -> AgentRequest:
     )
 
 
-def _worker_sourced_work_request() -> AgentRequest:
+def _user_sourced_work_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.WORK,
-        source=RequestSource.WORKER,
-        spec=WorkSpec(objective="do work", success_condition="done", adapter="coding", artifact="codebase"),
+        source=RequestSource.USER,
+        spec=WorkSpec(
+            objective="do work", success_condition="done", adapter="coding", artifact="codebase"
+        ),
     )
 
 
@@ -185,8 +185,8 @@ async def test_runner_routes_work_to_work_handler() -> None:
     assert received[0] is request
 
 
-async def test_runner_routes_worker_sourced_work_to_work_handler() -> None:
-    """Runner routes a WORKER-sourced WORK request to the registered WORK handler."""
+async def test_runner_routes_user_sourced_work_to_work_handler() -> None:
+    """Runner routes a USER-sourced WORK request to the registered WORK handler."""
     received: list[AgentRequest] = []
 
     async def handler(request: AgentRequest) -> AgentResponse:
@@ -195,7 +195,7 @@ async def test_runner_routes_worker_sourced_work_to_work_handler() -> None:
 
     runner = Runner()
     runner.register(AgentType.WORK, handler)
-    request = _worker_sourced_work_request()
+    request = _user_sourced_work_request()
     await runner(request)
 
     assert len(received) == 1
@@ -258,8 +258,12 @@ async def test_stub_plan_handler_returns_completed() -> None:
 async def test_work_handler_returns_completed(tmp_path: Path) -> None:
     """make_work_handler returns a COMPLETED response on success."""
     provider = _mock_provider()
-    provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
-    handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
+    provider.chat = AsyncMock(
+        return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+    )
+    handler = make_work_handler(
+        _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
+    )
     response = await handler(_work_request())
 
     assert response.status == ResponseStatus.COMPLETED
@@ -269,7 +273,12 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
     """A fully registered Runner can be used as an AgentRunner in the Scheduler."""
     runner = Runner()
     runner.register(AgentType.PLAN, stub_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()))
+    runner.register(
+        AgentType.WORK,
+        make_work_handler(
+            _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()
+        ),
+    )
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())
@@ -279,7 +288,12 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
 
 async def test_make_plan_handler_planner_source_returns_completed() -> None:
     """make_plan_handler returns empty follow-up for PLANNER-source requests without calling the LLM."""
-    handler = make_plan_handler(_mock_registry(), artifact_names=["codebase"], artifact_languages={}, provider=_mock_provider())
+    handler = make_plan_handler(
+        _mock_registry(),
+        artifact_names=["codebase"],
+        artifact_languages={},
+        provider=_mock_provider(),
+    )
     request = AgentRequest(
         agent_type=AgentType.PLAN,
         source=RequestSource.PLANNER,
@@ -333,11 +347,18 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
 
 
 @pytest.mark.slow
-async def test_scripted_plan_handler_end_to_end_produces_four_completed_nodes(tmp_path: Path) -> None:
+async def test_scripted_plan_handler_end_to_end_produces_four_completed_nodes(
+    tmp_path: Path,
+) -> None:
     """End-to-end run with scripted_plan_handler produces exactly four INTEGRATED nodes."""
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()))
+    runner.register(
+        AgentType.WORK,
+        make_work_handler(
+            _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()
+        ),
+    )
 
     state = SchedulerState(northstar="test northstar")
     final = await Scheduler(runner=runner).run(state, _plan_request())
@@ -388,10 +409,16 @@ async def test_make_work_handler_never_calls_chat_with_tools(tmp_path: Path) -> 
     """make_work_handler uses provider.chat only, never chat_with_tools."""
     provider = MagicMock()
     provider.max_tokens = 8192
-    provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
-    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+    provider.chat = AsyncMock(
+        return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+    )
+    provider.chat_with_tools = AsyncMock(
+        side_effect=AssertionError("chat_with_tools must not be called")
+    )
 
-    handler = make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider)
+    handler = make_work_handler(
+        _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
+    )
     response = await handler(_work_request())
 
     assert response.status == ResponseStatus.COMPLETED
@@ -402,9 +429,16 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
     provider.chat = AsyncMock(return_value='{"kind": "plan", "tasks": []}')
-    provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
+    provider.chat_with_tools = AsyncMock(
+        side_effect=AssertionError("chat_with_tools must not be called")
+    )
 
-    handler = make_plan_handler(_mock_registry(), artifact_names=["codebase"], artifact_languages={"codebase": "python"}, provider=provider)
+    handler = make_plan_handler(
+        _mock_registry(),
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+        provider=provider,
+    )
     response = await handler(_plan_request())
 
     assert response.status == ResponseStatus.COMPLETED
@@ -413,14 +447,21 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
 async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: Path) -> None:
     """Scheduler calls state_service.apply_delta when a work node completes successfully."""
     provider = _mock_provider()
-    provider.chat = AsyncMock(return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}')
+    provider.chat = AsyncMock(
+        return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+    )
 
     ss = _mock_ss()
     work = _work_request()
     state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=work)])
 
     runner = Runner()
-    runner.register(AgentType.WORK, make_work_handler(_mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider))
+    runner.register(
+        AgentType.WORK,
+        make_work_handler(
+            _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
+        ),
+    )
 
     await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 

@@ -25,14 +25,6 @@ class RequestSource(Enum):
 
     USER = "user"
     PLANNER = "planner"
-    WORKER = "worker"
-
-
-class Priority(Enum):
-    """Scheduling priority for an agent request."""
-
-    HIGH = "high"
-    NORMAL = "normal"
 
 
 class NodeState(Enum):
@@ -102,7 +94,6 @@ class AgentRequest(BaseModel):
     source: RequestSource
     spec: AgentSpec
     dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
-    priority: Priority = Priority.NORMAL
 
 
 class Edit(BaseModel, frozen=True):
@@ -245,7 +236,9 @@ class DAGNode(BaseModel):
     def with_response(self, response: AgentResponse) -> "DAGNode":
         """Return a copy of this node with the response set and state derived from its status."""
         node_state = (
-            NodeState.INTEGRATED if response.status == ResponseStatus.COMPLETED else NodeState.FAILED
+            NodeState.INTEGRATED
+            if response.status == ResponseStatus.COMPLETED
+            else NodeState.FAILED
         )
         return self.model_copy(update={"node_state": node_state, "response": response})
 

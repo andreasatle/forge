@@ -16,7 +16,6 @@ from forge.core.models import (
     NodeState,
     PlanResponse,
     PlanSpec,
-    Priority,
     RequestSource,
     ResponseStatus,
     SchedulerState,
@@ -33,6 +32,7 @@ from forge.core.models import (
 def test_integrate_spec_no_longer_exists():
     """IntegrateSpec and AgentType.INTEGRATE have been removed from the public API."""
     import forge.core.models as m
+
     assert not hasattr(m, "IntegrateSpec")
     assert not hasattr(AgentType, "INTEGRATE")
 
@@ -167,7 +167,7 @@ def test_agent_request_raises_on_mutation():
     """AgentRequest raises an exception when any field is mutated directly."""
     request = _make_request()
     with pytest.raises(Exception):
-        request.priority = Priority.HIGH  # type: ignore[misc]
+        request.agent_type = AgentType.PLAN  # type: ignore[misc]
 
 
 # --- WorkSpec.artifact ---
@@ -250,7 +250,9 @@ def test_delta_state_with_errors_serializes_correctly():
     """DeltaState with errors round-trips through model_dump and model_validate."""
 
     wid = uuid4()
-    err = IntegrationError(kind="test_failure", description="tests failed", path="src/a.py", worker_ids=[wid])
+    err = IntegrationError(
+        kind="test_failure", description="tests failed", path="src/a.py", worker_ids=[wid]
+    )
     delta = DeltaState(errors=[err])
     data = delta.model_dump()
     restored = DeltaState.model_validate(data)
@@ -330,7 +332,14 @@ def test_tool_call_response_error_defaults_to_none():
 def test_failure_kind_has_expected_values():
     """FailureKind enum contains exactly the active classification values."""
     values = {k.value for k in FailureKind}
-    assert values == {"invalid_json", "provider_error", "timeout", "max_iterations", "tool_error", "unknown"}
+    assert values == {
+        "invalid_json",
+        "provider_error",
+        "timeout",
+        "max_iterations",
+        "tool_error",
+        "unknown",
+    }
     assert not hasattr(FailureKind, "TRUNCATED_OUTPUT")
 
 

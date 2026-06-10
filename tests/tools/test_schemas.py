@@ -8,16 +8,12 @@ from forge.tools.schemas import (
     AddDependencyResponse,
     ListFilesRequest,
     ListFilesResponse,
-    ReadBlackboardRequest,
-    ReadBlackboardResponse,
     ReadFileRequest,
     ReadFileResponse,
     ReplaceInFileRequest,
     ReplaceInFileResponse,
     RunTestsRequest,
     RunTestsResponse,
-    WriteBlackboardRequest,
-    WriteBlackboardResponse,
     WriteFileRequest,
     WriteFileResponse,
 )
@@ -103,40 +99,6 @@ def test_add_dependency_response_is_frozen() -> None:
     resp = AddDependencyResponse(package="numpy", success=True, output="installed")
     with pytest.raises(ValidationError):
         resp.success = False  # type: ignore[misc]
-
-
-def test_read_blackboard_request_is_frozen() -> None:
-    """ReadBlackboardRequest raises ValidationError when a field is mutated after construction."""
-    req = ReadBlackboardRequest(key="x")
-    with pytest.raises(ValidationError):
-        req.key = "y"  # type: ignore[misc]
-
-
-def test_read_blackboard_response_value_can_be_none() -> None:
-    """ReadBlackboardResponse accepts None as a value when the key has no entry."""
-    resp = ReadBlackboardResponse(key="x", value=None)
-    assert resp.value is None
-
-
-def test_read_blackboard_response_is_frozen() -> None:
-    """ReadBlackboardResponse raises ValidationError when a field is mutated after construction."""
-    resp = ReadBlackboardResponse(key="x", value="42")
-    with pytest.raises(ValidationError):
-        resp.value = "99"  # type: ignore[misc]
-
-
-def test_write_blackboard_request_is_frozen() -> None:
-    """WriteBlackboardRequest raises ValidationError when a field is mutated after construction."""
-    req = WriteBlackboardRequest(key="x", value="42")
-    with pytest.raises(ValidationError):
-        req.value = "99"  # type: ignore[misc]
-
-
-def test_write_blackboard_response_is_frozen() -> None:
-    """WriteBlackboardResponse raises ValidationError when a field is mutated after construction."""
-    resp = WriteBlackboardResponse(key="x")
-    with pytest.raises(ValidationError):
-        resp.key = "y"  # type: ignore[misc]
 
 
 def test_read_file_request_has_correct_fields() -> None:

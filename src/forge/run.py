@@ -10,7 +10,6 @@ from forge.core.models import (
     AgentRequest,
     AgentType,
     PlanSpec,
-    Priority,
     RequestSource,
     SchedulerState,
 )
@@ -86,8 +85,22 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     worker_provider = make_provider(config.models.worker, config.max_tokens)
 
     runner = Runner()
-    runner.register(AgentType.PLAN, make_plan_handler(registry, artifact_names, artifact_languages, planner_provider, config.max_retries))
-    runner.register(AgentType.WORK, make_work_handler(registry, workspace, language_registry, worker_provider, max_tool_iterations=config.max_tool_iterations))
+    runner.register(
+        AgentType.PLAN,
+        make_plan_handler(
+            registry, artifact_names, artifact_languages, planner_provider, config.max_retries
+        ),
+    )
+    runner.register(
+        AgentType.WORK,
+        make_work_handler(
+            registry,
+            workspace,
+            language_registry,
+            worker_provider,
+            max_tool_iterations=config.max_tool_iterations,
+        ),
+    )
 
     state = initial_state or SchedulerState(northstar=northstar, max_concurrency=config.concurrency)
 
@@ -95,7 +108,6 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         agent_type=AgentType.PLAN,
         source=RequestSource.USER,
         spec=PlanSpec(northstar=northstar),
-        priority=Priority.HIGH,
     )
 
     callbacks = SchedulerCallbacks(
@@ -111,7 +123,9 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         on_idle=lambda state: print(f"~ idle: {len(state.dag)} nodes in DAG"),
     )
 
-    final = await Scheduler(runner=runner, state_services=state_services, callbacks=callbacks).run(state, global_planner)
+    final = await Scheduler(runner=runner, state_services=state_services, callbacks=callbacks).run(
+        state, global_planner
+    )
 
     path = save_run(final, workspace)
     print(f"run saved: {path}")

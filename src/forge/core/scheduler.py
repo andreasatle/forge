@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
-from forge.agents.integrator import integrate_agent
+from forge.agents.integrator import integrate
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -108,8 +108,8 @@ class Scheduler:
                             if isinstance(spec, WorkSpec):
                                 ss = self._state_services.get(spec.artifact)
                                 if ss is not None:
-                                    integration_response = await integrate_agent(
-                                        request=node.request,
+                                    integration_response = await integrate(
+                                        request_id=node.request.id,
                                         state_service=ss,
                                         delta=response.delta or DeltaState(),
                                     )

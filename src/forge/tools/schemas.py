@@ -102,37 +102,3 @@ class AddDependencyResponse(BaseModel):
     package: str
     success: bool
     output: str
-
-
-class ReadBlackboardRequest(BaseModel):
-    """Request to read a value from the shared blackboard by key."""
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str
-
-
-class ReadBlackboardResponse(BaseModel):
-    """Response with the blackboard value for the requested key, or None if absent."""
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str
-    value: str | None
-
-
-class WriteBlackboardRequest(BaseModel):
-    """Request to write a key-value pair to the shared blackboard."""
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str
-    value: str
-
-
-class WriteBlackboardResponse(BaseModel):
-    """Response confirming the key that was written to the blackboard."""
-
-    model_config = ConfigDict(frozen=True)
-
-    key: str

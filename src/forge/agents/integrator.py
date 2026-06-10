@@ -1,7 +1,8 @@
-"""Integrator agent — applies a worker DeltaState to disk and runs tests."""
+"""Integration infrastructure — applies a worker DeltaState to disk and runs tests."""
+
+from uuid import UUID
 
 from forge.core.models import (
-    AgentRequest,
     AgentResponse,
     DeltaState,
     IntegrationError,
@@ -10,8 +11,8 @@ from forge.core.models import (
 from forge.core.state_service import StateService
 
 
-async def integrate_agent(
-    request: AgentRequest,
+async def integrate(
+    request_id: UUID,
     state_service: StateService,
     delta: DeltaState,
 ) -> AgentResponse:
@@ -23,7 +24,7 @@ async def integrate_agent(
     except Exception as e:
         errors.append(IntegrationError(kind="apply_failed", description=str(e)))
         return AgentResponse(
-            request_id=request.id,
+            request_id=request_id,
             status=ResponseStatus.FAILED,
             delta=delta.model_copy(update={"errors": errors}),
         )
@@ -34,13 +35,13 @@ async def integrate_agent(
         description = "\n".join(line for line in lines if line)
         errors.append(IntegrationError(kind="test_failed", description=description))
         return AgentResponse(
-            request_id=request.id,
+            request_id=request_id,
             status=ResponseStatus.FAILED,
             delta=delta.model_copy(update={"errors": errors}),
         )
 
     return AgentResponse(
-        request_id=request.id,
+        request_id=request_id,
         status=ResponseStatus.COMPLETED,
         delta=delta.model_copy(update={"errors": errors}),
     )
