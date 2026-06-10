@@ -5,7 +5,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forge.agents.planner import plan_agent
-from forge.core.models import AgentRequest, AgentType, PlanSpec, RequestSource, ResponseStatus
+from forge.core.models import (
+    AgentRequest,
+    AgentType,
+    PlanSpec,
+    RequestSource,
+    ResponseStatus,
+    WorkSpec,
+)
 
 
 def _make_request() -> AgentRequest:
@@ -113,3 +120,37 @@ async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
     assert '"tasks": [' not in user_prompt
     assert '"kind": "plan"' not in user_prompt
     assert "Respond with ONLY a JSON object" not in user_prompt
+
+
+async def test_planner_follow_up_contains_only_work_nodes() -> None:
+    """plan_agent follow_up contains only WORK nodes — never INTEGRATE or PLAN nodes."""
+    request = _make_request()
+    provider = _mock_provider(
+        '{"kind": "plan", "tasks": ['
+        '{"objective": "A", "success_condition": "done", "adapter": "coding", "artifact": "codebase"}'
+        ']}'
+    )
+
+    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert len(response.follow_up) == 1
+    assert all(r.agent_type == AgentType.WORK for r in response.follow_up)
+
+
+async def test_planner_dependency_wiring_is_task_to_task() -> None:
+    """Work node with depends_on=[0] depends directly on work node 0, not an integrate node."""
+    request = _make_request()
+    provider = _mock_provider(
+        '{"kind": "plan", "tasks": ['
+        '{"objective": "A", "success_condition": "done", "adapter": "coding", "artifact": "codebase"},'
+        '{"objective": "B", "success_condition": "done", "adapter": "coding", "artifact": "codebase", "depends_on": [0]}'
+        ']}'
+    )
+
+    response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    work_a = next(r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "A")
+    work_b = next(r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "B")
+    assert work_a.id in work_b.dependencies
+    assert len(work_b.dependencies) == 1
