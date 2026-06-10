@@ -15,6 +15,7 @@ from forge.core.models import (
     RequestSource,
     ResponseStatus,
 )
+from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
@@ -59,20 +60,14 @@ def make_work_handler(
 
 
 def make_integrate_handler(
-    workspace: Workspace,
-    language_registry: LanguageRegistry,
+    state_service: StateService,
     completed_work_deltas: dict[RequestId, DeltaState],
 ) -> Handler:
     """Return a handler that delegates integrate requests to integrate_agent."""
 
     async def integrate_handler(request: AgentRequest) -> AgentResponse:
-        deltas = list(completed_work_deltas.values())
-        return await integrate_agent(
-            request=request,
-            workspace=workspace,
-            language_registry=language_registry,
-            completed_deltas=deltas,
-        )
+        delta = completed_work_deltas.get(request.id, DeltaState())
+        return await integrate_agent(request=request, state_service=state_service, delta=delta)
 
     return integrate_handler
 

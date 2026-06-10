@@ -4,7 +4,6 @@
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -29,8 +28,11 @@ from forge.core.runner import (
     make_work_handler,
 )
 from forge.core.scheduler import Scheduler
+from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
+
+_MOCK_STATE_SERVICE = MagicMock(spec=StateService)
 
 # --- Helpers ---
 
@@ -421,35 +423,35 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_make_integrate_handler_passes_all_deltas(tmp_path: Path) -> None:
-    """make_integrate_handler passes all completed deltas to integrate_agent."""
-    wid = uuid4()
-    delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
-    unrelated_wid = uuid4()
-    completed = {wid: delta, unrelated_wid: DeltaState()}
-
+async def test_make_integrate_handler_passes_delta_for_request_id() -> None:
+    """make_integrate_handler looks up completed_work_deltas by request.id."""
     request = _integrate_request()
+    delta = DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")])
+    completed = {request.id: delta}
+    ss = MagicMock(spec=StateService)
 
     with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
-        handler = make_integrate_handler(_make_workspace(tmp_path), LanguageRegistry(), completed)
+        handler = make_integrate_handler(ss, completed)
         response = await handler(request)
 
     assert response.status == ResponseStatus.COMPLETED
     mock_integrate.assert_called_once()
-    assert mock_integrate.call_args.kwargs["completed_deltas"] == list(completed.values())
+    assert mock_integrate.call_args.kwargs["state_service"] is ss
+    assert mock_integrate.call_args.kwargs["delta"] is delta
     assert "provider" not in mock_integrate.call_args.kwargs
 
 
-async def test_make_integrate_handler_does_not_require_provider(tmp_path: Path) -> None:
-    """make_integrate_handler constructs and runs without any LLM provider."""
+async def test_make_integrate_handler_uses_empty_delta_when_not_found() -> None:
+    """make_integrate_handler passes an empty DeltaState when request.id is not in the map."""
     request = _integrate_request()
-    completed: dict = {}
+    ss = MagicMock(spec=StateService)
 
     with patch("forge.core.runner.integrate_agent", new_callable=AsyncMock) as mock_integrate:
         mock_integrate.return_value = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
-        handler = make_integrate_handler(_make_workspace(tmp_path), LanguageRegistry(), completed)
+        handler = make_integrate_handler(ss, {})
         response = await handler(request)
 
     assert response.status == ResponseStatus.COMPLETED
+    assert mock_integrate.call_args.kwargs["delta"] == DeltaState()
     assert "provider" not in mock_integrate.call_args.kwargs
