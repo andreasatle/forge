@@ -344,7 +344,7 @@ async def test_run_agent_routes_tool_calls_correctly():
     provider = _mock_provider()
     provider.chat = AsyncMock(side_effect=[
         '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
+        _NONEMPTY_DELTA,
     ])
 
     response = await run_agent(request, WorkSpec, provider, "prompt", tools=registry)
@@ -355,9 +355,9 @@ async def test_run_agent_routes_tool_calls_correctly():
 
 
 async def test_run_agent_returns_agent_response_on_final_response():
-    """run_agent returns COMPLETED AgentResponse when the LLM returns valid final JSON."""
+    """run_agent returns COMPLETED AgentResponse when the LLM returns valid non-empty final JSON."""
     request = _work_request()
-    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+    provider = _mock_provider(_NONEMPTY_DELTA)
 
     response = await run_agent(request, WorkSpec, provider, "prompt")
 
@@ -371,7 +371,7 @@ async def test_run_agent_retries_on_invalid_format():
     provider = _mock_provider()
     provider.chat = AsyncMock(side_effect=[
         "not valid json",
-        '{"edits": [], "new_files": [], "dependencies": []}',
+        _NONEMPTY_DELTA,
     ])
 
     response = await run_agent(request, WorkSpec, provider, "prompt", max_retries=3)
@@ -576,7 +576,7 @@ async def test_run_agent_sets_failure_kind_provider_error_on_http_error():
 async def test_run_agent_never_calls_chat_with_tools_no_tools_path():
     """run_agent uses provider.chat only, never chat_with_tools, when no tools are registered."""
     request = _work_request()
-    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+    provider = _mock_provider(_NONEMPTY_DELTA)
     provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
 
     response = await run_agent(request, WorkSpec, provider, "prompt")
@@ -591,7 +591,7 @@ async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
     provider = _mock_provider()
     provider.chat = AsyncMock(side_effect=[
         '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-        '{"edits": [], "new_files": [], "dependencies": []}',
+        _NONEMPTY_DELTA,
     ])
     provider.chat_with_tools = AsyncMock(side_effect=AssertionError("chat_with_tools must not be called"))
 
@@ -673,6 +673,37 @@ async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made()
     assert "tool_call" in (response.error or "")
     assert "do_thing" in (response.error or "")
     assert "list_files" not in (response.error or "")
+
+
+async def test_run_agent_rejects_empty_delta_for_work_agent_with_no_tools():
+    """run_agent rejects empty DeltaState for WORK agents even when no tools are configured."""
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+
+    response = await run_agent(request, WorkSpec, provider, "prompt", max_retries=0)
+
+    assert response.status == ResponseStatus.FAILED
+    assert "empty DeltaState" in (response.error or "")
+
+
+async def test_run_agent_rejects_empty_delta_after_read_only_tool_call():
+    """run_agent rejects empty DeltaState for WORK agents even after read-only tool calls."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=[
+        '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+        '{"edits": [], "new_files": [], "dependencies": []}',
+    ])
+
+    response = await run_agent(
+        request, WorkSpec, provider, "prompt",
+        tools=registry,
+        max_retries=0,
+    )
+
+    assert response.status == ResponseStatus.FAILED
+    assert "empty DeltaState" in (response.error or "")
 
 
 async def test_run_agent_accepts_delta_state_after_tool_work():

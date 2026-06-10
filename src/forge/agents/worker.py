@@ -71,6 +71,14 @@ async def work_agent(
         "\nDo not attempt to write files via tools — workers are read-only."
     )
 
+    prompt += (
+        "\n\nIMPORTANT — your final JSON response MUST be a non-empty DeltaState:"
+        "\n- new_files must contain the complete content of every file you create"
+        "\n- edits must contain every change to existing files"
+        "\n- An empty DeltaState is always wrong for a coding task"
+        "\n- Do not summarise what you would do — write the actual file contents"
+    )
+
     return await run_agent(
         request,
         WorkSpec,

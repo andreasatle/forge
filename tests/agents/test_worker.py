@@ -262,6 +262,27 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) 
     assert "run_tests" not in _tool_names(tools)
 
 
+async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
+    """work_agent prompt contains an explicit warning that empty DeltaState is always wrong."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider)
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "non-empty DeltaState" in user_prompt
+    assert "empty DeltaState is always wrong" in user_prompt
+
+
 async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None:
     """work_agent returns FAILED with a clear message when adapter declares an unknown tool."""
     workspace = Workspace(tmp_path / "ws")

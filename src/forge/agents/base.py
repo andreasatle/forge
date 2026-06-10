@@ -306,6 +306,16 @@ async def run_agent(
                         'Call one of the available tools using this format: '
                         '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
                     )
+                if (
+                    isinstance(parsed, DeltaState)
+                    and _is_empty_delta(_merge_delta(tracked_delta, parsed))
+                    and request.agent_type == AgentType.WORK
+                ):
+                    raise ValueError(
+                        "Your response contained an empty DeltaState with no new_files, edits, "
+                        "or dependencies. You MUST produce actual file content. Return a "
+                        "DeltaState with at least one entry in new_files or edits."
+                    )
             except ValueError as e:
                 if retry_count >= max_retries:
                     return AgentResponse(
