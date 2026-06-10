@@ -39,6 +39,60 @@ Goal: {northstar}
 """
 
 
+class PlannerTaskExecutor:
+    """Own planner prompt construction and PlanResponse execution."""
+
+    def __init__(
+        self,
+        *,
+        provider: LLMProvider,
+        artifact_names: list[str],
+        artifact_languages: dict[str, str],
+        max_retries: int = 3,
+    ) -> None:
+        self.provider = provider
+        self.artifact_names = artifact_names
+        self.artifact_languages = artifact_languages
+        self.max_retries = max_retries
+
+    async def run(self, request: AgentRequest) -> AgentResponse:
+        """Send the northstar goal to the planner LLM and return follow-up work requests."""
+        spec = request.spec
+        if not isinstance(spec, PlanSpec):
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"expected PlanSpec, got {type(spec).__name__}",
+            )
+
+        artifact_language_list = (
+            "\n".join(f"  {name}: {lang}" for name, lang in self.artifact_languages.items())
+            or "  (no languages declared)"
+        )
+        prompt = PLAN_PROMPT.format(
+            northstar=spec.northstar,
+            artifact_names=", ".join(self.artifact_names),
+            artifact_language_list=artifact_language_list,
+        )
+
+        def correction_fn(error: Exception, bad_response: str) -> str:
+            return CORRECTION_PROMPT.format(
+                original_prompt=prompt,
+                bad_response=bad_response,
+                error=error,
+            )
+
+        return await run_agent(
+            request,
+            PlanSpec,
+            self.provider,
+            prompt,
+            max_retries=self.max_retries,
+            correction_prompt_fn=correction_fn,
+            final_response_type=PlanResponse,
+        )
+
+
 async def plan_agent(
     request: AgentRequest,
     artifact_names: list[str],
@@ -47,37 +101,9 @@ async def plan_agent(
     max_retries: int = 3,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
-    spec = request.spec
-    if not isinstance(spec, PlanSpec):
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.FAILED,
-            error=f"expected PlanSpec, got {type(spec).__name__}",
-        )
-
-    artifact_language_list = (
-        "\n".join(f"  {name}: {lang}" for name, lang in artifact_languages.items())
-        or "  (no languages declared)"
-    )
-    prompt = PLAN_PROMPT.format(
-        northstar=spec.northstar,
-        artifact_names=", ".join(artifact_names),
-        artifact_language_list=artifact_language_list,
-    )
-
-    def correction_fn(error: Exception, bad_response: str) -> str:
-        return CORRECTION_PROMPT.format(
-            original_prompt=prompt,
-            bad_response=bad_response,
-            error=error,
-        )
-
-    return await run_agent(
-        request,
-        PlanSpec,
-        provider,
-        prompt,
+    return await PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=artifact_names,
+        artifact_languages=artifact_languages,
         max_retries=max_retries,
-        correction_prompt_fn=correction_fn,
-        final_response_type=PlanResponse,
-    )
+    ).run(request)

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from forge.agents.planner import plan_agent
+from forge.agents.planner import PlannerTaskExecutor, plan_agent
 from forge.core.models import (
     AgentRequest,
     AgentType,
@@ -39,6 +39,70 @@ async def test_planner_succeeds_on_first_attempt() -> None:
 
     assert response.status == ResponseStatus.COMPLETED
     assert provider.chat.call_count == 1
+
+
+async def test_planner_task_executor_emits_follow_up_work_tasks() -> None:
+    """PlannerTaskExecutor owns plan orchestration and follow-up task creation."""
+    request = _make_request()
+    provider = _mock_provider(
+        '{"kind": "plan", "tasks": ['
+        '{"objective": "Fetch pages", "success_condition": "tests pass", '
+        '"adapter": "coding", "artifact": "codebase", "language": "python"}'
+        "]}"
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert len(response.follow_up) == 1
+    follow_up = response.follow_up[0]
+    assert follow_up.agent_type == AgentType.WORK
+    assert follow_up.source == RequestSource.PLANNER
+    assert isinstance(follow_up.spec, WorkSpec)
+    assert follow_up.spec.objective == "Fetch pages"
+    assert follow_up.spec.language == "python"
+
+
+async def test_planner_task_executor_preserves_artifact_language_context() -> None:
+    """PlannerTaskExecutor renders artifact/language context into the planner prompt."""
+    request = _make_request()
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["api", "docs"],
+        artifact_languages={"api": "python", "docs": "markdown"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "artifact must be one of: api, docs" in user_prompt
+    assert "  api: python" in user_prompt
+    assert "  docs: markdown" in user_prompt
+
+
+async def test_planner_task_executor_format_failure_exhausts_retries() -> None:
+    """PlannerTaskExecutor preserves plan_agent retry exhaustion behavior."""
+    request = _make_request()
+    provider = _mock_provider("not json")
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+        max_retries=2,
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.FAILED
+    assert provider.chat.call_count == 3  # initial + 2 retries
 
 
 async def test_planner_format_failure_triggers_retry() -> None:
