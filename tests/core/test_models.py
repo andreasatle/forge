@@ -343,6 +343,7 @@ def test_failure_kind_has_expected_values():
         "timeout",
         "max_iterations",
         "tool_error",
+        "stale_delta",
         "unknown",
     }
     assert not hasattr(FailureKind, "TRUNCATED_OUTPUT")

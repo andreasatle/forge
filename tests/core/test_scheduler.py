@@ -8,6 +8,7 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    FailureKind,
     NodeState,
     PlanSpec,
     RequestId,
@@ -368,3 +369,76 @@ async def test_integration_success_marks_node_integrated() -> None:
         )
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
+
+
+async def test_stale_delta_requeues_not_failed() -> None:
+    """A stale delta re-queues the node as PENDING; it eventually succeeds on retry."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.side_effect = [
+            AgentResponse(
+                request_id=work.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.STALE_DELTA,
+            ),
+            AgentResponse(request_id=work.id, status=ResponseStatus.COMPLETED),
+        ]
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    assert mock_integrate.call_count == 2
+
+
+async def test_stale_delta_fails_after_3_retries() -> None:
+    """Node is marked FAILED after 3 consecutive stale delta retries are exhausted."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    stale = AgentResponse(
+        request_id=work.id,
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.STALE_DELTA,
+    )
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = stale
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    assert mock_integrate.call_count == 4  # 1 initial + 3 retries
+
+
+async def test_non_stale_integration_failure_marks_failed_immediately() -> None:
+    """Non-stale integration failure marks the node FAILED without any retry."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = AgentResponse(
+            request_id=work.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.TOOL_ERROR,
+        )
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    mock_integrate.assert_called_once()

@@ -13,6 +13,7 @@ from forge.core.models import (
     AgentType,
     DAGNode,
     DeltaState,
+    FailureKind,
     NodeState,
     RequestId,
     RequestSource,
@@ -49,6 +50,7 @@ class Scheduler:
         self._runner = runner
         self._state_services = state_services
         self._callbacks = callbacks or SchedulerCallbacks()
+        self._stale_retry_counts: dict[RequestId, int] = {}
 
     async def run(
         self,
@@ -100,6 +102,7 @@ class Scheduler:
 
                     if updated.node_state == NodeState.INTEGRATED:
                         integration_failed = False
+                        stale_retry = False
                         if (
                             node.request.agent_type == AgentType.WORK
                             and self._state_services is not None
@@ -114,14 +117,31 @@ class Scheduler:
                                         delta=response.delta or DeltaState(),
                                     )
                                     if integration_response.status == ResponseStatus.FAILED:
-                                        integration_failed = True
+                                        if (
+                                            integration_response.failure_kind
+                                            == FailureKind.STALE_DELTA
+                                        ):
+                                            retry_count = self._stale_retry_counts.get(
+                                                node.request.id, 0
+                                            )
+                                            if retry_count < 3:
+                                                self._stale_retry_counts[node.request.id] = (
+                                                    retry_count + 1
+                                                )
+                                                pending_node = current.with_state(NodeState.PENDING)
+                                                state = state.update_node(pending_node)
+                                                stale_retry = True
+                                            else:
+                                                integration_failed = True
+                                        else:
+                                            integration_failed = True
 
                         if integration_failed:
                             failed_node = updated.with_state(NodeState.FAILED)
                             state = state.update_node(failed_node)
                             self._fire_node(self._callbacks.on_node_failed, failed_node)
                             state = self._cancel_dependents(state, node.request.id)
-                        else:
+                        elif not stale_retry:
                             follow_ups = [DAGNode(request=r) for r in response.follow_up]
                             if follow_ups:
                                 state = state.add_nodes(follow_ups)

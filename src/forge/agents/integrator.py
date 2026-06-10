@@ -5,6 +5,7 @@ from uuid import UUID
 from forge.core.models import (
     AgentResponse,
     DeltaState,
+    FailureKind,
     IntegrationError,
     ResponseStatus,
 )
@@ -23,6 +24,7 @@ async def integrate(
         return AgentResponse(
             request_id=request_id,
             status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.STALE_DELTA,
             error=(
                 f"Stale delta: based on version {delta.base_version}, "
                 f"current state is version {state_service.current_version}"
