@@ -20,6 +20,115 @@ _FALLBACK_DELTA_EXAMPLE = (
 )
 
 
+class WorkTaskExecutor:
+    """Run one work task from AgentRequest to AgentResponse."""
+
+    def __init__(
+        self,
+        *,
+        registry: AdapterRegistry,
+        workspace: Workspace,
+        language_registry: LanguageRegistry,
+        provider: LLMProvider,
+        max_retries: int = 3,
+        max_tool_iterations: int = 25,
+        critic_provider: LLMProvider | None = None,
+        referee_provider: LLMProvider | None = None,
+        max_attempts: int = 3,
+    ) -> None:
+        self.registry = registry
+        self.workspace = workspace
+        self.language_registry = language_registry
+        self.provider = provider
+        self.max_retries = max_retries
+        self.max_tool_iterations = max_tool_iterations
+        self.critic_provider = critic_provider
+        self.referee_provider = referee_provider
+        self.max_attempts = max_attempts
+
+    async def run(self, request: AgentRequest, state_view: StateView) -> AgentResponse:
+        spec = request.spec
+        if not isinstance(spec, WorkSpec):
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"expected WorkSpec, got {type(spec).__name__}",
+            )
+
+        adapter = self.registry.get(spec.adapter)
+        plugin = self.language_registry.get(spec.language) if spec.language else None
+        full_registry = build_read_registry(
+            self.workspace,
+            spec.artifact,
+            plugin.test_command if plugin else None,
+        )
+        try:
+            tool_list = full_registry.get_many(adapter.tools)
+        except KeyError as e:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"adapter '{adapter.name}' declares {e}",
+            )
+        tools = ToolRegistry()
+        for tool in tool_list:
+            tools.register(tool)
+
+        if "{delta_example}" in adapter.prompt_template:
+            if plugin:
+                delta_example = plugin.delta_example.format(base_version=state_view.version)
+            else:
+                delta_example = _FALLBACK_DELTA_EXAMPLE.format(
+                    base_version=state_view.version
+                )
+        else:
+            delta_example = ""
+
+        base_prompt = adapter.prompt_template.format(
+            objective=spec.objective,
+            success_condition=spec.success_condition,
+            base_version=state_view.version,
+            delta_example=delta_example,
+        )
+        if plugin:
+            base_prompt += f"\n\n{plugin.prompt_supplement}"
+            base_prompt += f"\n\nLanguage: {spec.language}"
+
+        base_prompt += f"\n\nState version: {state_view.version}"
+        if state_view.files:
+            sections = "\n\n".join(
+                f"File: {fv.path}\n```\n{fv.content}\n```" for fv in state_view.files
+            )
+            base_prompt += f"\n\nExisting files in '{spec.artifact}':\n\n{sections}"
+        else:
+            base_prompt += (
+                f"\n\nArtifact '{spec.artifact}' has no files yet — create all files from scratch."
+            )
+
+        base_prompt += (
+            "\n\nWorkers are read-only: do not attempt to write files via tools."
+            "\nPropose file creations and edits only through your task result."
+        )
+
+        engine = TaskAttemptEngine(
+            request=request,
+            state_view=state_view,
+            provider=self.provider,
+            registry=self.registry,
+            tools=tools,
+            critic_provider=self.critic_provider,
+            referee_provider=self.referee_provider,
+            max_attempts=self.max_attempts,
+            max_retries=self.max_retries,
+            max_tool_iterations=self.max_tool_iterations,
+        )
+
+        try:
+            return await engine.run(base_prompt)
+        except RunAgentFailed as e:
+            return e.response
+
+
 async def work_agent(
     request: AgentRequest,
     registry: AdapterRegistry,
@@ -34,81 +143,14 @@ async def work_agent(
     max_attempts: int = 3,
 ) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
-    spec = request.spec
-    if not isinstance(spec, WorkSpec):
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.FAILED,
-            error=f"expected WorkSpec, got {type(spec).__name__}",
-        )
-
-    adapter = registry.get(spec.adapter)
-    plugin = language_registry.get(spec.language) if spec.language else None
-    full_registry = build_read_registry(
-        workspace,
-        spec.artifact,
-        plugin.test_command if plugin else None,
-    )
-    try:
-        tool_list = full_registry.get_many(adapter.tools)
-    except KeyError as e:
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.FAILED,
-            error=f"adapter '{adapter.name}' declares {e}",
-        )
-    tools = ToolRegistry()
-    for tool in tool_list:
-        tools.register(tool)
-
-    if "{delta_example}" in adapter.prompt_template:
-        if plugin:
-            delta_example = plugin.delta_example.format(base_version=state_view.version)
-        else:
-            delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=state_view.version)
-    else:
-        delta_example = ""
-
-    base_prompt = adapter.prompt_template.format(
-        objective=spec.objective,
-        success_condition=spec.success_condition,
-        base_version=state_view.version,
-        delta_example=delta_example,
-    )
-    if plugin:
-        base_prompt += f"\n\n{plugin.prompt_supplement}"
-        base_prompt += f"\n\nLanguage: {spec.language}"
-
-    base_prompt += f"\n\nState version: {state_view.version}"
-    if state_view.files:
-        sections = "\n\n".join(
-            f"File: {fv.path}\n```\n{fv.content}\n```" for fv in state_view.files
-        )
-        base_prompt += f"\n\nExisting files in '{spec.artifact}':\n\n{sections}"
-    else:
-        base_prompt += (
-            f"\n\nArtifact '{spec.artifact}' has no files yet — create all files from scratch."
-        )
-
-    base_prompt += (
-        "\n\nWorkers are read-only: do not attempt to write files via tools."
-        "\nPropose file creations and edits only through your task result."
-    )
-
-    engine = TaskAttemptEngine(
-        request=request,
-        state_view=state_view,
-        provider=provider,
+    return await WorkTaskExecutor(
         registry=registry,
-        tools=tools,
+        workspace=workspace,
+        language_registry=language_registry,
+        provider=provider,
+        max_retries=max_retries,
+        max_tool_iterations=max_tool_iterations,
         critic_provider=critic_provider,
         referee_provider=referee_provider,
         max_attempts=max_attempts,
-        max_retries=max_retries,
-        max_tool_iterations=max_tool_iterations,
-    )
-
-    try:
-        return await engine.run(base_prompt)
-    except RunAgentFailed as e:
-        return e.response
+    ).run(request, state_view)

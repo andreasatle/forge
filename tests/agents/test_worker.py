@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.base import _build_system_prompt
-from forge.agents.worker import work_agent
+from forge.agents.worker import WorkTaskExecutor, work_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -98,6 +98,162 @@ def _work_request(adapter: str, language: str | None = None) -> AgentRequest:
             language=language,
         ),
     )
+
+
+async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path) -> None:
+    """WorkTaskExecutor runs a work task and returns the engine response."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+    )
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
+        )
+        response = await executor.run(request, _state_view())
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta == delta
+
+
+async def test_work_task_executor_enforces_adapter_tools(tmp_path) -> None:
+    """WorkTaskExecutor passes only the tools declared by the adapter."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = _yaml_adapter_registry()
+    expected = set(adapter_registry.get("coding").tools)
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    executor = WorkTaskExecutor(
+        registry=adapter_registry,
+        workspace=workspace,
+        language_registry=_language_registry_with_tests(),
+        provider=provider,
+    )
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await executor.run(request, _state_view(language="python"))
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert _tool_names(tools) == expected
+
+
+async def test_work_task_executor_unknown_adapter_tool_returns_failed(tmp_path) -> None:
+    """WorkTaskExecutor returns FAILED when an adapter declares an unknown tool."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    adapter_registry = AdapterRegistry()
+    adapter_registry._adapters["broken"] = AdapterSpec(
+        name="broken",
+        description="test",
+        tools=["nonexistent_tool"],
+        prompt_template="do: {objective}\nsuccess: {success_condition}",
+    )
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="task",
+            success_condition="done",
+            adapter="broken",
+            artifact="codebase",
+        ),
+    )
+    executor = WorkTaskExecutor(
+        registry=adapter_registry,
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=MagicMock(),
+    )
+
+    response = await executor.run(request, _state_view())
+
+    assert response.status == ResponseStatus.FAILED
+    assert "nonexistent_tool" in (response.error or "")
+
+
+async def test_work_task_executor_python_language_supplement_appears_in_prompt(
+    tmp_path,
+) -> None:
+    """WorkTaskExecutor includes the language plugin prompt supplement."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    language_registry = LanguageRegistry()
+    language_registry._plugins["python"] = LanguagePlugin(
+        name="python",
+        package_manager="uv",
+        init_command="uv init",
+        test_command="pytest",
+        sync_command="uv sync",
+        add_dependency_command="uv add {package}",
+        project_structure=[],
+        prompt_supplement="UNIQUE_EXECUTOR_SUPPLEMENT",
+        delta_example="",
+    )
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=language_registry,
+        provider=provider,
+    )
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await executor.run(request, _state_view(language="python"))
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "UNIQUE_EXECUTOR_SUPPLEMENT" in user_prompt
+
+
+async def test_work_task_executor_keeps_read_only_policy(tmp_path) -> None:
+    """WorkTaskExecutor keeps the worker read-only policy in the prompt."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+    )
+
+    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await executor.run(request, _state_view())
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "Workers are read-only" in user_prompt
+    assert "do not attempt to write files via tools" in user_prompt
 
 
 async def test_worker_tools_do_not_include_blackboard_tools(tmp_path) -> None:
