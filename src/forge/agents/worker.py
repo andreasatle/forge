@@ -133,9 +133,29 @@ async def work_agent(
         if response.status != ResponseStatus.COMPLETED or response.delta is None:
             return response
 
-        finding = await critic_agent(request, state_view, response.delta, critic_provider, registry)
-        decision = await referee_agent(
-            request, state_view, response.delta, finding, referee_provider, registry
+        try:
+            finding = await critic_agent(
+                request, state_view, response.delta, critic_provider, registry
+            )
+            decision = await referee_agent(
+                request, state_view, response.delta, finding, referee_provider, registry
+            )
+        except ValueError as e:
+            _logger.warning(
+                "work_agent: validation parsing failed on attempt %d/%d, skipping: %s",
+                _attempt + 1,
+                max_attempts,
+                e,
+            )
+            return response
+
+        _logger.info(
+            "work_agent attempt %d/%d: critic=%s referee=%s — %s",
+            _attempt + 1,
+            max_attempts,
+            finding.disposition.value,
+            decision.disposition.value,
+            "returning" if decision.disposition == CriticDisposition.ACCEPT else "retrying",
         )
 
         if decision.disposition == CriticDisposition.ACCEPT:

@@ -14,6 +14,7 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     DeltaState,
+    FileWrite,
     RefereeDecision,
     RequestSource,
     ResponseStatus,
@@ -595,3 +596,101 @@ async def test_max_attempts_exhaustion_returns_last_delta(tmp_path) -> None:
 
     assert response.status == ResponseStatus.COMPLETED
     assert mock_run.call_count == 2
+
+
+async def test_e2e_revise_then_accept_returns_improved_delta(tmp_path) -> None:
+    """Full attempt loop: REVISE on attempt 1 triggers retry; ACCEPT on attempt 2 returns second delta."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    critic_provider = MagicMock()
+    referee_provider = MagicMock()
+
+    delta_v1 = DeltaState(new_files=[FileWrite(path="main.py", content="v1")])
+    delta_v2 = DeltaState(new_files=[FileWrite(path="main.py", content="v2 improved")])
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.side_effect = [
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta_v1),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta_v2),
+        ]
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="needs improvement",
+                hints=["add error handling", "cover edge cases"],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="looks good now"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale="agree with critic", override=False
+            ),
+            RefereeDecision(
+                disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+            ),
+        ]
+        response = await work_agent(
+            request,
+            _registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view(),
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
+            max_attempts=3,
+        )
+
+    assert response.delta == delta_v2
+    assert mock_run.call_count == 2
+    second_prompt = mock_run.call_args_list[1].args[3]
+    assert "add error handling" in second_prompt
+    assert "Revise your implementation addressing the feedback above" in second_prompt
+
+
+async def test_validation_parse_error_skips_validation_and_returns(tmp_path) -> None:
+    """work_agent returns the worker response without crashing when critic_agent raises ValueError."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    critic_provider = MagicMock()
+    referee_provider = MagicMock()
+
+    expected_delta = DeltaState(new_files=[FileWrite(path="main.py", content="content")])
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.worker.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.worker.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id, status=ResponseStatus.COMPLETED, delta=expected_delta
+        )
+        mock_critic.side_effect = ValueError("critic_agent failed after 3 retries: invalid json")
+        response = await work_agent(
+            request,
+            _registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view(),
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
+            max_attempts=3,
+        )
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.delta == expected_delta
+    mock_run.assert_called_once()
+    mock_referee.assert_not_called()
