@@ -68,7 +68,9 @@ def _compact_response_schema(response_type: type[BaseModel]) -> dict[str, object
 def _render_response_schema(response_type: type[BaseModel]) -> str:
     """Render final-response schema instructions from the actual Pydantic model."""
     schema = _compact_response_schema(response_type)
-    fields = ", ".join(schema["properties"].keys()) if isinstance(schema["properties"], dict) else ""
+    fields = (
+        ", ".join(schema["properties"].keys()) if isinstance(schema["properties"], dict) else ""
+    )
     lines = [
         f"Final response model: {response_type.__name__}",
         f"Top-level fields: {fields}",
@@ -78,7 +80,11 @@ def _render_response_schema(response_type: type[BaseModel]) -> str:
     return "\n".join(lines)
 
 
-def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[BaseModel], tracked_delta: DeltaState = DeltaState()) -> str:
+def _build_system_prompt(
+    tools: ToolRegistry | None,
+    final_response_type: type[BaseModel],
+    tracked_delta: DeltaState = DeltaState(),
+) -> str:
     has_tools = tools is not None and bool(tools)
     show_final = tools is None or not _is_empty_delta(tracked_delta)
     step2 = "2. " if has_tools and show_final else ""
@@ -98,7 +104,9 @@ def _build_system_prompt(tools: ToolRegistry | None, final_response_type: type[B
         for tool in tools:
             lines.append(f"  {tool.name}: {tool.description}")
             lines.append(f"    input schema: {json.dumps(tool.request_type.model_json_schema())}")
-            lines.append(f"    response schema: {json.dumps(tool.response_type.model_json_schema())}")
+            lines.append(
+                f"    response schema: {json.dumps(tool.response_type.model_json_schema())}"
+            )
             lines.append("")
         lines += [
             "Tool-use rules:",
@@ -154,7 +162,11 @@ async def _execute_tool(
     if tools is None:
         return (
             ToolCallResponse(
-                kind="tool_response", name=request.name, success=False, result=None, error="no tools registered"
+                kind="tool_response",
+                name=request.name,
+                success=False,
+                result=None,
+                error="no tools registered",
             ),
             tracked_delta,
         )
@@ -171,7 +183,9 @@ async def _execute_tool(
         request_obj = tool.request_type.model_validate(request.arguments)
         result = await tool.fn(request_obj)
         if not isinstance(result, tool.response_type):
-            raise ValueError(f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}")
+            raise ValueError(
+                f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}"
+            )
         updated = tracked_delta
         if request.name == "write_file":
             fw = FileWrite(path=request.arguments["path"], content=request.arguments["content"])
@@ -187,7 +201,9 @@ async def _execute_tool(
         elif request.name == "add_dependency":
             pkg = request.arguments["package"]
             if pkg not in updated.dependencies:
-                updated = updated.model_copy(update={"dependencies": list(updated.dependencies) + [pkg]})
+                updated = updated.model_copy(
+                    update={"dependencies": list(updated.dependencies) + [pkg]}
+                )
         print(
             f"[debug] tracked: tool={request.name}"
             f" delta_files={len(updated.new_files)}"
@@ -195,7 +211,9 @@ async def _execute_tool(
             f" delta_deps={len(updated.dependencies)}"
         )
         return (
-            ToolCallResponse(kind="tool_response", name=request.name, success=True, result=result.model_dump()),
+            ToolCallResponse(
+                kind="tool_response", name=request.name, success=True, result=result.model_dump()
+            ),
             updated,
         )
     except Exception as e:
@@ -230,13 +248,13 @@ def _to_follow_up(plan: PlanResponse, request: AgentRequest) -> list[AgentReques
 
     # Step 2: remap work deps — depends_on=[i] means depend on work_nodes[i]
     return [
-        work.model_copy(update={
-            "dependencies": frozenset(
-                work_nodes[j].id
-                for j in task.depends_on
-                if 0 <= j < len(work_nodes)
-            )
-        })
+        work.model_copy(
+            update={
+                "dependencies": frozenset(
+                    work_nodes[j].id for j in task.depends_on if 0 <= j < len(work_nodes)
+                )
+            }
+        )
         for work, task in zip(work_nodes, plan.tasks)
     ]
 
@@ -276,7 +294,9 @@ async def run_agent(
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
 
-        print(f"[debug] system prompt (initial):\n{_build_system_prompt(tools, final_response_type, DeltaState())}")
+        print(
+            f"[debug] system prompt (initial):\n{_build_system_prompt(tools, final_response_type, DeltaState())}"
+        )
         print(f"[debug] user prompt:\n{prompt}")
         messages: list[ChatMessage] = [
             {"role": "system", "content": ""},
@@ -288,7 +308,10 @@ async def run_agent(
         retry_count = 0
 
         for _ in range(max_tool_iterations):
-            messages[0] = {"role": "system", "content": _build_system_prompt(tools, final_response_type, tracked_delta)}
+            messages[0] = {
+                "role": "system",
+                "content": _build_system_prompt(tools, final_response_type, tracked_delta),
+            }
             raw = await provider.chat(messages)
 
             try:
@@ -301,9 +324,9 @@ async def run_agent(
                 ):
                     available_tools = ", ".join(tool.name for tool in tools) or "(none)"
                     raise ValueError(
-                        'You must call tools before returning a final response. '
+                        "You must call tools before returning a final response. "
                         f"Available tools: {available_tools}. "
-                        'Call one of the available tools using this format: '
+                        "Call one of the available tools using this format: "
                         '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
                     )
                 if (
@@ -329,7 +352,11 @@ async def run_agent(
                 correction = (
                     correction_prompt_fn(e, raw)
                     if correction_prompt_fn
-                    else f"Invalid response: {e}. Respond with valid JSON."
+                    else (
+                        f"Invalid response: {e}. new_files and edits must be lists of objects, not dicts. Respond with valid JSON."
+                        if final_response_type is DeltaState
+                        else f"Invalid response: {e}. Respond with valid JSON."
+                    )
                 )
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": correction})
@@ -345,8 +372,12 @@ async def run_agent(
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                delta=_merge_delta(tracked_delta, parsed) if isinstance(parsed, DeltaState) else None,
-                follow_up=_to_follow_up(parsed, request) if isinstance(parsed, PlanResponse) else [],
+                delta=_merge_delta(tracked_delta, parsed)
+                if isinstance(parsed, DeltaState)
+                else None,
+                follow_up=_to_follow_up(parsed, request)
+                if isinstance(parsed, PlanResponse)
+                else [],
             )
 
         raise RuntimeError(f"agent loop exceeded {max_tool_iterations} iterations")
