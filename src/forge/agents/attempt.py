@@ -31,6 +31,31 @@ class RunAgentFailed(Exception):
         super().__init__(response.error or "run_agent failed")
 
 
+def _validation_rejected_response(
+    request: AgentRequest,
+    disposition: CriticDisposition,
+    rationale: str,
+) -> AgentResponse:
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        error=(
+            f"validation rejected work with disposition '{disposition.value}': "
+            f"{rationale}"
+        ),
+        failure_kind=FailureKind.VALIDATION_REJECTED,
+    )
+
+
+def _validation_parse_failed_response(request: AgentRequest, error: ValueError) -> AgentResponse:
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        error=f"validation response could not be parsed: {error}",
+        failure_kind=FailureKind.INVALID_JSON,
+    )
+
+
 class TaskAttemptEngine:
     def __init__(
         self,
@@ -108,16 +133,12 @@ class TaskAttemptEngine:
                     )
                 except ValueError as e:
                     _logger.warning(
-                        "attempt %d/%d: critic failed on empty delta: %s — treating as ALREADY_DONE",
+                        "attempt %d/%d: critic failed on empty delta: %s",
                         attempt + 1,
                         self._max_attempts,
                         e,
                     )
-                    return AgentResponse(
-                        request_id=self._request.id,
-                        status=ResponseStatus.ALREADY_DONE,
-                        delta=response.delta,
-                    )
+                    return _validation_parse_failed_response(self._request, e)
                 if finding.disposition == CriticDisposition.ALREADY_DONE:
                     _logger.info(
                         "attempt %d/%d: critic confirmed ALREADY_DONE",
@@ -128,6 +149,17 @@ class TaskAttemptEngine:
                         request_id=self._request.id,
                         status=ResponseStatus.ALREADY_DONE,
                         delta=response.delta,
+                    )
+                if finding.disposition == CriticDisposition.REJECT:
+                    _logger.info(
+                        "attempt %d/%d: critic rejected empty delta",
+                        attempt + 1,
+                        self._max_attempts,
+                    )
+                    return _validation_rejected_response(
+                        self._request,
+                        finding.disposition,
+                        finding.rationale,
                     )
                 _logger.info(
                     "attempt %d/%d: critic=%s on empty delta — retrying",
@@ -180,16 +212,12 @@ class TaskAttemptEngine:
                 )
             except ValueError as e:
                 _logger.warning(
-                    "attempt %d/%d: validation parsing failed: %s — returning last delta",
+                    "attempt %d/%d: validation parsing failed: %s",
                     attempt + 1,
                     self._max_attempts,
                     e,
                 )
-                return AgentResponse(
-                    request_id=self._request.id,
-                    status=ResponseStatus.COMPLETED,
-                    delta=last_delta,
-                )
+                return _validation_parse_failed_response(self._request, e)
 
             _logger.info(
                 "attempt %d/%d: critic=%s referee=%s — %s",
@@ -206,6 +234,12 @@ class TaskAttemptEngine:
                     status=ResponseStatus.COMPLETED,
                     delta=last_delta,
                 )
+            if decision.disposition == CriticDisposition.REJECT:
+                return _validation_rejected_response(
+                    self._request,
+                    decision.disposition,
+                    decision.rationale,
+                )
 
             hints_text = (
                 "\n".join(f"{i + 1}. {h}" for i, h in enumerate(finding.hints))
@@ -220,10 +254,12 @@ class TaskAttemptEngine:
                 f"Revise your {self._adapter.work_noun} addressing the feedback above."
             )
 
-        _logger.warning("max_attempts (%d) exhausted; returning last delta", self._max_attempts)
-        assert last_delta is not None, "max_attempts must be >= 1"
-        return AgentResponse(
-            request_id=self._request.id,
-            status=ResponseStatus.COMPLETED,
-            delta=last_delta,
+        _logger.warning(
+            "max_attempts (%d) exhausted; validation did not accept",
+            self._max_attempts,
+        )
+        return _validation_rejected_response(
+            self._request,
+            CriticDisposition.REVISE,
+            "maximum validation attempts exhausted without an accept disposition",
         )

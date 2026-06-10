@@ -104,7 +104,8 @@ async def test_accept_on_first_attempt_returns_immediately() -> None:
 async def test_revise_injects_feedback_and_retries() -> None:
     """Engine retries with feedback injected in the prompt when disposition is REVISE."""
     request = _request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    first_delta = DeltaState(new_files=[FileWrite(path="main.py", content="first")])
+    improved_delta = DeltaState(new_files=[FileWrite(path="main.py", content="improved")])
     engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
 
     with (
@@ -112,9 +113,14 @@ async def test_revise_injects_feedback_and_retries() -> None:
         patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
         patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
     ):
-        mock_run.return_value = AgentResponse(
-            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
-        )
+        mock_run.side_effect = [
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, delta=first_delta
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, delta=improved_delta
+            ),
+        ]
         mock_critic.side_effect = [
             CriticFinding(
                 disposition=CriticDisposition.REVISE,
@@ -132,15 +138,15 @@ async def test_revise_injects_feedback_and_retries() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.delta == improved_delta
     assert mock_run.call_count == 2
     second_prompt = mock_run.call_args_list[1].args[3]
     assert "Revise your implementation addressing the feedback above" in second_prompt
     assert "add tests" in second_prompt
 
 
-async def test_reject_retries_with_feedback() -> None:
-    """Engine retries on REJECT, injecting feedback rather than failing immediately."""
+async def test_rejected_validation_returns_failed_without_delta() -> None:
+    """Engine fails immediately when validation rejects a worker delta."""
     request = _request()
     delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
     engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
@@ -159,28 +165,21 @@ async def test_reject_retries_with_feedback() -> None:
                 rationale="bad output",
                 hints=["fix everything"],
             ),
-            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="ok now"),
         ]
-        mock_referee.side_effect = [
-            RefereeDecision(
-                disposition=CriticDisposition.REJECT, rationale="still bad", override=False
-            ),
-            RefereeDecision(
-                disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
-            ),
-        ]
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REJECT, rationale="still bad", override=False
+        )
         result = await engine.run("base prompt")
 
-    assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
-    assert mock_run.call_count == 2
-    second_prompt = mock_run.call_args_list[1].args[3]
-    assert "Revise your implementation addressing the feedback above" in second_prompt
-    assert "fix everything" in second_prompt
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert result.delta is None
+    assert "reject" in (result.error or "")
+    mock_run.assert_called_once()
 
 
-async def test_max_attempts_exhaustion_returns_last_delta() -> None:
-    """Engine returns the last delta when all attempts are exhausted without acceptance."""
+async def test_repeated_revise_until_max_attempts_returns_failed_without_delta() -> None:
+    """Engine fails when all validation attempts are exhausted without acceptance."""
     request = _request()
     last_delta = DeltaState(new_files=[FileWrite(path="main.py", content="final")])
     engine = _engine(
@@ -206,13 +205,15 @@ async def test_max_attempts_exhaustion_returns_last_delta() -> None:
         )
         result = await engine.run("base prompt")
 
-    assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == last_delta
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert result.delta is None
+    assert "maximum validation attempts exhausted" in (result.error or "")
     assert mock_run.call_count == 2
 
 
-async def test_critic_parse_failure_degrades_gracefully() -> None:
-    """Engine returns the last successful delta when critic raises ValueError."""
+async def test_critic_parse_failure_returns_failed_without_delta() -> None:
+    """Engine fails when critic validation cannot be parsed."""
     request = _request()
     delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
     engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
@@ -228,10 +229,42 @@ async def test_critic_parse_failure_degrades_gracefully() -> None:
         mock_critic.side_effect = ValueError("critic_agent failed after 3 retries: invalid json")
         result = await engine.run("base prompt")
 
-    assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.INVALID_JSON
+    assert result.delta is None
+    assert "could not be parsed" in (result.error or "")
     mock_run.assert_called_once()
     mock_referee.assert_not_called()
+
+
+async def test_referee_parse_failure_returns_failed_without_delta() -> None:
+    """Engine fails when referee validation cannot be parsed."""
+    request = _request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
+
+    with (
+        patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
+        )
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT, rationale="good"
+        )
+        mock_referee.side_effect = ValueError(
+            "referee_agent failed after 3 retries: invalid json"
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.INVALID_JSON
+    assert result.delta is None
+    assert "could not be parsed" in (result.error or "")
+    mock_run.assert_called_once()
+    mock_referee.assert_called_once()
 
 
 async def test_no_providers_skips_validation() -> None:
@@ -276,7 +309,7 @@ async def test_run_agent_failure_raises_run_agent_failed() -> None:
 
 
 async def test_empty_delta_no_critic_returns_already_done() -> None:
-    """Engine returns empty delta immediately when run_agent signals empty delta and no critic is configured."""
+    """Engine returns ALREADY_DONE for an empty delta when no critic is configured."""
     request = _request()
     engine = _engine(request=request, critic_provider=None, referee_provider=None)
 
@@ -323,6 +356,33 @@ async def test_empty_delta_critic_already_done_accepts() -> None:
 
     assert result.status == ResponseStatus.ALREADY_DONE
     assert result.delta == DeltaState()
+    mock_run.assert_called_once()
+    mock_critic.assert_called_once()
+
+
+async def test_empty_delta_critic_parse_failure_returns_failed_without_delta() -> None:
+    """Engine does not treat an unparsable empty-delta critic result as ALREADY_DONE."""
+    request = _request()
+    engine = _engine(request=request, critic_provider=MagicMock(), referee_provider=MagicMock())
+
+    with (
+        patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+    ):
+        mock_run.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            delta=DeltaState(),
+            error="empty delta",
+        )
+        mock_critic.side_effect = ValueError("critic_agent failed after 3 retries: invalid json")
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.INVALID_JSON
+    assert result.delta is None
+    assert "could not be parsed" in (result.error or "")
     mock_run.assert_called_once()
     mock_critic.assert_called_once()
 

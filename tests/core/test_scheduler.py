@@ -360,6 +360,28 @@ async def test_integration_failure_cancels_transitive_dependents() -> None:
     assert final.dag[work_c.id].node_state == NodeState.CANCELLED
 
 
+async def test_validation_failed_work_does_not_apply_delta() -> None:
+    """A validation-failed work response never reaches StateService.apply_delta."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            error="validation rejected work",
+        )
+
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    ss.apply_delta.assert_not_called()
+
+
 async def test_integration_success_marks_node_integrated() -> None:
     """Node is marked INTEGRATED only when integration succeeds."""
     work = _work_request()
