@@ -14,6 +14,7 @@ from forge.agents.base import (
     PromptBuilder,
     ResponseParser,
     ToolError,
+    ToolLoop,
     TrackedToolExecutor,
     _build_system_prompt,
     _classify_failure,
@@ -443,6 +444,86 @@ def test_merge_delta_deduplicates_dependencies():
 
 
 # --- run_agent ---
+
+
+async def test_tool_loop_returns_completed_final_response_without_tools():
+    """ToolLoop returns COMPLETED for a valid final response without tool calls."""
+    request = _work_request()
+    provider = _mock_provider(_NONEMPTY_DELTA)
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=DeltaState,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 1
+
+
+async def test_tool_loop_runs_tool_call_then_final_response():
+    """ToolLoop executes one tool call and feeds the response back before final JSON."""
+    registry, mock_fn = _make_registry()
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_DELTA,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=DeltaState,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 2
+    assert mock_fn.call_count == 1
+
+
+async def test_tool_loop_retries_invalid_json():
+    """ToolLoop retries invalid JSON and succeeds on the next response."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=["not valid json", _NONEMPTY_DELTA])
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=DeltaState,
+        max_retries=3,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 2
+
+
+async def test_tool_loop_rejects_empty_delta_for_work_agent():
+    """ToolLoop preserves the empty DeltaState validation failure for WORK agents."""
+    request = _work_request()
+    provider = _mock_provider('{"edits": [], "new_files": [], "dependencies": []}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=DeltaState,
+        max_retries=0,
+    ).run()
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "empty delta" in (response.error or "")
 
 
 async def test_run_agent_routes_tool_calls_correctly():

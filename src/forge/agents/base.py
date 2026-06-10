@@ -369,6 +369,136 @@ def _render_files(delta: DeltaState, state_view: StateView) -> str:
     return "\n".join(lines)
 
 
+class ToolLoop:
+    """Run the mutable provider/tool/retry loop for one agent request."""
+
+    def __init__(
+        self,
+        request: AgentRequest,
+        provider: LLMProvider,
+        prompt: str,
+        tools: ToolRegistry | None,
+        final_response_type: type[BaseModel],
+        *,
+        max_retries: int = 3,
+        max_tool_iterations: int = 25,
+        correction_prompt_fn: Callable[[Exception, str], str] | None = None,
+        adapter_spec: AdapterSpec | None = None,
+    ) -> None:
+        self.request = request
+        self.provider = provider
+        self.prompt = prompt
+        self.tools = tools
+        self.final_response_type = final_response_type
+        self.max_retries = max_retries
+        self.max_tool_iterations = max_tool_iterations
+        self.correction_prompt_fn = correction_prompt_fn
+        self.adapter_spec = adapter_spec
+        self.prompt_builder = PromptBuilder(tools, final_response_type)
+        self.response_parser = ResponseParser(final_response_type)
+        self.tool_executor = TrackedToolExecutor(tools)
+
+    async def run(self) -> AgentResponse:
+        print(
+            f"[debug] system prompt (initial):\n{self.prompt_builder.build(DeltaState())}"
+        )
+        print(f"[debug] user prompt:\n{self.prompt}")
+        messages: list[ChatMessage] = [
+            {"role": "system", "content": ""},
+            {"role": "user", "content": self.prompt},
+        ]
+
+        requires_nonempty = (
+            self.adapter_spec.requires_nonempty_output
+            if self.adapter_spec is not None
+            else True
+        )
+        tracked_delta = DeltaState()
+        any_tool_called = False
+        retry_count = 0
+
+        for _ in range(self.max_tool_iterations):
+            messages[0] = {
+                "role": "system",
+                "content": self.prompt_builder.build(tracked_delta),
+            }
+            raw = await self.provider.chat(messages)
+
+            try:
+                parsed = self.response_parser.parse(raw)
+                if (
+                    self.tools is not None
+                    and not any_tool_called
+                    and isinstance(parsed, DeltaState)
+                    and _is_empty_delta(parsed)
+                    and requires_nonempty
+                ):
+                    available_tools = ", ".join(tool.name for tool in self.tools) or "(none)"
+                    raise ValueError(
+                        "You must call tools before returning a final response. "
+                        f"Available tools: {available_tools}. "
+                        "Call one of the available tools using this format: "
+                        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
+                    )
+                if (
+                    isinstance(parsed, DeltaState)
+                    and _is_empty_delta(_merge_delta(tracked_delta, parsed))
+                    and self.request.agent_type == AgentType.WORK
+                    and requires_nonempty
+                ):
+                    return AgentResponse(
+                        request_id=self.request.id,
+                        status=ResponseStatus.FAILED,
+                        error="empty delta: no new_files, edits, or dependencies produced",
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
+                        delta=DeltaState(),
+                    )
+            except ValueError as e:
+                if retry_count >= self.max_retries:
+                    return AgentResponse(
+                        request_id=self.request.id,
+                        status=ResponseStatus.FAILED,
+                        error=f"agent failed after {self.max_retries} retries: {e}",
+                        failure_kind=FailureKind.INVALID_JSON,
+                    )
+                retry_count += 1
+                print(f"  agent retry {retry_count}/{self.max_retries}: {e}")
+                correction = (
+                    self.correction_prompt_fn(e, raw)
+                    if self.correction_prompt_fn
+                    else (
+                        f"Invalid response: {e}. new_files and edits must be lists of objects, not dicts. Respond with valid JSON."
+                        if self.final_response_type is DeltaState
+                        else f"Invalid response: {e}. Respond with valid JSON."
+                    )
+                )
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({"role": "user", "content": correction})
+                continue
+
+            if isinstance(parsed, ToolCallRequest):
+                tool_response, tracked_delta = await self.tool_executor.execute(
+                    parsed, tracked_delta
+                )
+                any_tool_called = True
+                messages.append({"role": "assistant", "content": raw})
+                messages.append({"role": "user", "content": tool_response.model_dump_json()})
+                continue
+
+            return AgentResponse(
+                request_id=self.request.id,
+                status=ResponseStatus.COMPLETED,
+                delta=_merge_delta(tracked_delta, parsed)
+                if isinstance(parsed, DeltaState)
+                else None,
+                follow_up=_to_follow_up(parsed, self.request)
+                if isinstance(parsed, PlanResponse)
+                else [],
+            )
+
+        raise RuntimeError(f"agent loop exceeded {self.max_tool_iterations} iterations")
+
+
 async def run_agent(
     request: AgentRequest,
     spec_type: type[S],
@@ -386,100 +516,17 @@ async def run_agent(
         if not isinstance(request.spec, spec_type):
             raise TypeError(f"expected {spec_type.__name__}, got {type(request.spec).__name__}")
 
-        print(
-            f"[debug] system prompt (initial):\n{_build_system_prompt(tools, final_response_type, DeltaState())}"
-        )
-        print(f"[debug] user prompt:\n{prompt}")
-        messages: list[ChatMessage] = [
-            {"role": "system", "content": ""},
-            {"role": "user", "content": prompt},
-        ]
-
-        requires_nonempty = (
-            adapter_spec.requires_nonempty_output if adapter_spec is not None else True
-        )
-        tracked_delta = DeltaState()
-        any_tool_called = False
-        retry_count = 0
-
-        for _ in range(max_tool_iterations):
-            messages[0] = {
-                "role": "system",
-                "content": _build_system_prompt(tools, final_response_type, tracked_delta),
-            }
-            raw = await provider.chat(messages)
-
-            try:
-                parsed = _parse_response(raw, tools, final_response_type)
-                if (
-                    tools is not None
-                    and not any_tool_called
-                    and isinstance(parsed, DeltaState)
-                    and _is_empty_delta(parsed)
-                    and requires_nonempty
-                ):
-                    available_tools = ", ".join(tool.name for tool in tools) or "(none)"
-                    raise ValueError(
-                        "You must call tools before returning a final response. "
-                        f"Available tools: {available_tools}. "
-                        "Call one of the available tools using this format: "
-                        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
-                    )
-                if (
-                    isinstance(parsed, DeltaState)
-                    and _is_empty_delta(_merge_delta(tracked_delta, parsed))
-                    and request.agent_type == AgentType.WORK
-                    and requires_nonempty
-                ):
-                    return AgentResponse(
-                        request_id=request.id,
-                        status=ResponseStatus.FAILED,
-                        error="empty delta: no new_files, edits, or dependencies produced",
-                        failure_kind=FailureKind.VALIDATION_REJECTED,
-                        delta=DeltaState(),
-                    )
-            except ValueError as e:
-                if retry_count >= max_retries:
-                    return AgentResponse(
-                        request_id=request.id,
-                        status=ResponseStatus.FAILED,
-                        error=f"agent failed after {max_retries} retries: {e}",
-                        failure_kind=FailureKind.INVALID_JSON,
-                    )
-                retry_count += 1
-                print(f"  agent retry {retry_count}/{max_retries}: {e}")
-                correction = (
-                    correction_prompt_fn(e, raw)
-                    if correction_prompt_fn
-                    else (
-                        f"Invalid response: {e}. new_files and edits must be lists of objects, not dicts. Respond with valid JSON."
-                        if final_response_type is DeltaState
-                        else f"Invalid response: {e}. Respond with valid JSON."
-                    )
-                )
-                messages.append({"role": "assistant", "content": raw})
-                messages.append({"role": "user", "content": correction})
-                continue
-
-            if isinstance(parsed, ToolCallRequest):
-                tool_response, tracked_delta = await _execute_tool(parsed, tools, tracked_delta)
-                any_tool_called = True
-                messages.append({"role": "assistant", "content": raw})
-                messages.append({"role": "user", "content": tool_response.model_dump_json()})
-                continue
-
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                delta=_merge_delta(tracked_delta, parsed)
-                if isinstance(parsed, DeltaState)
-                else None,
-                follow_up=_to_follow_up(parsed, request)
-                if isinstance(parsed, PlanResponse)
-                else [],
-            )
-
-        raise RuntimeError(f"agent loop exceeded {max_tool_iterations} iterations")
+        return await ToolLoop(
+            request=request,
+            provider=provider,
+            prompt=prompt,
+            tools=tools,
+            final_response_type=final_response_type,
+            max_retries=max_retries,
+            max_tool_iterations=max_tool_iterations,
+            correction_prompt_fn=correction_prompt_fn,
+            adapter_spec=adapter_spec,
+        ).run()
 
     except Exception as e:
         print(f"agent error: {type(e).__name__}: {e}")
