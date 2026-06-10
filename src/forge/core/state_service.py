@@ -9,9 +9,9 @@ from forge.core.models import DeltaState, FileView, RunResult, StateView
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
-_EXCLUDED_DIR_NAMES = frozenset({".venv", "__pycache__", ".git"})
+_EXCLUDED_DIR_NAMES = frozenset({"__pycache__", "node_modules", "dist", "build"})
 _EXCLUDED_FILE_NAMES = frozenset({"CACHEDIR.TAG", "pyvenv.cfg"})
-_EXCLUDED_SUFFIXES = frozenset({".pyc", ".lock"})
+_EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyo", ".lock", ".egg-info"})
 
 _TEST_TIMEOUT = 60
 
@@ -19,7 +19,8 @@ _TEST_TIMEOUT = 60
 def _is_noise(path: Path, root: Path) -> bool:
     parts = path.relative_to(root).parts
     return (
-        any(p in _EXCLUDED_DIR_NAMES for p in parts)
+        any(p.startswith(".") for p in parts)
+        or any(p in _EXCLUDED_DIR_NAMES for p in parts)
         or path.name in _EXCLUDED_FILE_NAMES
         or path.suffix in _EXCLUDED_SUFFIXES
     )

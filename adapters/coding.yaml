@@ -29,3 +29,6 @@ prompt_template: |
     any other mechanism
   - csv, json, os, re, and other stdlib modules are never dependencies
   - Only list third-party packages that must be installed via uv
+  - pytest plugins (pytest-mock, pytest-cov, etc.) are dev dependencies
+    — add them to pyproject.toml [project.optional-dependencies] dev
+    via an edit, never in DeltaState.dependencies
