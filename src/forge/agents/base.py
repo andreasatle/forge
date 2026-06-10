@@ -80,9 +80,7 @@ class PromptBuilder:
         """Render final-response schema instructions from the actual Pydantic model."""
         schema = cls.compact_response_schema(response_type)
         fields = (
-            ", ".join(schema["properties"].keys())
-            if isinstance(schema["properties"], dict)
-            else ""
+            ", ".join(schema["properties"].keys()) if isinstance(schema["properties"], dict) else ""
         )
         lines = [
             f"Final response model: {response_type.__name__}",
@@ -350,9 +348,7 @@ class ToolLoop:
         self.tool_executor = TrackedToolExecutor(tools)
 
     async def run(self) -> AgentResponse:
-        print(
-            f"[debug] system prompt (initial):\n{self.prompt_builder.build(DeltaState())}"
-        )
+        print(f"[debug] system prompt (initial):\n{self.prompt_builder.build(DeltaState())}")
         print(f"[debug] user prompt:\n{self.prompt}")
         messages: list[ChatMessage] = [
             {"role": "system", "content": ""},
@@ -360,9 +356,7 @@ class ToolLoop:
         ]
 
         requires_nonempty = (
-            self.adapter_spec.requires_nonempty_output
-            if self.adapter_spec is not None
-            else True
+            self.adapter_spec.requires_nonempty_output if self.adapter_spec is not None else True
         )
         tracked_delta = DeltaState()
         any_tool_called = False
@@ -418,7 +412,10 @@ class ToolLoop:
                     self.correction_prompt_fn(e, raw)
                     if self.correction_prompt_fn
                     else (
-                        f"Invalid response: {e}. new_files and edits must be lists of objects, not dicts. Respond with valid JSON."
+                        f"Invalid response: {e}. "
+                        'new_files must be a list of objects: [{"path": "...", "content": "..."}]\n'
+                        'edits must be a list of objects: [{"path": "...", "old": "...", "new": "..."}]\n'
+                        "Do not use dicts or nested objects. Respond with valid JSON."
                         if self.final_response_type is DeltaState
                         else f"Invalid response: {e}. Respond with valid JSON."
                     )

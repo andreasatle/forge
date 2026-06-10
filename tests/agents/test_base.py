@@ -1038,6 +1038,28 @@ async def test_run_agent_allows_empty_delta_after_tool_call_when_adapter_allows_
     assert response.delta == DeltaState()
 
 
+async def test_tool_loop_correction_message_includes_format_reminder_on_delta_state_parse_failure():
+    """Correction message after a DeltaState parse failure includes the field format reminder."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(side_effect=["not valid json", _NONEMPTY_DELTA])
+
+    await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=DeltaState,
+        max_retries=3,
+    ).run()
+
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    correction = second_call_messages[-1]["content"]
+    assert "new_files must be a list of objects" in correction
+    assert "edits must be a list of objects" in correction
+    assert "Do not use dicts or nested objects" in correction
+
+
 async def test_run_agent_allows_empty_delta_without_tool_calls_when_adapter_allows_it():
     """run_agent accepts empty DeltaState with no tool calls when adapter allows empty output."""
     registry, _ = _make_registry()
