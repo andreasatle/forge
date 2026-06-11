@@ -105,6 +105,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             language_registry,
             worker_provider,
             state_services=state_services,
+            max_retries=config.max_retries,
             max_tool_iterations=config.max_tool_iterations,
             critic_provider=critic_provider,
             referee_provider=referee_provider,

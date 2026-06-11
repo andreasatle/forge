@@ -475,6 +475,29 @@ async def test_make_work_handler_passes_critic_and_referee_providers(tmp_path: P
     assert captured["referee_provider"] is referee
 
 
+async def test_make_work_handler_forwards_max_retries(tmp_path: Path) -> None:
+    """make_work_handler forwards max_retries to work_agent."""
+    from unittest.mock import patch
+
+    captured: dict[str, object] = {}
+
+    async def capturing_work_agent(*args: object, **kwargs: object) -> AgentResponse:
+        captured["max_retries"] = kwargs.get("max_retries")
+        return AgentResponse(request_id=args[0].id, status=ResponseStatus.COMPLETED)  # type: ignore[union-attr]
+
+    with patch("forge.core.runner.work_agent", capturing_work_agent):
+        handler = make_work_handler(
+            _mock_registry(),
+            _make_workspace(tmp_path),
+            LanguageRegistry(),
+            _mock_provider(),
+            max_retries=7,
+        )
+        await handler(_work_request())
+
+    assert captured["max_retries"] == 7
+
+
 async def test_make_work_handler_passes_none_providers_when_omitted(tmp_path: Path) -> None:
     """make_work_handler passes None for critic and referee when not provided."""
     from unittest.mock import patch
