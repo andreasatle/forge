@@ -450,6 +450,7 @@ class AgentResponse(BaseModel):
     failure_kind: FailureKind | None = None
     ran_tests_and_passed: bool = False
     diagnostics: list[AgentDiagnostic] = Field(default_factory=_empty_agent_diagnostics)
+    revision: RevisionRequest | None = None
 
     @model_validator(mode="before")
     @classmethod

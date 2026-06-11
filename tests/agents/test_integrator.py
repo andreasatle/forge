@@ -9,6 +9,7 @@ from forge.core.models import (
     FailureKind,
     FileWrite,
     ResponseStatus,
+    RevisionRequest,
     RunResult,
 )
 from forge.core.state_service import StateService
@@ -165,6 +166,25 @@ async def test_test_failure_preserves_full_test_output():
     assert response.delta.errors[0].description == output
 
 
+async def test_failed_tests_attach_revision_request():
+    """When tests fail, response.revision is a RevisionRequest with test output as item rationale."""
+    output = "FAILED tests/test_foo.py::test_x\nAssertionError"
+    ss = _mock_ss(passed=False, output=output)
+    response = await integrate(request_id=uuid4(), state_service=ss, delta=DeltaState())
+    assert isinstance(response.revision, RevisionRequest)
+    assert response.revision.items[0].criterion_id == "tests_pass"
+    assert response.revision.items[0].rationale == output
+
+
+async def test_failed_tests_revision_rationale_contains_test_output():
+    """RevisionRequest rationale field contains the full test output."""
+    output = "detailed failure\ntraceback here"
+    ss = _mock_ss(passed=False, output=output)
+    response = await integrate(request_id=uuid4(), state_service=ss, delta=DeltaState())
+    assert response.revision is not None
+    assert response.revision.items[0].rationale == output
+
+
 # --- clean integration ---
 
 
@@ -179,3 +199,10 @@ async def test_returns_empty_errors_on_clean_integration():
     assert response.status == ResponseStatus.COMPLETED
     assert response.delta is not None
     assert response.delta.errors == []
+
+
+async def test_successful_integration_has_no_revision():
+    """A clean integration (tests pass) sets revision=None on the response."""
+    ss = _mock_ss(passed=True)
+    response = await integrate(request_id=uuid4(), state_service=ss, delta=DeltaState())
+    assert response.revision is None

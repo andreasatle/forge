@@ -8,6 +8,8 @@ from forge.core.models import (
     FailureKind,
     IntegrationError,
     ResponseStatus,
+    RevisionItem,
+    RevisionRequest,
 )
 from forge.core.state_service import StateService
 
@@ -52,12 +54,24 @@ async def integrate(
         )
         description = "\n".join(line for line in lines if line)
         errors.append(IntegrationError(kind="test_failed", description=description))
+        revision = RevisionRequest(
+            rationale="Integration tests failed — revise your implementation to fix the failures.",
+            items=[
+                RevisionItem(
+                    criterion_id="tests_pass",
+                    required_change="Fix the failing tests",
+                    rationale=description,
+                )
+            ],
+            prior_attempts=0,
+        )
         return AgentResponse(
             request_id=request_id,
             status=ResponseStatus.FAILED,
             failure_kind=FailureKind.TEST_FAILED,
             error=f"integration tests failed: {description}",
             delta=delta.model_copy(update={"errors": errors}),
+            revision=revision,
         )
 
     return AgentResponse(
