@@ -15,6 +15,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.state_service import StateService
+from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
@@ -53,6 +54,7 @@ def make_work_handler(
     max_tool_iterations: int = 25,
     critic_provider: LLMProvider | None = None,
     referee_provider: LLMProvider | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
 
@@ -78,6 +80,7 @@ def make_work_handler(
             max_tool_iterations=max_tool_iterations,
             critic_provider=critic_provider,
             referee_provider=referee_provider,
+            telemetry_sink=telemetry_sink,
         )
 
     return work_handler
@@ -94,6 +97,7 @@ def make_plan_handler(
     artifact_types: dict[str, str] | None = None,
     artifact_descriptions: dict[str, str] | None = None,
     artifact_language_guidance: dict[str, str] | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
 
@@ -114,6 +118,7 @@ def make_plan_handler(
             artifact_types=artifact_types,
             artifact_descriptions=artifact_descriptions,
             artifact_language_guidance=artifact_language_guidance,
+            telemetry_sink=telemetry_sink,
         )
 
     return plan_handler

@@ -11,6 +11,7 @@ from forge.core.models import (
     WorkSpec,
     render_agent_contract,
 )
+from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.llm.providers import LLMProvider
@@ -56,6 +57,7 @@ class WorkTaskExecutor:
         critic_provider: LLMProvider | None = None,
         referee_provider: LLMProvider | None = None,
         max_attempts: int = 3,
+        telemetry_sink: TelemetrySink | None = None,
     ) -> None:
         self.registry = registry
         self.workspace = workspace
@@ -66,6 +68,7 @@ class WorkTaskExecutor:
         self.critic_provider = critic_provider
         self.referee_provider = referee_provider
         self.max_attempts = max_attempts
+        self.telemetry_sink = telemetry_sink
 
     async def run(self, request: AgentRequest, state_view: StateView) -> AgentResponse:
         """Execute a single work task request and return the agent response."""
@@ -166,6 +169,8 @@ class WorkTaskExecutor:
             critic_provider=self.critic_provider,
             referee_provider=self.referee_provider,
             max_attempts=self.max_attempts,
+            telemetry_sink=self.telemetry_sink,
+            run_id=getattr(self.telemetry_sink, "run_id", None),
         )
 
         try:
@@ -186,6 +191,7 @@ async def work_agent(
     critic_provider: LLMProvider | None = None,
     referee_provider: LLMProvider | None = None,
     max_attempts: int = 3,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     return await WorkTaskExecutor(
@@ -198,4 +204,5 @@ async def work_agent(
         critic_provider=critic_provider,
         referee_provider=referee_provider,
         max_attempts=max_attempts,
+        telemetry_sink=telemetry_sink,
     ).run(request, state_view)

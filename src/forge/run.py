@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 from pathlib import Path
+from uuid import uuid4
 
 from forge.adapters.registry import AdapterRegistry
 from forge.core.config import ForgeConfig
@@ -22,6 +23,7 @@ from forge.core.runner import (
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.state_service import StateService
+from forge.core.telemetry import JsonlTelemetrySink, TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.factory import make_provider
@@ -99,6 +101,18 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         initial_state = None
         northstar = config.northstar
 
+    run_id = uuid4()
+    telemetry_sink: TelemetrySink | None
+    try:
+        telemetry_sink = JsonlTelemetrySink(
+            workspace.telemetry_dir(),
+            run_id,
+            metadata={"workspace": str(workspace.path), "northstar": northstar},
+        )
+    except Exception as e:
+        print(f"telemetry disabled: {type(e).__name__}: {e}")
+        telemetry_sink = None
+
     registry = AdapterRegistry()
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
@@ -140,6 +154,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             artifact_types=artifact_types,
             artifact_descriptions=artifact_descriptions,
             artifact_language_guidance=artifact_language_guidance,
+            telemetry_sink=telemetry_sink,
         ),
     )
     runner.register(
@@ -154,6 +169,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             max_tool_iterations=config.max_tool_iterations,
             critic_provider=worker_critic_provider,
             referee_provider=worker_referee_provider,
+            telemetry_sink=telemetry_sink,
         ),
     )
 
@@ -176,9 +192,13 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         on_idle=lambda state: print(f"~ idle: {len(state.dag)} nodes in DAG"),
     )
 
-    final = await Scheduler(runner=runner, state_services=state_services, callbacks=callbacks).run(
-        state, global_planner
-    )
+    final = await Scheduler(
+        runner=runner,
+        state_services=state_services,
+        callbacks=callbacks,
+        telemetry_sink=telemetry_sink,
+        run_id=run_id,
+    ).run(state, global_planner)
 
     path = save_run(final, workspace)
     print(f"run saved: {path}")

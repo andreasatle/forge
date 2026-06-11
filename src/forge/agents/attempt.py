@@ -4,6 +4,9 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, cast, runtime_checkable
+from uuid import UUID
+
+from pydantic import BaseModel
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.base import render_files
@@ -23,6 +26,7 @@ from forge.core.models import (
     RevisionRequest,
     StateView,
 )
+from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 from forge.llm.providers import LLMProvider
 
 _logger = logging.getLogger(__name__)
@@ -339,6 +343,63 @@ def _render_revision_requests(
     return "\n".join(lines)
 
 
+def _preview(text: str | None, limit: int = 500) -> str | None:
+    if text is None:
+        return None
+    stripped = text.strip()
+    if len(stripped) <= limit:
+        return stripped
+    return f"{stripped[: limit - 15].rstrip()} ...[truncated]"
+
+
+def _delta_summary(delta: DeltaState) -> dict[str, object]:
+    return {
+        "new_files_count": len(delta.new_files),
+        "edit_count": len(delta.edits),
+        "dependency_count": len(delta.dependencies),
+        "new_file_paths": [file.path for file in delta.new_files],
+        "edit_paths": [edit.path for edit in delta.edits],
+        "dependencies": list(delta.dependencies),
+        "base_version": delta.base_version,
+    }
+
+
+def _plan_summary(plan: PlanResponse) -> dict[str, object]:
+    return {
+        "task_count": len(plan.tasks),
+        "tasks": [
+            {
+                "objective": task.objective,
+                "adapter": task.adapter,
+                "artifact": task.artifact,
+                "language": task.language,
+                "depends_on": list(task.depends_on),
+            }
+            for task in plan.tasks
+        ],
+    }
+
+
+def _producer_response_summary(response: AgentResponse) -> dict[str, object]:
+    output_type = type(response.output).__name__ if response.output is not None else None
+    data: dict[str, object] = {
+        "status": response.status.value,
+        "failure_kind": response.failure_kind.value if response.failure_kind else None,
+        "error": _preview(response.error),
+        "output_type": output_type,
+        "ran_tests_and_passed": response.ran_tests_and_passed,
+    }
+    if isinstance(response.output, DeltaState):
+        data["delta"] = _delta_summary(response.output)
+    elif isinstance(response.output, PlanResponse):
+        data["plan"] = _plan_summary(response.output)
+    return data
+
+
+def _model_data(model: BaseModel) -> dict[str, object]:
+    return cast(dict[str, object], model.model_dump(mode="json"))
+
+
 class AttemptEngine[T]:
     """Generic PWC (Plan-Work-Critique) retry loop for work and plan agents."""
 
@@ -352,6 +413,8 @@ class AttemptEngine[T]:
         critic_provider: LLMProvider | None = None,
         referee_provider: LLMProvider | None = None,
         max_attempts: int = 3,
+        telemetry_sink: TelemetrySink | None = None,
+        run_id: UUID | None = None,
     ) -> None:
         self._request = request
         self._state_view = state_view
@@ -361,12 +424,54 @@ class AttemptEngine[T]:
         self._critic_provider = critic_provider
         self._referee_provider = referee_provider
         self._max_attempts = max_attempts
+        self._telemetry_sink = telemetry_sink
+        self._run_id = run_id
+
+    def _emit(
+        self,
+        *,
+        attempt_number: int | None,
+        role: str,
+        phase: str,
+        event_type: str,
+        status: str | None = None,
+        summary: str | None = None,
+        data: dict[str, object] | None = None,
+    ) -> None:
+        if self._run_id is None:
+            return
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=self._request.id,
+                request_id=self._request.id,
+                agent_type=self._request.agent_type.value,
+                attempt_number=attempt_number,
+                role=role,
+                phase=phase,
+                event_type=event_type,
+                status=status,
+                summary=summary,
+                data=data or {},
+            ),
+        )
 
     async def run(self, prompt: str) -> AgentResponse:
         """Run attempts with validation/retry; return AgentResponse."""
         revision_requests: list[RevisionRequest] = []
 
         for attempt in range(self._max_attempts):
+            attempt_number = attempt + 1
+            self._emit(
+                attempt_number=attempt_number,
+                role="producer",
+                phase="pwc",
+                event_type="pwc.attempt.started",
+                status="started",
+                summary=f"attempt {attempt_number}/{self._max_attempts} started",
+                data={"max_attempts": self._max_attempts},
+            )
             current_prompt = (
                 prompt
                 if not revision_requests
@@ -383,6 +488,15 @@ class AttemptEngine[T]:
             )
             response = await self._run_fn(current_prompt)
             output = self._validator.extract_from_response(response)
+            self._emit(
+                attempt_number=attempt_number,
+                role="producer",
+                phase="producer",
+                event_type="producer.response.parsed",
+                status=response.status.value,
+                summary=f"producer returned {response.status.value}",
+                data=_producer_response_summary(response),
+            )
 
             if (
                 response.status == ResponseStatus.FAILED
@@ -393,7 +507,7 @@ class AttemptEngine[T]:
                 if response.ran_tests_and_passed:
                     _logger.info(
                         "attempt %d/%d: empty output but ran_tests_and_passed — ALREADY_DONE",
-                        attempt + 1,
+                        attempt_number,
                         self._max_attempts,
                     )
                     return AgentResponse(
@@ -407,32 +521,39 @@ class AttemptEngine[T]:
                     if not is_last:
                         _logger.info(
                             "attempt %d/%d: empty output, no critic — injecting correction, retrying",
-                            attempt + 1,
+                            attempt_number,
                             self._max_attempts,
                         )
-                        revision_requests.append(
-                            _build_revision_request(
-                                rationale=(
-                                    f"Your previous attempt produced no "
-                                    f"{self._validator.work_noun()}."
-                                ),
-                                prior_attempts=attempt + 1,
-                                items=[
-                                    RevisionItem(
-                                        required_change=(
-                                            "Produce concrete output satisfying the "
-                                            "AgentRequest contract."
-                                        ),
-                                        rationale="The previous attempt produced no output.",
-                                    )
-                                ],
-                            )
+                        revision_request = _build_revision_request(
+                            rationale=(
+                                f"Your previous attempt produced no {self._validator.work_noun()}."
+                            ),
+                            prior_attempts=attempt_number,
+                            items=[
+                                RevisionItem(
+                                    required_change=(
+                                        "Produce concrete output satisfying the "
+                                        "AgentRequest contract."
+                                    ),
+                                    rationale="The previous attempt produced no output.",
+                                )
+                            ],
+                        )
+                        revision_requests.append(revision_request)
+                        self._emit(
+                            attempt_number=attempt_number,
+                            role="revision_loop",
+                            phase="pwc",
+                            event_type="pwc.revision.appended",
+                            status="revise",
+                            summary="revision request appended",
+                            data={"revision_request": _model_data(revision_request)},
                         )
                         continue
                     if not self._validator.requires_nonempty():
                         _logger.info(
                             "attempt %d/%d: empty output, no critic, last attempt — ALREADY_DONE",
-                            attempt + 1,
+                            attempt_number,
                             self._max_attempts,
                         )
                         return AgentResponse(
@@ -443,7 +564,7 @@ class AttemptEngine[T]:
                         )
                     _logger.info(
                         "attempt %d/%d: empty output, no critic, last attempt, requires nonempty — FAILED",
-                        attempt + 1,
+                        attempt_number,
                         self._max_attempts,
                     )
                     return AgentResponse(
@@ -467,15 +588,24 @@ class AttemptEngine[T]:
                 except ValueError as e:
                     _logger.warning(
                         "attempt %d/%d: critic failed on empty output: %s",
-                        attempt + 1,
+                        attempt_number,
                         self._max_attempts,
                         e,
                     )
                     return _validation_parse_failed_response(self._request, e)
+                self._emit(
+                    attempt_number=attempt_number,
+                    role="critic",
+                    phase="critic",
+                    event_type="critic.finding.parsed",
+                    status=finding.disposition.value,
+                    summary=_preview(finding.rationale),
+                    data={"critic_finding": _model_data(finding)},
+                )
                 if finding.disposition == CriticDisposition.ALREADY_DONE:
                     _logger.info(
                         "attempt %d/%d: critic confirmed ALREADY_DONE",
-                        attempt + 1,
+                        attempt_number,
                         self._max_attempts,
                     )
                     return AgentResponse(
@@ -487,7 +617,7 @@ class AttemptEngine[T]:
                 if finding.disposition == CriticDisposition.REJECT:
                     _logger.info(
                         "attempt %d/%d: critic rejected empty output",
-                        attempt + 1,
+                        attempt_number,
                         self._max_attempts,
                     )
                     return _validation_rejected_response(
@@ -498,16 +628,24 @@ class AttemptEngine[T]:
                     )
                 _logger.info(
                     "attempt %d/%d: critic=%s on empty output — retrying",
-                    attempt + 1,
+                    attempt_number,
                     self._max_attempts,
                     finding.disposition.value,
                 )
-                revision_requests.append(
-                    _build_revision_request(
-                        rationale=finding.rationale,
-                        prior_attempts=attempt + 1,
-                        items=_revision_items_from_finding(finding),
-                    )
+                revision_request = _build_revision_request(
+                    rationale=finding.rationale,
+                    prior_attempts=attempt_number,
+                    items=_revision_items_from_finding(finding),
+                )
+                revision_requests.append(revision_request)
+                self._emit(
+                    attempt_number=attempt_number,
+                    role="revision_loop",
+                    phase="pwc",
+                    event_type="pwc.revision.appended",
+                    status="revise",
+                    summary="revision request appended",
+                    data={"revision_request": _model_data(revision_request)},
                 )
                 continue
 
@@ -539,7 +677,7 @@ class AttemptEngine[T]:
             except ValueError as e:
                 _logger.warning(
                     "attempt %d/%d: validation parsing failed: %s",
-                    attempt + 1,
+                    attempt_number,
                     self._max_attempts,
                     e,
                 )
@@ -547,11 +685,29 @@ class AttemptEngine[T]:
 
             _logger.info(
                 "attempt %d/%d: critic=%s referee=%s — %s",
-                attempt + 1,
+                attempt_number,
                 self._max_attempts,
                 finding.disposition.value,
                 decision.disposition.value,
                 "returning" if decision.disposition == CriticDisposition.ACCEPT else "retrying",
+            )
+            self._emit(
+                attempt_number=attempt_number,
+                role="critic",
+                phase="critic",
+                event_type="critic.finding.parsed",
+                status=finding.disposition.value,
+                summary=_preview(finding.rationale),
+                data={"critic_finding": _model_data(finding)},
+            )
+            self._emit(
+                attempt_number=attempt_number,
+                role="referee",
+                phase="referee",
+                event_type="referee.decision.parsed",
+                status=decision.disposition.value,
+                summary=_preview(decision.rationale),
+                data={"referee_decision": _model_data(decision)},
             )
 
             if decision.disposition == CriticDisposition.ACCEPT:
@@ -569,17 +725,38 @@ class AttemptEngine[T]:
                 if decision.revision_items
                 else _revision_items_from_finding(finding)
             )
-            revision_requests.append(
-                _build_revision_request(
-                    rationale=decision.rationale,
-                    prior_attempts=attempt + 1,
-                    items=revision_items,
-                )
+            revision_request = _build_revision_request(
+                rationale=decision.rationale,
+                prior_attempts=attempt_number,
+                items=revision_items,
+            )
+            revision_requests.append(revision_request)
+            self._emit(
+                attempt_number=attempt_number,
+                role="revision_loop",
+                phase="pwc",
+                event_type="pwc.revision.appended",
+                status="revise",
+                summary="revision request appended",
+                data={"revision_request": _model_data(revision_request)},
             )
 
         _logger.warning(
             "max_attempts (%d) exhausted; validation did not accept",
             self._max_attempts,
+        )
+        self._emit(
+            attempt_number=self._max_attempts,
+            role="revision_loop",
+            phase="pwc",
+            event_type="pwc.exhausted",
+            status="failed",
+            summary="maximum validation attempts exhausted without an accept disposition",
+            data={
+                "attempt_count": self._max_attempts,
+                "final_disposition": CriticDisposition.REVISE.value,
+                "error": "maximum validation attempts exhausted without an accept disposition",
+            },
         )
         return _validation_rejected_response(
             self._request,

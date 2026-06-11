@@ -12,6 +12,7 @@ from forge.core.models import (
     StateView,
     render_agent_contract,
 )
+from forge.core.telemetry import TelemetrySink
 from forge.llm.providers import LLMProvider
 
 CORRECTION_PROMPT = """
@@ -74,6 +75,7 @@ class PlannerTaskExecutor:
         referee_provider: LLMProvider | None = None,
         registry: AdapterRegistry | None = None,
         max_attempts: int = 3,
+        telemetry_sink: TelemetrySink | None = None,
     ) -> None:
         self.provider = provider
         self.artifact_names = artifact_names
@@ -86,6 +88,7 @@ class PlannerTaskExecutor:
         self.referee_provider = referee_provider
         self.registry = registry
         self.max_attempts = max_attempts
+        self.telemetry_sink = telemetry_sink
 
     async def run(self, request: AgentRequest) -> AgentResponse:
         """Send the northstar goal to the planner LLM and return follow-up work requests."""
@@ -135,6 +138,8 @@ class PlannerTaskExecutor:
             critic_provider=self.critic_provider,
             referee_provider=self.referee_provider,
             max_attempts=self.max_attempts,
+            telemetry_sink=self.telemetry_sink,
+            run_id=getattr(self.telemetry_sink, "run_id", None),
         )
 
         try:
@@ -175,6 +180,7 @@ async def plan_agent(
     artifact_types: dict[str, str] | None = None,
     artifact_descriptions: dict[str, str] | None = None,
     artifact_language_guidance: dict[str, str] | None = None,
+    telemetry_sink: TelemetrySink | None = None,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     return await PlannerTaskExecutor(
@@ -188,4 +194,5 @@ async def plan_agent(
         critic_provider=critic_provider,
         referee_provider=referee_provider,
         registry=registry,
+        telemetry_sink=telemetry_sink,
     ).run(request)

@@ -33,12 +33,17 @@ class Workspace:
         """Return the path to the run logs directory."""
         return self.path / "logs"
 
+    def telemetry_dir(self) -> Path:
+        """Return the path to the framework-owned telemetry directory."""
+        return self.path / "telemetry"
+
     def init(self) -> None:
         """Create the workspace directory tree, raising NotADirectoryError if path is a file."""
         if self.path.exists() and not self.path.is_dir():
             raise NotADirectoryError(f"{self.path} exists but is not a directory")
         self.path.mkdir(parents=True, exist_ok=True)
         self.logs_dir().mkdir(exist_ok=True)
+        self.telemetry_dir().mkdir(exist_ok=True)
 
     def init_artifact(self, name: str, plugin: LanguagePlugin | None = None) -> None:
         """Create the artifact root directory. For language-backed artifacts, also run init and sync if the directory is new."""

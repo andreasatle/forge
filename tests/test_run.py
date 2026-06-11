@@ -29,6 +29,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.scheduler import SchedulerCallbacks
+from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.run import _format_failed_node, _start
@@ -88,6 +89,7 @@ async def test_start_wires_nested_planner_and_worker_models(
         artifact_types: dict[str, str] | None = None,
         artifact_descriptions: dict[str, str] | None = None,
         artifact_language_guidance: dict[str, str] | None = None,
+        telemetry_sink: TelemetrySink | None = None,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None
@@ -113,6 +115,7 @@ async def test_start_wires_nested_planner_and_worker_models(
         critic_provider: _FakeProvider | None = None,
         referee_provider: _FakeProvider | None = None,
         max_attempts: int = 3,
+        telemetry_sink: TelemetrySink | None = None,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None
@@ -128,6 +131,8 @@ async def test_start_wires_nested_planner_and_worker_models(
             runner: Callable[[AgentRequest], Awaitable[AgentResponse]],
             state_services: object | None = None,
             callbacks: SchedulerCallbacks | None = None,
+            telemetry_sink: TelemetrySink | None = None,
+            run_id: object | None = None,
         ) -> None:
             self.runner = runner
 

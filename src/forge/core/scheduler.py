@@ -4,7 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from forge.agents.integrator import integrate
 from forge.agents.plan_follow_up import PlanFollowUpBuilder
@@ -24,6 +24,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.state_service import StateService
+from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
@@ -48,11 +49,46 @@ class Scheduler:
         runner: AgentRunner,
         state_services: dict[str, StateService] | None = None,
         callbacks: SchedulerCallbacks | None = None,
+        telemetry_sink: TelemetrySink | None = None,
+        run_id: UUID | None = None,
     ) -> None:
         self._runner = runner
         self._state_services = state_services
         self._callbacks = callbacks or SchedulerCallbacks()
         self._stale_retry_counts: dict[RequestId, int] = {}
+        self._telemetry_sink = telemetry_sink
+        self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
+
+    def _emit_node_failed(self, node: DAGNode) -> None:
+        if self._run_id is None:
+            return
+        response = node.response
+        data: dict[str, object] = {}
+        status: str | None = None
+        summary: str | None = None
+        if response is not None:
+            status = response.status.value
+            summary = response.error
+            data = {
+                "status": response.status.value,
+                "failure_kind": response.failure_kind.value if response.failure_kind else None,
+                "error": response.error,
+            }
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=node.request.id,
+                request_id=node.request.id,
+                agent_type=node.request.agent_type.value,
+                role="scheduler",
+                phase="scheduler",
+                event_type="node.failed",
+                status=status,
+                summary=summary,
+                data=data,
+            ),
+        )
 
     async def run(
         self,
@@ -95,6 +131,7 @@ class Scheduler:
                 if isinstance(result, BaseException):
                     failed = current.with_state(NodeState.FAILED)
                     state = state.update_node(failed)
+                    self._emit_node_failed(failed)
                     self._fire_node(self._callbacks.on_node_failed, failed)
                     state = self._cancel_dependents(state, node.request.id)
                 else:
@@ -183,6 +220,7 @@ class Scheduler:
                         if integration_failed:
                             failed_node = updated.with_state(NodeState.FAILED)
                             state = state.update_node(failed_node)
+                            self._emit_node_failed(failed_node)
                             self._fire_node(self._callbacks.on_node_failed, failed_node)
                             state = self._cancel_dependents(state, node.request.id)
                         elif not stale_retry:
@@ -191,6 +229,7 @@ class Scheduler:
                                 state = state.add_nodes(follow_ups)
                             self._fire_node(self._callbacks.on_node_completed, updated)
                     else:
+                        self._emit_node_failed(updated)
                         self._fire_node(self._callbacks.on_node_failed, updated)
                         state = self._cancel_dependents(state, node.request.id)
 

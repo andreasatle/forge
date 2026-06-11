@@ -44,6 +44,13 @@ def test_init_creates_logs_dir(tmp_path: Path) -> None:
     assert ws.logs_dir().is_dir()
 
 
+def test_init_creates_telemetry_dir(tmp_path: Path) -> None:
+    """init() creates the framework telemetry directory inside the workspace."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    assert ws.telemetry_dir().is_dir()
+
+
 def test_init_is_idempotent(tmp_path: Path) -> None:
     """Calling init() twice on the same workspace does not raise."""
     ws = Workspace(tmp_path / "ws")

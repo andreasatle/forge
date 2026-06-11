@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.attempt import (
@@ -31,6 +32,28 @@ from forge.core.models import (
     WorkSpec,
     render_agent_contract,
 )
+from forge.core.telemetry import TelemetryEvent
+
+
+class _MemoryTelemetrySink:
+    """In-memory TelemetrySink for attempt tests."""
+
+    def __init__(self) -> None:
+        self.run_id = uuid4()
+        self.events: list[TelemetryEvent] = []
+
+    def append(self, event: TelemetryEvent) -> None:
+        self.events.append(event)
+
+
+class _FailingTelemetrySink:
+    """TelemetrySink stub that always raises on append."""
+
+    def __init__(self) -> None:
+        self.run_id = uuid4()
+
+    def append(self, event: TelemetryEvent) -> None:
+        raise OSError("telemetry unavailable")
 
 
 def _work_request() -> AgentRequest:
@@ -533,6 +556,115 @@ async def test_repeated_revise_until_max_attempts_returns_failed_without_delta()
     assert result.delta is None
     assert "maximum validation attempts exhausted" in (result.error or "")
     assert len(prompts) == 2
+
+
+async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
+    """Failed PWC preserves attempt starts, parsed results, revisions, and exhaustion."""
+    request = _work_request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    run_fn, _ = _make_run_fn(
+        [
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+        ]
+    )
+    sink = _MemoryTelemetrySink()
+    engine = AttemptEngine[DeltaState](
+        request=request,
+        state_view=_state_view(),
+        validator=DeltaStateValidator(_adapter_spec(), _state_view()),
+        run_fn=run_fn,
+        registry=_registry_with(),
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=3,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="still missing work",
+            revision_items=[
+                RevisionItem(
+                    criterion_id="AC1",
+                    required_change="Add the missing behavior.",
+                    rationale="The contract requires it.",
+                )
+            ],
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE,
+            rationale="not accepted",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    event_types = [event.event_type for event in sink.events]
+    assert event_types.count("pwc.attempt.started") == 3
+    assert event_types.count("producer.response.parsed") == 3
+    assert event_types.count("critic.finding.parsed") == 3
+    assert event_types.count("referee.decision.parsed") == 3
+    assert event_types.count("pwc.revision.appended") == 3
+    assert event_types.count("pwc.exhausted") == 1
+    assert all(event.run_id == sink.run_id for event in sink.events)
+    assert all(event.node_id == request.id for event in sink.events)
+    assert all(event.request_id == request.id for event in sink.events)
+    assert {
+        event.attempt_number for event in sink.events if event.event_type == "critic.finding.parsed"
+    } == {1, 2, 3}
+    revision_events = [
+        event for event in sink.events if event.event_type == "pwc.revision.appended"
+    ]
+    assert revision_events[0].data["revision_request"]["items"][0]["criterion_id"] == "AC1"
+    assert (
+        revision_events[0].data["revision_request"]["items"][0]["required_change"]
+        == "Add the missing behavior."
+    )
+    exhausted = [event for event in sink.events if event.event_type == "pwc.exhausted"][0]
+    assert exhausted.data["attempt_count"] == 3
+
+
+async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
+    """Telemetry is best-effort and cannot fail an otherwise accepted PWC run."""
+    request = _work_request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    run_fn, _ = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+    )
+    sink = _FailingTelemetrySink()
+    engine = AttemptEngine[DeltaState](
+        request=request,
+        state_view=_state_view(),
+        validator=DeltaStateValidator(_adapter_spec(), _state_view()),
+        run_fn=run_fn,
+        registry=_registry_with(),
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT, rationale="good"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
 
 
 async def test_critic_parse_failure_returns_failed_without_delta() -> None:

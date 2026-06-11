@@ -2,6 +2,7 @@
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 from forge.core.models import (
     AgentRequest,
@@ -23,6 +24,19 @@ from forge.core.models import (
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.state_service import StateService
+from forge.core.telemetry import TelemetryEvent
+
+
+class _MemoryTelemetrySink:
+    """In-memory TelemetrySink for scheduler tests."""
+
+    def __init__(self) -> None:
+        self.run_id = uuid4()
+        self.events: list[TelemetryEvent] = []
+
+    def append(self, event: TelemetryEvent) -> None:
+        self.events.append(event)
+
 
 # --- Helpers ---
 
@@ -204,6 +218,37 @@ async def test_failed_node_cancels_dependents() -> None:
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+
+
+async def test_scheduler_emits_node_failed_telemetry() -> None:
+    """Scheduler failure handling appends a node.failed telemetry event."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            error="not accepted",
+        )
+
+    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        state, _plan_request()
+    )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    events = [event for event in sink.events if event.event_type == "node.failed"]
+    assert len(events) == 1
+    event = events[0]
+    assert event.run_id == sink.run_id
+    assert event.node_id == work.id
+    assert event.request_id == work.id
+    assert event.role == "scheduler"
+    assert event.status == "failed"
+    assert event.data["failure_kind"] == "validation_rejected"
+    assert event.data["error"] == "not accepted"
 
 
 async def test_cancelled_nodes_never_dispatched() -> None:
