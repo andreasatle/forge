@@ -354,12 +354,16 @@ async def test_scripted_plan_handler_end_to_end_produces_four_completed_nodes(
     tmp_path: Path,
 ) -> None:
     """End-to-end run with scripted_plan_handler produces exactly four INTEGRATED nodes."""
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        return_value='{"new_files": [{"path": "src/out.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+    )
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
     runner.register(
         AgentType.WORK,
         make_work_handler(
-            _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), _mock_provider()
+            _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
         ),
     )
 
