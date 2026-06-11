@@ -415,6 +415,7 @@ class AttemptEngine[T]:
         max_attempts: int = 3,
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
+        initial_revision: RevisionRequest | None = None,
     ) -> None:
         self._request = request
         self._state_view = state_view
@@ -426,6 +427,7 @@ class AttemptEngine[T]:
         self._max_attempts = max_attempts
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id
+        self._initial_revision = initial_revision
 
     def _emit(
         self,
@@ -459,7 +461,9 @@ class AttemptEngine[T]:
 
     async def run(self, prompt: str) -> AgentResponse:
         """Run attempts with validation/retry; return AgentResponse."""
-        revision_requests: list[RevisionRequest] = []
+        revision_requests: list[RevisionRequest] = (
+            [self._initial_revision] if self._initial_revision is not None else []
+        )
 
         for attempt in range(self._max_attempts):
             attempt_number = attempt + 1

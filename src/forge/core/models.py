@@ -263,6 +263,7 @@ class AgentRequest(BaseModel):
     source: RequestSource
     spec: AgentSpec
     dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
+    integration_revision: RevisionRequest | None = None
 
 
 def _render_list_section(title: str, values: list[str]) -> list[str]:
@@ -503,6 +504,7 @@ class DAGNode(BaseModel):
     request: AgentRequest
     node_state: NodeState = NodeState.PENDING
     response: AgentResponse | None = None
+    integration_revision: RevisionRequest | None = None
 
     def with_state(self, node_state: NodeState) -> "DAGNode":
         """Return a copy of this node with the given node_state."""

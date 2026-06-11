@@ -56,6 +56,7 @@ class Scheduler:
         self._state_services = state_services
         self._callbacks = callbacks or SchedulerCallbacks()
         self._stale_retry_counts: dict[RequestId, int] = {}
+        self._integration_retry_counts: dict[RequestId, int] = {}
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
 
@@ -154,6 +155,7 @@ class Scheduler:
                     if updated.node_state == NodeState.INTEGRATED:
                         integration_failed = False
                         stale_retry = False
+                        integration_requeued = False
                         if (
                             node.request.agent_type == AgentType.WORK
                             and self._state_services is not None
@@ -211,11 +213,36 @@ class Scheduler:
                                                     state = state.update_node(updated)
                                                     integration_failed = True
                                             else:
-                                                updated = current.with_response(
-                                                    integration_response
+                                                int_retry = self._integration_retry_counts.get(
+                                                    node.request.id, 0
                                                 )
-                                                state = state.update_node(updated)
-                                                integration_failed = True
+                                                if (
+                                                    integration_response.revision is not None
+                                                    and int_retry < 3
+                                                ):
+                                                    self._integration_retry_counts[
+                                                        node.request.id
+                                                    ] = int_retry + 1
+                                                    revised_request = node.request.model_copy(
+                                                        update={
+                                                            "integration_revision": integration_response.revision
+                                                        }
+                                                    )
+                                                    pending_node = current.model_copy(
+                                                        update={
+                                                            "node_state": NodeState.PENDING,
+                                                            "request": revised_request,
+                                                            "integration_revision": integration_response.revision,
+                                                        }
+                                                    )
+                                                    state = state.update_node(pending_node)
+                                                    integration_requeued = True
+                                                else:
+                                                    updated = current.with_response(
+                                                        integration_response
+                                                    )
+                                                    state = state.update_node(updated)
+                                                    integration_failed = True
 
                         if integration_failed:
                             failed_node = updated.with_state(NodeState.FAILED)
@@ -223,7 +250,7 @@ class Scheduler:
                             self._emit_node_failed(failed_node)
                             self._fire_node(self._callbacks.on_node_failed, failed_node)
                             state = self._cancel_dependents(state, node.request.id)
-                        elif not stale_retry:
+                        elif not stale_retry and not integration_requeued:
                             follow_ups = [DAGNode(request=r) for r in response.follow_up]
                             if follow_ups:
                                 state = state.add_nodes(follow_ups)

@@ -117,6 +117,7 @@ async def test_start_wires_nested_planner_and_worker_models(
         referee_provider: _FakeProvider | None = None,
         max_attempts: int = 3,
         telemetry_sink: TelemetrySink | None = None,
+        integration_revision: object = None,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None

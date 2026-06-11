@@ -83,6 +83,7 @@ def make_work_handler(
             referee_provider=referee_provider,
             telemetry_sink=telemetry_sink,
             max_attempts=max_attempts,
+            integration_revision=request.integration_revision,
         )
 
     return work_handler

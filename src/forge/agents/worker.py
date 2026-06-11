@@ -7,6 +7,7 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     ResponseStatus,
+    RevisionRequest,
     StateView,
     WorkSpec,
     render_agent_contract,
@@ -70,7 +71,12 @@ class WorkTaskExecutor:
         self.max_attempts = max_attempts
         self.telemetry_sink = telemetry_sink
 
-    async def run(self, request: AgentRequest, state_view: StateView) -> AgentResponse:
+    async def run(
+        self,
+        request: AgentRequest,
+        state_view: StateView,
+        integration_revision: RevisionRequest | None = None,
+    ) -> AgentResponse:
         """Execute a single work task request and return the agent response."""
         spec = request.spec
         if not isinstance(spec, WorkSpec):
@@ -171,6 +177,7 @@ class WorkTaskExecutor:
             max_attempts=self.max_attempts,
             telemetry_sink=self.telemetry_sink,
             run_id=getattr(self.telemetry_sink, "run_id", None),
+            initial_revision=integration_revision,
         )
 
         try:
@@ -192,6 +199,7 @@ async def work_agent(
     referee_provider: LLMProvider | None = None,
     max_attempts: int = 3,
     telemetry_sink: TelemetrySink | None = None,
+    integration_revision: RevisionRequest | None = None,
 ) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     return await WorkTaskExecutor(
@@ -205,4 +213,4 @@ async def work_agent(
         referee_provider=referee_provider,
         max_attempts=max_attempts,
         telemetry_sink=telemetry_sink,
-    ).run(request, state_view)
+    ).run(request, state_view, integration_revision=integration_revision)
