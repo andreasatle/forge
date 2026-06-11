@@ -42,12 +42,14 @@ def _parse_test_output(raw: str) -> RunTestsResponse:
     failed_match = re.search(r"(\d+) failed", raw)
     passed_match = re.search(r"(\d+) passed", raw)
 
-    if failed_match and int(failed_match.group(1)) > 0:
-        passed = False
-    elif passed_match:
-        passed = True
-    else:
-        passed = len(failures) == 0
+    has_passed = bool(passed_match)
+    has_failed = bool(failures) or (bool(failed_match) and int(failed_match.group(1)) > 0)
+    passed = (
+        has_passed
+        and not has_failed
+        and "no tests ran" not in raw
+        and "collected 0 items" not in raw
+    )
 
     non_empty = [line.strip() for line in lines if line.strip()]
     summary = non_empty[-1] if non_empty else raw.strip()

@@ -1,11 +1,13 @@
 """Tests for run_tests function and make_run_tests_tool factory."""
 
+# pyright: reportPrivateUsage=false
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from forge.core.workspace import Workspace
 from forge.tools.run_tools import (
+    _parse_test_output,
     make_add_dependency_tool,
     make_run_tests_tool,
     run_tests,
@@ -153,3 +155,30 @@ async def test_add_dependency_tool_sets_package_field(workspace: Workspace) -> N
 
     assert isinstance(result, AddDependencyResponse)
     assert result.package == "numpy"
+
+
+# --- _parse_test_output ---
+
+
+def test_parse_test_output_no_tests_ran_returns_failed() -> None:
+    """_parse_test_output returns passed=False when output contains 'no tests ran'."""
+    result = _parse_test_output("no tests ran")
+    assert result.passed is False
+
+
+def test_parse_test_output_zero_items_collected_returns_failed() -> None:
+    """_parse_test_output returns passed=False when output contains 'collected 0 items'."""
+    result = _parse_test_output("collected 0 items")
+    assert result.passed is False
+
+
+def test_parse_test_output_one_passed_returns_true() -> None:
+    """_parse_test_output returns passed=True when output contains '1 passed'."""
+    result = _parse_test_output("1 passed in 0.1s")
+    assert result.passed is True
+
+
+def test_parse_test_output_one_failed_returns_false() -> None:
+    """_parse_test_output returns passed=False when output contains '1 failed'."""
+    result = _parse_test_output("1 failed in 0.1s")
+    assert result.passed is False

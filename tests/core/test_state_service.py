@@ -259,3 +259,27 @@ def test_run_tests_treats_collection_error_as_failure():
     result = _parse_test_result(output)
     assert result.passed is False
     assert len(result.failures) >= 1
+
+
+def test_parse_test_result_no_tests_ran_returns_failed() -> None:
+    """_parse_test_result returns passed=False when output contains 'no tests ran'."""
+    result = _parse_test_result("no tests ran")
+    assert result.passed is False
+
+
+def test_parse_test_result_zero_items_collected_returns_failed() -> None:
+    """_parse_test_result returns passed=False when output contains 'collected 0 items'."""
+    result = _parse_test_result("collected 0 items")
+    assert result.passed is False
+
+
+def test_parse_test_result_one_passed_returns_true() -> None:
+    """_parse_test_result returns passed=True when output contains '1 passed'."""
+    result = _parse_test_result("1 passed in 0.1s")
+    assert result.passed is True
+
+
+def test_parse_test_result_one_failed_returns_false() -> None:
+    """_parse_test_result returns passed=False when output contains '1 failed'."""
+    result = _parse_test_result("1 failed in 0.1s")
+    assert result.passed is False
