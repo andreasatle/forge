@@ -93,6 +93,7 @@ def make_plan_handler(
     referee_provider: LLMProvider | None = None,
     artifact_types: dict[str, str] | None = None,
     artifact_descriptions: dict[str, str] | None = None,
+    artifact_language_guidance: dict[str, str] | None = None,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
 
@@ -112,6 +113,7 @@ def make_plan_handler(
             registry=registry,
             artifact_types=artifact_types,
             artifact_descriptions=artifact_descriptions,
+            artifact_language_guidance=artifact_language_guidance,
         )
 
     return plan_handler

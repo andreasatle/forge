@@ -367,6 +367,7 @@ class RunResult(BaseModel, frozen=True):
     passed: bool
     failures: list[str] = Field(default_factory=_empty_strings)
     summary: str = ""
+    output: str = ""
 
 
 class FileView(BaseModel, frozen=True):

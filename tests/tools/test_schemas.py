@@ -129,11 +129,17 @@ def test_list_files_response_has_correct_fields() -> None:
 
 
 def test_run_tests_response_has_correct_fields() -> None:
-    """RunTestsResponse stores passed, failures, and summary fields correctly."""
-    resp = RunTestsResponse(passed=False, failures=["FAILED x::y"], summary="1 failed")
+    """RunTestsResponse stores passed, failures, summary, and output fields correctly."""
+    resp = RunTestsResponse(
+        passed=False,
+        failures=["FAILED x::y"],
+        summary="1 failed",
+        output="full output",
+    )
     assert resp.passed is False
     assert resp.failures == ["FAILED x::y"]
     assert resp.summary == "1 failed"
+    assert resp.output == "full output"
 
 
 def test_add_dependency_response_has_correct_fields() -> None:

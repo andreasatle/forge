@@ -15,10 +15,19 @@ from forge.core.state_service import StateService
 
 
 def _mock_ss(
-    passed: bool = True, failures: list[str] | None = None, summary: str = "", version: int = 0
+    passed: bool = True,
+    failures: list[str] | None = None,
+    summary: str = "",
+    output: str = "",
+    version: int = 0,
 ) -> MagicMock:
     ss = MagicMock(spec=StateService)
-    ss.run_tests.return_value = RunResult(passed=passed, failures=failures or [], summary=summary)
+    ss.run_tests.return_value = RunResult(
+        passed=passed,
+        failures=failures or [],
+        summary=summary,
+        output=output,
+    )
     ss.current_version = version
     return ss
 
@@ -143,6 +152,17 @@ async def test_returns_failed_when_tests_fail():
     assert response.status == ResponseStatus.FAILED
     assert response.failure_kind == FailureKind.TEST_FAILED
     assert response.error == "integration tests failed: 1 failed\nFAILED tests/test_foo.py::test_x"
+
+
+async def test_test_failure_preserves_full_test_output():
+    """integrate persists full test-command output on test failure diagnostics."""
+    output = "line one\ntraceback details\nfinal summary"
+    ss = _mock_ss(passed=False, summary="final summary", output=output)
+    response = await integrate(request_id=uuid4(), state_service=ss, delta=DeltaState())
+
+    assert response.error == f"integration tests failed: {output}"
+    assert response.delta is not None
+    assert response.delta.errors[0].description == output
 
 
 # --- clean integration ---

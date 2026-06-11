@@ -76,6 +76,11 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     language_registry = LanguageRegistry()
     language_registry.load(_LANGUAGES_DIR)
     print(f"languages: {language_registry.names()}")
+    artifact_language_guidance = {
+        artifact.name: language_registry.get(artifact.language).prompt_supplement
+        for artifact in config.artifacts
+        if artifact.language
+    }
 
     workspace = Workspace(config.workspace)
     workspace.init()
@@ -134,6 +139,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             referee_provider=planner_referee_provider,
             artifact_types=artifact_types,
             artifact_descriptions=artifact_descriptions,
+            artifact_language_guidance=artifact_language_guidance,
         ),
     )
     runner.register(

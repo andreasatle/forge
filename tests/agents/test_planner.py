@@ -98,6 +98,29 @@ async def test_planner_task_executor_preserves_artifact_language_context() -> No
     assert "    description: User-facing documentation." in user_prompt
 
 
+async def test_planner_task_executor_renders_plugin_owned_language_guidance() -> None:
+    """Planner prompt receives language guidance as plugin-owned artifact metadata."""
+    request = _make_request()
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["api"],
+        artifact_languages={"api": "toy"},
+        artifact_types={"api": "coding"},
+        artifact_language_guidance={"api": "Use toy.mod files only.\nNever emit legacy.toy."},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "    language guidance:" in user_prompt
+    assert "      Use toy.mod files only." in user_prompt
+    assert "      Never emit legacy.toy." in user_prompt
+    assert "must not contradict artifact-specific language guidance" in user_prompt
+
+
 async def test_plan_producer_prompt_includes_canonical_contract_block() -> None:
     """Planner producer prompt includes the canonical AgentRequest contract block."""
     request = AgentRequest(

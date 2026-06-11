@@ -27,13 +27,18 @@ def _is_noise(path: Path, root: Path) -> bool:
 
 def _parse_test_result(raw: str, returncode: int = 0) -> RunResult:
     if "timed out" in raw:
-        return RunResult(passed=False, failures=["timed out"], summary=raw.strip())
+        return RunResult(
+            passed=False,
+            failures=["timed out"],
+            summary=raw.strip(),
+            output=raw,
+        )
     lines = raw.splitlines()
     non_empty = [line.strip() for line in lines if line.strip()]
     summary = non_empty[-1] if non_empty else raw.strip()
     passed = returncode == 0
     failures = [] if passed else [summary]
-    return RunResult(passed=passed, failures=failures, summary=summary)
+    return RunResult(passed=passed, failures=failures, summary=summary, output=raw)
 
 
 class StateService:
@@ -135,5 +140,10 @@ class StateService:
             )
             raw = result.stdout + result.stderr
         except subprocess.TimeoutExpired:
-            return RunResult(passed=False, failures=["timed out"], summary="test command timed out")
+            return RunResult(
+                passed=False,
+                failures=["timed out"],
+                summary="test command timed out",
+                output="test command timed out",
+            )
         return _parse_test_result(raw, result.returncode)

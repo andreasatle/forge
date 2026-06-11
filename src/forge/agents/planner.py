@@ -44,6 +44,8 @@ Rules:
   (tests pass, output matches, endpoint returns X)
 - Every coding task success condition must be verifiable by running tests
   — phrase it as an observable test outcome, not as a description of the implementation
+- Task objectives, success conditions, acceptance criteria, constraints, and non-goals
+  must not contradict artifact-specific language guidance
 
 Goal: {northstar}
 
@@ -66,6 +68,7 @@ class PlannerTaskExecutor:
         artifact_languages: dict[str, str],
         artifact_types: dict[str, str] | None = None,
         artifact_descriptions: dict[str, str] | None = None,
+        artifact_language_guidance: dict[str, str] | None = None,
         max_retries: int = 3,
         critic_provider: LLMProvider | None = None,
         referee_provider: LLMProvider | None = None,
@@ -77,6 +80,7 @@ class PlannerTaskExecutor:
         self.artifact_languages = artifact_languages
         self.artifact_types = artifact_types or {}
         self.artifact_descriptions = artifact_descriptions or {}
+        self.artifact_language_guidance = artifact_language_guidance or {}
         self.max_retries = max_retries
         self.critic_provider = critic_provider
         self.referee_provider = referee_provider
@@ -151,6 +155,10 @@ class PlannerTaskExecutor:
             description = self.artifact_descriptions.get(name)
             if description:
                 lines.append(f"    description: {description}")
+            guidance = self.artifact_language_guidance.get(name)
+            if guidance:
+                lines.append("    language guidance:")
+                lines.extend(f"      {line}" for line in guidance.splitlines() if line.strip())
             blocks.append("\n".join(lines))
         return "\n".join(blocks)
 
@@ -166,6 +174,7 @@ async def plan_agent(
     registry: AdapterRegistry | None = None,
     artifact_types: dict[str, str] | None = None,
     artifact_descriptions: dict[str, str] | None = None,
+    artifact_language_guidance: dict[str, str] | None = None,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     return await PlannerTaskExecutor(
@@ -174,6 +183,7 @@ async def plan_agent(
         artifact_languages=artifact_languages,
         artifact_types=artifact_types,
         artifact_descriptions=artifact_descriptions,
+        artifact_language_guidance=artifact_language_guidance,
         max_retries=max_retries,
         critic_provider=critic_provider,
         referee_provider=referee_provider,

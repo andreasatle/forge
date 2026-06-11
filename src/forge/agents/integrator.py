@@ -45,7 +45,11 @@ async def integrate(
 
     test_result = state_service.run_tests()
     if not test_result.passed:
-        lines = [test_result.summary, *test_result.failures]
+        lines = (
+            [test_result.output]
+            if test_result.output
+            else [test_result.summary, *test_result.failures]
+        )
         description = "\n".join(line for line in lines if line)
         errors.append(IntegrationError(kind="test_failed", description=description))
         return AgentResponse(

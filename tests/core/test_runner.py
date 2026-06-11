@@ -465,6 +465,7 @@ async def test_make_plan_handler_passes_critic_and_referee_providers() -> None:
         captured["registry"] = kwargs.get("registry")
         captured["artifact_types"] = kwargs.get("artifact_types")
         captured["artifact_descriptions"] = kwargs.get("artifact_descriptions")
+        captured["artifact_language_guidance"] = kwargs.get("artifact_language_guidance")
         return AgentResponse(request_id=args[0].id, status=ResponseStatus.COMPLETED)  # type: ignore[union-attr]
 
     registry = _mock_registry()
@@ -478,6 +479,7 @@ async def test_make_plan_handler_passes_critic_and_referee_providers() -> None:
             referee_provider=referee,
             artifact_types={"codebase": "coding"},
             artifact_descriptions={"codebase": "Python implementation."},
+            artifact_language_guidance={"codebase": "PLUGIN GUIDANCE"},
         )
         await handler(_plan_request())
 
@@ -486,6 +488,7 @@ async def test_make_plan_handler_passes_critic_and_referee_providers() -> None:
     assert captured["registry"] is registry
     assert captured["artifact_types"] == {"codebase": "coding"}
     assert captured["artifact_descriptions"] == {"codebase": "Python implementation."}
+    assert captured["artifact_language_guidance"] == {"codebase": "PLUGIN GUIDANCE"}
 
 
 async def test_make_work_handler_passes_critic_and_referee_providers(tmp_path: Path) -> None:

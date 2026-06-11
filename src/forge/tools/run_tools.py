@@ -33,7 +33,12 @@ async def run_tests(workspace: Workspace, artifact_name: str, test_command: str)
 def _parse_test_output(raw: str, returncode: int = 0) -> RunTestsResponse:
     """Parse raw test command output into a structured RunTestsResponse."""
     if "timed out" in raw:
-        return RunTestsResponse(passed=False, failures=["timed out"], summary=raw.strip())
+        return RunTestsResponse(
+            passed=False,
+            failures=["timed out"],
+            summary=raw.strip(),
+            output=raw,
+        )
 
     lines = raw.splitlines()
     non_empty = [line.strip() for line in lines if line.strip()]
@@ -41,7 +46,7 @@ def _parse_test_output(raw: str, returncode: int = 0) -> RunTestsResponse:
     passed = returncode == 0
     failures = [] if passed else [summary]
 
-    return RunTestsResponse(passed=passed, failures=failures, summary=summary)
+    return RunTestsResponse(passed=passed, failures=failures, summary=summary, output=raw)
 
 
 def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: str) -> Tool:

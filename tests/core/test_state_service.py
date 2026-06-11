@@ -316,6 +316,7 @@ def test_parse_test_result_passing():
     result = _parse_test_result("command succeeded", returncode=0)
     assert result.passed is True
     assert result.failures == []
+    assert result.output == "command succeeded"
 
 
 def test_parse_test_result_failing():
@@ -339,6 +340,7 @@ def test_parse_test_result_nonzero_exit_with_multiline_output_returns_failed():
     assert result.passed is False
     assert len(result.failures) >= 1
     assert result.summary == "final diagnostic line"
+    assert result.output == output
 
 
 def test_parse_test_result_success_text_with_zero_exit_returns_true() -> None:

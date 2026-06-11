@@ -84,6 +84,7 @@ async def test_run_tests_tool_marks_zero_exit_as_passing(workspace: Workspace) -
     assert isinstance(result, RunTestsResponse)
     assert result.passed is True
     assert result.failures == []
+    assert "command succeeded" in result.output
 
 
 async def test_run_tests_tool_marks_nonzero_exit_as_failing(workspace: Workspace) -> None:
@@ -96,6 +97,7 @@ async def test_run_tests_tool_marks_nonzero_exit_as_failing(workspace: Workspace
     assert isinstance(result, RunTestsResponse)
     assert result.passed is False
     assert result.failures == ["command failed"]
+    assert "command failed" in result.output
 
 
 async def test_run_tests_tool_marks_timeout_as_failed(workspace: Workspace) -> None:
@@ -168,9 +170,11 @@ def test_parse_test_output_zero_exit_returns_true() -> None:
     """_parse_test_output returns passed=True when command exit code is zero."""
     result = _parse_test_output("success", returncode=0)
     assert result.passed is True
+    assert result.output == "success"
 
 
 def test_parse_test_output_nonzero_exit_returns_false() -> None:
     """_parse_test_output returns passed=False when command exit code is nonzero."""
-    result = _parse_test_output("failure", returncode=1)
+    result = _parse_test_output("failure details", returncode=1)
     assert result.passed is False
+    assert result.output == "failure details"

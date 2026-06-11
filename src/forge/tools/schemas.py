@@ -84,6 +84,7 @@ class RunTestsResponse(BaseModel):
     passed: bool
     failures: list[str]
     summary: str
+    output: str = ""
 
 
 class AddDependencyRequest(BaseModel):

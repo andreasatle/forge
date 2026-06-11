@@ -87,12 +87,15 @@ async def test_start_wires_nested_planner_and_worker_models(
         registry: AdapterRegistry | None = None,
         artifact_types: dict[str, str] | None = None,
         artifact_descriptions: dict[str, str] | None = None,
+        artifact_language_guidance: dict[str, str] | None = None,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None
         assert registry is not None
         assert artifact_types == {"codebase": "coding"}
         assert artifact_descriptions == {"codebase": "Implementation and tests."}
+        assert artifact_language_guidance is not None
+        assert "codebase" in artifact_language_guidance
         captured["planner_provider"] = provider.producer
         captured["planner_critic"] = critic_provider.producer
         captured["planner_referee"] = referee_provider.producer
