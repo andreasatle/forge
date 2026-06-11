@@ -16,7 +16,6 @@ from forge.core.models import (
     PlanSpec,
     ResponseStatus,
     StateView,
-    WorkSpec,
 )
 from forge.llm.providers import LLMProvider
 

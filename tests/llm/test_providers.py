@@ -49,7 +49,9 @@ def _list(value: object) -> list[object]:
     return cast(list[object], value)
 
 
-async def _capture_provider_payload(provider: object, response_data: Mapping[str, object]) -> dict[str, object]:
+async def _capture_provider_payload(
+    provider: object, response_data: Mapping[str, object]
+) -> dict[str, object]:
     captured: list[CapturedRequest] = []
 
     async def fake_post(url: str, **kwargs: object) -> MagicMock:
@@ -236,9 +238,9 @@ async def test_openai_provider_chat_formats_request_correctly() -> None:
 
     async def fake_post(url: str, **kwargs: object) -> MagicMock:
         captured.append({"url": url, "json": kwargs.get("json"), "headers": kwargs.get("headers")})
-        return _mock_http_response({
-            "choices": [{"message": {"content": "answer", "role": "assistant"}}]
-        })
+        return _mock_http_response(
+            {"choices": [{"message": {"content": "answer", "role": "assistant"}}]}
+        )
 
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
         mock_client.return_value.__aenter__.return_value.post = AsyncMock(side_effect=fake_post)

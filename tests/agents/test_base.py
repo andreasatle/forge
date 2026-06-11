@@ -10,6 +10,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from forge.adapters.registry import AdapterSpec
 from forge.agents.base import (
     PromptBuilder,
     ResponseParser,
@@ -1009,9 +1010,7 @@ async def test_run_agent_accepts_delta_state_after_tool_work():
 # --- adapter_spec / requires_nonempty_output ---
 
 
-def _audit_adapter_spec() -> "AdapterSpec":
-    from forge.adapters.registry import AdapterSpec
-
+def _audit_adapter_spec() -> AdapterSpec:
     return AdapterSpec(
         name="audit",
         description="audit",

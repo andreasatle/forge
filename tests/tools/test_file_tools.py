@@ -81,7 +81,9 @@ async def test_list_files_tool_returns_paths_as_list(workspace: Workspace) -> No
     assert result.paths == ["sub/a.txt", "sub/b.txt"]
 
 
-async def test_list_files_tool_returns_empty_list_for_missing_directory(workspace: Workspace) -> None:
+async def test_list_files_tool_returns_empty_list_for_missing_directory(
+    workspace: Workspace,
+) -> None:
     """make_list_files_tool fn returns ListFilesResponse with empty paths for missing directory."""
     tool = make_list_files_tool(workspace, _ARTIFACT)
 

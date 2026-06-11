@@ -107,7 +107,9 @@ async def test_run_tests_tool_marks_timeout_as_failed(workspace: Workspace) -> N
     assert "timed out" in result.failures
 
 
-async def test_make_add_dependency_tool_returns_tool_with_correct_name(workspace: Workspace) -> None:
+async def test_make_add_dependency_tool_returns_tool_with_correct_name(
+    workspace: Workspace,
+) -> None:
     """make_add_dependency_tool returns a Tool named 'add_dependency'."""
     tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
     assert tool.name == "add_dependency"

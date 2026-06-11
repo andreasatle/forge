@@ -39,9 +39,7 @@ class PlanFollowUpBuilder:
             work.model_copy(
                 update={
                     "dependencies": frozenset(
-                        work_nodes[j].id
-                        for j in task.depends_on
-                        if 0 <= j < len(work_nodes)
+                        work_nodes[j].id for j in task.depends_on if 0 <= j < len(work_nodes)
                     )
                 }
             )

@@ -2,10 +2,10 @@
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Generic, Protocol, TypeVar, cast, runtime_checkable
+from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
-from forge.agents.base import _render_files, run_agent
+from forge.agents.base import _render_files
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.core.models import (
@@ -21,7 +21,6 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.llm.providers import LLMProvider
-from forge.tools.registry import ToolRegistry
 
 _logger = logging.getLogger(__name__)
 
@@ -128,7 +127,7 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
     )
 
 
-class AttemptEngine(Generic[T]):
+class AttemptEngine[T]:
     def __init__(
         self,
         request: AgentRequest,

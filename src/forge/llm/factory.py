@@ -43,9 +43,7 @@ def make_provider(model_string: str, max_tokens: int) -> LLMProvider:
         _dotenv_loaded = True
 
     if "/" not in model_string:
-        raise ValueError(
-            f"invalid model string {model_string!r}: expected 'provider/model' format"
-        )
+        raise ValueError(f"invalid model string {model_string!r}: expected 'provider/model' format")
     provider, _, model = model_string.partition("/")
 
     if provider == "ollama":

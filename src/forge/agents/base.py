@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Callable
-from typing import TypeVar, cast
+from typing import cast
 
 import httpx
 from pydantic import BaseModel
@@ -24,8 +24,6 @@ from forge.core.models import (
 )
 from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
 from forge.tools.registry import ToolRegistry
-
-S = TypeVar("S", bound=BaseModel)
 
 
 class ToolError(Exception):
@@ -455,7 +453,7 @@ class ToolLoop:
         raise RuntimeError(f"agent loop exceeded {self.max_tool_iterations} iterations")
 
 
-async def run_agent(
+async def run_agent[S: BaseModel](
     request: AgentRequest,
     spec_type: type[S],
     provider: LLMProvider,

@@ -57,6 +57,7 @@ def _parse_test_output(raw: str) -> RunTestsResponse:
 
 def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: str) -> Tool:
     """Return a Tool that runs test_command in the artifact directory with no LLM-facing parameters."""
+
     async def fn(req: RunTestsRequest) -> RunTestsResponse:  # type: ignore[misc]
         raw = await run_tests(workspace, artifact_name, test_command)
         return _parse_test_output(raw)
@@ -70,7 +71,9 @@ def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: 
     )
 
 
-async def add_dependency(workspace: Workspace, artifact_name: str, add_dependency_command: str, package_name: str) -> str:
+async def add_dependency(
+    workspace: Workspace, artifact_name: str, add_dependency_command: str, package_name: str
+) -> str:
     """Run add_dependency_command with package_name substituted in the artifact directory and return combined stdout+stderr."""
     cwd = workspace.artifact_dir(artifact_name)
     cmd = add_dependency_command.format(package=package_name)
@@ -87,8 +90,11 @@ async def add_dependency(workspace: Workspace, artifact_name: str, add_dependenc
         return f"add_dependency timed out after {_TIMEOUT_SECONDS} seconds"
 
 
-def make_add_dependency_tool(workspace: Workspace, artifact_name: str, add_dependency_command: str) -> Tool:
+def make_add_dependency_tool(
+    workspace: Workspace, artifact_name: str, add_dependency_command: str
+) -> Tool:
     """Return a Tool that installs a package using add_dependency_command."""
+
     async def fn(req: AddDependencyRequest) -> AddDependencyResponse:  # type: ignore[misc]
         output = await add_dependency(workspace, artifact_name, add_dependency_command, req.package)
         success = "timed out" not in output

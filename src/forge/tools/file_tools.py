@@ -34,6 +34,7 @@ async def list_files(directory: str, workspace: Workspace, artifact_name: str) -
 
 def make_read_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
     """Return a Tool that reads a file from the named artifact directory."""
+
     async def fn(req: ReadFileRequest) -> ReadFileResponse:  # type: ignore[misc]
         content = await read_file(req.path, workspace, artifact_name)
         return ReadFileResponse(content=content)
@@ -49,6 +50,7 @@ def make_read_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
 
 def make_list_files_tool(workspace: Workspace, artifact_name: str) -> Tool:
     """Return a Tool that lists files in a directory within the named artifact directory."""
+
     async def fn(req: ListFilesRequest) -> ListFilesResponse:  # type: ignore[misc]
         raw = await list_files(req.directory, workspace, artifact_name)
         paths = raw.split("\n") if raw != "empty" else []
@@ -65,6 +67,7 @@ def make_list_files_tool(workspace: Workspace, artifact_name: str) -> Tool:
 
 def make_write_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
     """Return a Tool that creates or overwrites a file in the named artifact directory."""
+
     async def fn(req: WriteFileRequest) -> WriteFileResponse:  # type: ignore[misc]
         if req.path.endswith("/"):
             raise ValueError(f"skipped: {req.path} is a directory")
@@ -86,6 +89,7 @@ def make_write_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
 
 def make_replace_in_file_tool(workspace: Workspace, artifact_name: str) -> Tool:
     """Return a Tool that surgically replaces a unique string in a file in the named artifact directory."""
+
     async def fn(req: ReplaceInFileRequest) -> ReplaceInFileResponse:  # type: ignore[misc]
         import re
 

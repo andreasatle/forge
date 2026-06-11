@@ -353,7 +353,11 @@ def _collect_protocols(source_files: list[Path]) -> list[tuple[str, str, str | N
         except SyntaxError:
             continue
         for node in tree.body:
-            if isinstance(node, ast.ClassDef) and not node.name.startswith("_") and _is_protocol_class(node):
+            if (
+                isinstance(node, ast.ClassDef)
+                and not node.name.startswith("_")
+                and _is_protocol_class(node)
+            ):
                 entries.append((node.name, str(path.relative_to(ROOT)), _first_doc_line(node)))
     return sorted(entries)
 

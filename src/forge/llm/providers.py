@@ -56,7 +56,7 @@ async def _post_with_retry(
                 raise
             last_exc = e
             if attempt < _MAX_RETRIES - 1:
-                wait = _RETRY_BASE_DELAY * (2 ** attempt)
+                wait = _RETRY_BASE_DELAY * (2**attempt)
                 print(
                     f"[debug] HTTP {e.response.status_code} — retry "
                     f"{attempt + 1}/{_MAX_RETRIES - 1}, waiting {wait}s"
