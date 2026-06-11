@@ -13,16 +13,16 @@ prompt_supplement: |
   Always write tests under tests/ using pytest.
   Always include a pyproject.toml declaring dependencies and requiring Python >=3.12.
   Use uv as the package manager — never requirements.txt or setup.py.
-  Always include pytest as a dev dependency in pyproject.toml:
-    [project.optional-dependencies]
-    dev = ["pytest"]
+  uv owns dependency management — never edit pyproject.toml dependency
+  sections directly. Runtime packages go in DeltaState.dependencies.
+  Dev packages are handled by project initialization. Tool configuration
+  sections (e.g. [tool.ruff], [tool.pytest.ini_options]) may be added
+  when required by the task, but dependency sections must never be
+  edited by workers.
   Always include pythonpath = ["src"] in [tool.pytest.ini_options] so pytest can find modules without the src. prefix:
     [tool.pytest.ini_options]
     testpaths = ["tests"]
     pythonpath = ["src"]
-  pytest plugins (pytest-mock, pytest-cov, pytest-asyncio, etc.) are dev
-  dependencies — add them to [project.optional-dependencies] dev via an
-  edit, never in DeltaState.dependencies.
 
   Import modules directly by name, not with src. prefix:
     correct:   from scraper import WebScraper
@@ -48,9 +48,6 @@ delta_example: |
     "new_files": [
       {{"path": "src/scraper.py", "content": "import requests\nfrom bs4 import BeautifulSoup\n"}},
       {{"path": "tests/test_scraper.py", "content": "from scraper import WebScraper\n\ndef test_import():\n    assert WebScraper\n"}}
-    ],
-    "edits": [
-      {{"path": "pyproject.toml", "old": "dependencies = []", "new": "dependencies = [\"requests\"]"}}
     ],
     "dependencies": ["requests"],
     "errors": [],
