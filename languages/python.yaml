@@ -31,6 +31,17 @@ prompt_supplement: |
   Never add Python stdlib modules as dependencies — csv, json, os,
   re, pathlib, sys, and similar built-in modules are always available
   without installation.
+
+  Verification rules:
+  - Before concluding the success condition is already met, you MUST run the available test suite to verify.
+  - If pytest reports 0 tests collected, the task is NOT done — you must write tests.
+  - If pytest fails, the task is NOT done — fix the failures.
+
+  Package rules:
+  - Declare all required runtime packages in the dependencies field of your
+    DeltaState response — this is the ONLY way to add packages.
+  - Never attempt to install packages via tools, shell commands, or
+    any other mechanism.
 delta_example: |
   Example of a valid DeltaState response:
   {{

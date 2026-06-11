@@ -13,17 +13,6 @@ prompt_template: |
   Language-specific output conventions:
   {delta_example}
 
-  Verification rules:
-  - Before concluding the success condition is already met, you MUST call run_tests to verify
-  - If run_tests returns 0 tests collected, the task is NOT done — you must write tests
-  - If run_tests fails, the task is NOT done — fix the failures
-
-  Package rules:
-  - Declare all required packages in the dependencies field of your
-    DeltaState response — this is the ONLY way to add packages
-  - Never attempt to install packages via tools, shell commands, or
-    any other mechanism
-
   IMPORTANT — your final JSON response MUST be a non-empty DeltaState:
   - new_files must contain the complete content of every file you create
   - edits must contain every change to existing files

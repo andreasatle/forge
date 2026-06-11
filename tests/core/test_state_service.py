@@ -280,8 +280,9 @@ def test_run_tests_parses_passing_output(tmp_path: Path) -> None:
     plugin = _plugin()
 
     mock_proc = MagicMock()
-    mock_proc.stdout = "1 passed in 0.1s\n"
+    mock_proc.stdout = "command succeeded\n"
     mock_proc.stderr = ""
+    mock_proc.returncode = 0
 
     with patch("subprocess.run", return_value=mock_proc):
         result = StateService(ws, "app", plugin).run_tests()
@@ -296,8 +297,9 @@ def test_run_tests_parses_failing_output(tmp_path: Path) -> None:
     plugin = _plugin()
 
     mock_proc = MagicMock()
-    mock_proc.stdout = "FAILED tests/test_main.py::test_bar - AssertionError\n1 failed in 0.1s\n"
+    mock_proc.stdout = "command failed\n"
     mock_proc.stderr = ""
+    mock_proc.returncode = 1
 
     with patch("subprocess.run", return_value=mock_proc):
         result = StateService(ws, "app", plugin).run_tests()
@@ -310,15 +312,15 @@ def test_run_tests_parses_failing_output(tmp_path: Path) -> None:
 
 
 def test_parse_test_result_passing():
-    """_parse_test_result returns passed=True when output contains 'N passed'."""
-    result = _parse_test_result("3 passed in 0.2s")
+    """_parse_test_result returns passed=True when command exit code is zero."""
+    result = _parse_test_result("command succeeded", returncode=0)
     assert result.passed is True
     assert result.failures == []
 
 
 def test_parse_test_result_failing():
-    """_parse_test_result returns passed=False when output contains 'N failed'."""
-    result = _parse_test_result("FAILED tests/test_x.py::test_y\n1 failed in 0.1s")
+    """_parse_test_result returns passed=False when command exit code is nonzero."""
+    result = _parse_test_result("command failed", returncode=1)
     assert result.passed is False
     assert len(result.failures) == 1
 
@@ -330,33 +332,22 @@ def test_parse_test_result_timeout():
     assert "timed out" in result.failures
 
 
-def test_run_tests_treats_collection_error_as_failure():
-    """_parse_test_result returns passed=False when pytest reports a collection error."""
-    output = "ImportError while importing test file 'tests/test_foo.py'.\nInterrupted: 1 error during collection"
-    result = _parse_test_result(output)
+def test_parse_test_result_nonzero_exit_with_multiline_output_returns_failed():
+    """_parse_test_result returns passed=False for any nonzero command exit."""
+    output = "first diagnostic line\nfinal diagnostic line"
+    result = _parse_test_result(output, returncode=2)
     assert result.passed is False
     assert len(result.failures) >= 1
+    assert result.summary == "final diagnostic line"
 
 
-def test_parse_test_result_no_tests_ran_returns_failed() -> None:
-    """_parse_test_result returns passed=False when output contains 'no tests ran'."""
-    result = _parse_test_result("no tests ran")
-    assert result.passed is False
-
-
-def test_parse_test_result_zero_items_collected_returns_failed() -> None:
-    """_parse_test_result returns passed=False when output contains 'collected 0 items'."""
-    result = _parse_test_result("collected 0 items")
-    assert result.passed is False
-
-
-def test_parse_test_result_one_passed_returns_true() -> None:
-    """_parse_test_result returns passed=True when output contains '1 passed'."""
-    result = _parse_test_result("1 passed in 0.1s")
+def test_parse_test_result_success_text_with_zero_exit_returns_true() -> None:
+    """_parse_test_result does not inspect language-specific success text."""
+    result = _parse_test_result("success", returncode=0)
     assert result.passed is True
 
 
-def test_parse_test_result_one_failed_returns_false() -> None:
-    """_parse_test_result returns passed=False when output contains '1 failed'."""
-    result = _parse_test_result("1 failed in 0.1s")
+def test_parse_test_result_failure_text_with_nonzero_exit_returns_false() -> None:
+    """_parse_test_result does not inspect language-specific failure text."""
+    result = _parse_test_result("failure", returncode=1)
     assert result.passed is False

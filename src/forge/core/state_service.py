@@ -2,7 +2,6 @@
 
 import re
 import subprocess
-import tomllib
 from pathlib import Path
 
 from forge.core.models import DeltaState, FileView, RunResult, StateView
@@ -26,52 +25,14 @@ def _is_noise(path: Path, root: Path) -> bool:
     )
 
 
-def _read_python_deps(artifact_dir: Path) -> list[str]:
-    manifest = artifact_dir / "pyproject.toml"
-    if not manifest.exists():
-        return []
-    with manifest.open("rb") as f:
-        data = tomllib.load(f)
-    return list(data.get("project", {}).get("dependencies", []))
-
-
-def _read_rust_deps(artifact_dir: Path) -> list[str]:
-    manifest = artifact_dir / "Cargo.toml"
-    if not manifest.exists():
-        return []
-    with manifest.open("rb") as f:
-        data = tomllib.load(f)
-    return list(data.get("dependencies", {}).keys())
-
-
-_DEPS_READERS = {
-    "python": _read_python_deps,
-    "rust": _read_rust_deps,
-}
-
-
-def _parse_test_result(raw: str) -> RunResult:
+def _parse_test_result(raw: str, returncode: int = 0) -> RunResult:
     if "timed out" in raw:
         return RunResult(passed=False, failures=["timed out"], summary=raw.strip())
     lines = raw.splitlines()
     non_empty = [line.strip() for line in lines if line.strip()]
     summary = non_empty[-1] if non_empty else raw.strip()
-    if "error during collection" in raw.lower() or "interrupted" in raw.lower():
-        error_lines = [line.strip() for line in lines if line.strip() and not line.startswith("=")]
-        error_msg = error_lines[0] if error_lines else "collection error"
-        return RunResult(passed=False, failures=[error_msg], summary=summary)
-    failures = [line.strip() for line in lines if line.strip().startswith("FAILED ")]
-    failed_match = re.search(r"(\d+) failed", raw)
-    passed_match = re.search(r"(\d+) passed", raw)
-
-    has_passed = bool(passed_match)
-    has_failed = bool(failures) or (bool(failed_match) and int(failed_match.group(1)) > 0)
-    passed = (
-        has_passed
-        and not has_failed
-        and "no tests ran" not in raw
-        and "collected 0 items" not in raw
-    )
+    passed = returncode == 0
+    failures = [] if passed else [summary]
     return RunResult(passed=passed, failures=failures, summary=summary)
 
 
@@ -115,14 +76,11 @@ class StateService:
                 continue
             file_views.append(FileView(path=str(f.relative_to(artifact_dir)), content=content))
 
-        reader = _DEPS_READERS.get(self._plugin.name) if self._plugin else None
-        deps = reader(artifact_dir) if reader else []
-
         return StateView(
             artifact_name=self._artifact_name,
             language=language,
             files=file_views,
-            dependencies=deps,
+            dependencies=[],
             version=self._version,
         )
 
@@ -178,4 +136,4 @@ class StateService:
             raw = result.stdout + result.stderr
         except subprocess.TimeoutExpired:
             return RunResult(passed=False, failures=["timed out"], summary="test command timed out")
-        return _parse_test_result(raw)
+        return _parse_test_result(raw, result.returncode)

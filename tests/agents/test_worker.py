@@ -29,6 +29,20 @@ from forge.tools.registry import ToolRegistry
 
 BLACKBOARD_TOOL_NAMES = {"read_blackboard", "write_blackboard"}
 MUTATING_TOOL_NAMES = {"write_file", "replace_in_file", "add_dependency", "write_blackboard"}
+PYTHON_PROMPT_WORDS = (
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "pythonpath",
+    "BeautifulSoup",
+    "from scraper import",
+    "pytest",
+    "requests",
+    "coverage",
+    "__init__.py",
+    "Use uv",
+    "Always place source code under src/.",
+)
 
 
 def _tool_names(registry: ToolRegistry) -> set[str]:
@@ -106,6 +120,11 @@ def _work_request(adapter: str, language: str | None = None) -> AgentRequest:
             language=language,
         ),
     )
+
+
+def _assert_no_python_prompt_words(prompt: str) -> None:
+    for word in PYTHON_PROMPT_WORDS:
+        assert word not in prompt
 
 
 async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: Path) -> None:
@@ -739,6 +758,115 @@ async def test_python_worker_prompt_includes_packaging_guidance(tmp_path: Path) 
     assert "uv" in user_prompt
     assert "requirements.txt" in user_prompt
     assert "setup.py" in user_prompt
+
+
+async def test_coding_worker_prompt_without_language_plugin_is_language_agnostic(
+    tmp_path: Path,
+) -> None:
+    """Core worker prompt assembly does not inject Python-specific wording without a plugin."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="main.txt", content="content")]),
+        )
+        await work_agent(
+            request,
+            _registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view(),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    _assert_no_python_prompt_words(user_prompt)
+
+
+async def test_python_specific_instructions_come_from_python_plugin_only(tmp_path: Path) -> None:
+    """Python wording appears when, and because, the Python language plugin is configured."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    language_registry = LanguageRegistry()
+    language_registry.load(Path(__file__).parents[2] / "languages")
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            language_registry,
+            provider,
+            _state_view(language="python"),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    python_supplement = language_registry.get("python").prompt_supplement
+    assert python_supplement in user_prompt
+    assert "pyproject.toml" in user_prompt
+    assert "requirements.txt" in user_prompt
+
+
+async def test_non_python_language_plugin_does_not_receive_python_wording(
+    tmp_path: Path,
+) -> None:
+    """A non-Python language plugin can render its own text without Python conventions leaking in."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="toy")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    language_registry = LanguageRegistry()
+    language_registry.register(
+        LanguagePlugin(
+            name="toy",
+            package_manager="toy-packages",
+            init_command="toy init",
+            test_command="toy test",
+            sync_command="toy sync",
+            add_dependency_command="toy add {package}",
+            project_structure=["module.toy"],
+            prompt_supplement="TOY_LANGUAGE_SUPPLEMENT",
+            delta_example='{{"new_files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
+        )
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="module.toy", content="ok")]),
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            language_registry,
+            provider,
+            _state_view(language="toy"),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "TOY_LANGUAGE_SUPPLEMENT" in user_prompt
+    assert "module.toy" in user_prompt
+    _assert_no_python_prompt_words(user_prompt)
 
 
 async def test_language_delta_example_appears_in_worker_prompt(tmp_path: Path) -> None:
