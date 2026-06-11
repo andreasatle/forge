@@ -316,11 +316,13 @@ class AttemptEngine[T]:
                 if not revision_requests
                 else (
                     f"{prompt}\n\n"
-                    f"{_render_revision_requests(
-                        revision_requests,
-                        self._validator.work_noun(),
-                        self._validator.final_output_reminder(),
-                    )}"
+                    f"{
+                        _render_revision_requests(
+                            revision_requests,
+                            self._validator.work_noun(),
+                            self._validator.final_output_reminder(),
+                        )
+                    }"
                 )
             )
             response = await self._run_fn(current_prompt)
