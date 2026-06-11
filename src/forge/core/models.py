@@ -151,13 +151,17 @@ def _empty_strings() -> list[str]:
     return []
 
 
+def _empty_worker_ids() -> list[RequestId]:
+    return []
+
+
 class IntegrationError(BaseModel, frozen=True):
     """An error encountered during integration — conflict, apply failure, test failure, etc."""
 
     kind: str
     description: str
     path: str | None = None
-    worker_ids: list[RequestId] = Field(default_factory=list)
+    worker_ids: list[RequestId] = Field(default_factory=_empty_worker_ids)
 
 
 def _empty_integration_errors() -> list[IntegrationError]:

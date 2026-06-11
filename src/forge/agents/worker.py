@@ -48,6 +48,7 @@ class WorkTaskExecutor:
         self.max_attempts = max_attempts
 
     async def run(self, request: AgentRequest, state_view: StateView) -> AgentResponse:
+        """Execute a single work task request and return the agent response."""
         spec = request.spec
         if not isinstance(spec, WorkSpec):
             return AgentResponse(

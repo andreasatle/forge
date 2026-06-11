@@ -85,6 +85,7 @@ class StateService:
 
     @property
     def current_version(self) -> int:
+        """Return the current monotonic version counter for this artifact."""
         return self._version
 
     def build_state_view(self) -> StateView:

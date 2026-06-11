@@ -1,8 +1,11 @@
 """Tests for builtin registry builders — read vs write tool sets."""
 
+from pathlib import Path
+
 import forge.agents.worker as worker_module
 from forge.core.workspace import Workspace
 from forge.tools.builtin import build_read_registry
+from forge.tools.registry import ToolRegistry
 
 BLACKBOARD_TOOL_NAMES = {"read_blackboard", "write_blackboard"}
 
@@ -14,11 +17,11 @@ MUTATING_TOOL_NAMES = {
 }
 
 
-def _names(registry) -> set[str]:
-    return set(registry._tools.keys())
+def _names(registry: ToolRegistry) -> set[str]:
+    return {tool.name for tool in registry}
 
 
-def test_read_registry_contains_read_tools(tmp_path):
+def test_read_registry_contains_read_tools(tmp_path: Path):
     """build_read_registry registers the expected read-side tools."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     registry = build_read_registry(ws, "myapp")
@@ -27,14 +30,14 @@ def test_read_registry_contains_read_tools(tmp_path):
     assert "list_files" in names
 
 
-def test_read_registry_excludes_blackboard_tools(tmp_path):
+def test_read_registry_excludes_blackboard_tools(tmp_path: Path):
     """build_read_registry must not expose any blackboard tools to agents."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     registry = build_read_registry(ws, "myapp", test_command="pytest")
     assert _names(registry).isdisjoint(BLACKBOARD_TOOL_NAMES)
 
 
-def test_read_registry_excludes_write_tools(tmp_path):
+def test_read_registry_excludes_write_tools(tmp_path: Path):
     """build_read_registry must not register mutating tools."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     registry = build_read_registry(ws, "myapp")
@@ -42,14 +45,14 @@ def test_read_registry_excludes_write_tools(tmp_path):
     assert names.isdisjoint(MUTATING_TOOL_NAMES)
 
 
-def test_read_registry_exposes_only_non_mutating_tools(tmp_path):
+def test_read_registry_exposes_only_non_mutating_tools(tmp_path: Path):
     """build_read_registry exposes only tools allowed for read-only workers."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     registry = build_read_registry(ws, "myapp", test_command="pytest")
     assert _names(registry) == {"read_file", "list_files", "run_tests"}
 
 
-def test_read_registry_registers_run_tests_when_command_given(tmp_path):
+def test_read_registry_registers_run_tests_when_command_given(tmp_path: Path):
     """build_read_registry adds run_tests only when test_command is provided."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
     without = build_read_registry(ws, "myapp")

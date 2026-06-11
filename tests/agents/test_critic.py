@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import _render_files
+from forge.agents.base import render_files
 from forge.agents.critic import critic_agent
 from forge.core.models import (
     AgentRequest,
@@ -48,11 +48,11 @@ def _state_view() -> StateView:
 
 def _rendered_output() -> str:
     delta = DeltaState(new_files=[FileWrite(path="main.py", content='print("Hello, World!")')])
-    return _render_files(delta, _state_view())
+    return render_files(delta, _state_view())
 
 
 def _rendered_empty() -> str:
-    return _render_files(DeltaState(), _state_view())
+    return render_files(DeltaState(), _state_view())
 
 
 def _provider(response_json: str) -> MagicMock:

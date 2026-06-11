@@ -68,7 +68,7 @@ def _adapter_spec(name: str = "coding", work_noun: str = "implementation") -> Ad
 
 def _registry_with(name: str = "coding", work_noun: str = "implementation") -> AdapterRegistry:
     registry = AdapterRegistry()
-    registry._adapters[name] = _adapter_spec(name, work_noun)
+    registry.register(_adapter_spec(name, work_noun))
     return registry
 
 
@@ -96,7 +96,7 @@ def _engine(
     referee_provider: MagicMock | None = None,
     max_attempts: int = 3,
     work_noun: str = "implementation",
-) -> AttemptEngine:
+) -> AttemptEngine[DeltaState]:
     req = request or _work_request()
     sv = _state_view()
     if run_fn is None:
@@ -107,7 +107,7 @@ def _engine(
             )
 
         run_fn = _default
-    return AttemptEngine(
+    return AttemptEngine[DeltaState](
         request=req,
         state_view=sv,
         validator=DeltaStateValidator(_adapter_spec(work_noun=work_noun), sv),
@@ -496,19 +496,21 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
         ]
     )
     registry = AdapterRegistry()
-    registry._adapters["document"] = AdapterSpec(
-        name="document",
-        description="docs",
-        tools=[],
-        prompt_template="",
-        requires_nonempty_output=True,
-        work_noun="document",
+    registry.register(
+        AdapterSpec(
+            name="document",
+            description="docs",
+            tools=[],
+            prompt_template="",
+            requires_nonempty_output=True,
+            work_noun="document",
+        )
     )
     sv = StateView(artifact_name="docs", language=None, files=[], dependencies=[])
-    engine = AttemptEngine(
+    engine = AttemptEngine[DeltaState](
         request=request,
         state_view=sv,
-        validator=DeltaStateValidator(registry._adapters["document"], sv),
+        validator=DeltaStateValidator(registry.get("document"), sv),
         run_fn=run_fn,
         registry=registry,
         critic_provider=MagicMock(),

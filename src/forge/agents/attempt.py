@@ -5,7 +5,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
-from forge.agents.base import _render_files
+from forge.agents.base import render_files
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.core.models import (
@@ -29,36 +29,62 @@ T = TypeVar("T")
 
 @runtime_checkable
 class OutputValidator(Protocol[T]):
-    def extract_from_response(self, response: AgentResponse) -> T | None: ...
-    def is_empty(self, output: T) -> bool: ...
-    def render_for_critic(self, output: T) -> str: ...
-    def work_noun(self) -> str: ...
-    def requires_nonempty(self) -> bool: ...
+    """Protocol for validating and rendering agent output for the PWC loop."""
+
+    def extract_from_response(self, response: AgentResponse) -> T | None:
+        """Extract typed output from an AgentResponse, or None if unavailable."""
+        ...
+
+    def is_empty(self, output: T) -> bool:
+        """Return True when the output contains no meaningful work."""
+        ...
+
+    def render_for_critic(self, output: T) -> str:
+        """Render output as a human-readable string for the critic/referee."""
+        ...
+
+    def work_noun(self) -> str:
+        """Return the singular noun describing this kind of output (e.g. 'implementation')."""
+        ...
+
+    def requires_nonempty(self) -> bool:
+        """Return True when empty output should trigger a retry rather than ALREADY_DONE."""
+        ...
 
 
 class DeltaStateValidator:
+    """OutputValidator for DeltaState — validates file/edit output from work agents."""
+
     def __init__(self, adapter_spec: AdapterSpec, state_view: StateView) -> None:
         self._adapter = adapter_spec
         self._state_view = state_view
 
     def extract_from_response(self, response: AgentResponse) -> DeltaState | None:
+        """Return the delta from the response."""
         return response.delta
 
     def is_empty(self, output: DeltaState) -> bool:
+        """Return True when the delta has no files, edits, or dependencies."""
         return not output.new_files and not output.edits and not output.dependencies
 
     def render_for_critic(self, output: DeltaState) -> str:
-        return _render_files(output, self._state_view)
+        """Render delta files and existing artifact state for the critic."""
+        return render_files(output, self._state_view)
 
     def work_noun(self) -> str:
+        """Return the adapter's work noun."""
         return self._adapter.work_noun
 
     def requires_nonempty(self) -> bool:
+        """Return the adapter's requires_nonempty_output flag."""
         return self._adapter.requires_nonempty_output
 
 
 class PlanResponseValidator:
+    """OutputValidator for PlanResponse — validates task decomposition from plan agents."""
+
     def extract_from_response(self, response: AgentResponse) -> PlanResponse | None:
+        """Reconstruct a PlanResponse from the follow_up requests in the response."""
         if response.status != ResponseStatus.COMPLETED:
             return None
         tasks = [
@@ -75,9 +101,11 @@ class PlanResponseValidator:
         return PlanResponse(tasks=tasks)
 
     def is_empty(self, output: PlanResponse) -> bool:
+        """Always returns False — planners never trigger ALREADY_DONE."""
         return False
 
     def render_for_critic(self, output: PlanResponse) -> str:
+        """Render plan tasks as a numbered list for the critic."""
         if not output.tasks:
             return "(no tasks)"
         lines: list[str] = []
@@ -91,9 +119,11 @@ class PlanResponseValidator:
         return "\n".join(lines)
 
     def work_noun(self) -> str:
+        """Return 'plan'."""
         return "plan"
 
     def requires_nonempty(self) -> bool:
+        """Return True — plan agents must always produce tasks."""
         return True
 
 
@@ -128,6 +158,8 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
 
 
 class AttemptEngine[T]:
+    """Generic PWC (Plan-Work-Critique) retry loop for work and plan agents."""
+
     def __init__(
         self,
         request: AgentRequest,

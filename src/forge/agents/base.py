@@ -78,7 +78,9 @@ class PromptBuilder:
         """Render final-response schema instructions from the actual Pydantic model."""
         schema = cls.compact_response_schema(response_type)
         fields = (
-            ", ".join(schema["properties"].keys()) if isinstance(schema["properties"], dict) else ""
+            ", ".join(cast(dict[str, object], schema["properties"]).keys())
+            if isinstance(schema["properties"], dict)
+            else ""
         )
         lines = [
             f"Final response model: {response_type.__name__}",
@@ -89,6 +91,7 @@ class PromptBuilder:
         return "\n".join(lines)
 
     def build(self, tracked_delta: DeltaState | None = None) -> str:
+        """Build the system prompt string, showing tool and schema sections as appropriate."""
         tracked_delta = tracked_delta or DeltaState()
         has_tools = self.tools is not None and bool(self.tools)
         show_final = self.tools is None or not _is_empty_delta(tracked_delta)
@@ -146,12 +149,12 @@ class PromptBuilder:
         return "\n".join(lines)
 
 
-def _build_system_prompt(
+def build_system_prompt(
     tools: ToolRegistry | None,
     final_response_type: type[BaseModel],
     tracked_delta: DeltaState = DeltaState(),
 ) -> str:
-    # Compatibility shim for critic/referee until their retry loops use PromptBuilder directly.
+    """Build a system prompt for the given tools and response type."""
     return PromptBuilder(tools, final_response_type).build(tracked_delta)
 
 
@@ -162,6 +165,7 @@ class ResponseParser:
         self.final_response_type = final_response_type
 
     def parse(self, raw: str) -> ToolCallRequest | BaseModel:
+        """Parse raw LLM text into a ToolCallRequest or the final response model."""
         text = raw.strip()
         match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
         if match:
@@ -184,10 +188,10 @@ class ResponseParser:
             ) from e
 
 
-def _parse_response(
+def parse_response(
     raw: str, tools: ToolRegistry | None, final_response_type: type[BaseModel]
 ) -> ToolCallRequest | BaseModel:
-    # Compatibility shim for critic/referee until their retry loops use ResponseParser directly.
+    """Parse a raw LLM response into a tool call or final response model."""
     return ResponseParser(final_response_type).parse(raw)
 
 
@@ -202,6 +206,7 @@ class TrackedToolExecutor:
         request: ToolCallRequest,
         tracked_delta: DeltaState,
     ) -> tuple[ToolCallResponse, DeltaState]:
+        """Execute a tool call and return the response plus updated tracked delta."""
         if self.tools is None:
             return (
                 ToolCallResponse(
@@ -298,7 +303,7 @@ def _is_empty_delta(delta: DeltaState) -> bool:
     return not delta.new_files and not delta.edits and not delta.dependencies
 
 
-def _render_files(delta: DeltaState, state_view: StateView) -> str:
+def render_files(delta: DeltaState, state_view: StateView) -> str:
     """Render produced files, applied edits, and existing artifact state as a readable block."""
     lines: list[str] = []
     if delta.new_files:
@@ -354,6 +359,7 @@ class ToolLoop:
         self.tool_executor = TrackedToolExecutor(tools)
 
     async def run(self) -> AgentResponse:
+        """Run the tool loop until a final response is produced or limits are exceeded."""
         print(f"[debug] system prompt (initial):\n{self.prompt_builder.build(DeltaState())}")
         print(f"[debug] user prompt:\n{self.prompt}")
         messages: list[ChatMessage] = [

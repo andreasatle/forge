@@ -27,6 +27,10 @@ class AdapterRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, AdapterSpec] = {}
 
+    def register(self, spec: AdapterSpec) -> None:
+        """Register an adapter spec directly."""
+        self._adapters[spec.name] = spec
+
     def load(self, adapters_dir: Path) -> None:
         """Load all *.yaml adapter files from the given directory."""
         for path in sorted(adapters_dir.glob("*.yaml")):

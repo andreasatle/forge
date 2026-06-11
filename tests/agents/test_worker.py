@@ -22,12 +22,13 @@ from forge.core.models import (
 )
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
+from forge.tools.registry import ToolRegistry
 
 BLACKBOARD_TOOL_NAMES = {"read_blackboard", "write_blackboard"}
 MUTATING_TOOL_NAMES = {"write_file", "replace_in_file", "add_dependency", "write_blackboard"}
 
 
-def _tool_names(registry) -> set[str]:
+def _tool_names(registry: ToolRegistry) -> set[str]:
     return {tool.name for tool in registry}
 
 
@@ -37,11 +38,13 @@ def _available_tool_names(system_prompt: str) -> set[str]:
 
 def _registry() -> AdapterRegistry:
     registry = AdapterRegistry()
-    registry._adapters["coding"] = AdapterSpec(
-        name="coding",
-        description="test",
-        tools=[],
-        prompt_template="do: {objective}\nsuccess: {success_condition}",
+    registry.register(
+        AdapterSpec(
+            name="coding",
+            description="test",
+            tools=[],
+            prompt_template="do: {objective}\nsuccess: {success_condition}",
+        )
     )
     return registry
 
@@ -68,16 +71,18 @@ def _yaml_adapter_registry() -> AdapterRegistry:
 
 def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
     lr = LanguageRegistry()
-    lr._plugins[name] = LanguagePlugin(
-        name=name,
-        package_manager="uv",
-        init_command="uv init",
-        test_command="pytest",
-        sync_command="uv sync",
-        add_dependency_command="uv add {package}",
-        project_structure=[],
-        prompt_supplement="",
-        delta_example="",
+    lr.register(
+        LanguagePlugin(
+            name=name,
+            package_manager="uv",
+            init_command="uv init",
+            test_command="pytest",
+            sync_command="uv sync",
+            add_dependency_command="uv add {package}",
+            project_structure=[],
+            prompt_supplement="",
+            delta_example="",
+        )
     )
     return lr
 
@@ -100,7 +105,7 @@ def _work_request(adapter: str, language: str | None = None) -> AgentRequest:
     )
 
 
-async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path) -> None:
+async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: Path) -> None:
     """WorkTaskExecutor runs a work task and returns the engine response."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -126,7 +131,7 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path) -
     assert response.delta == delta
 
 
-async def test_work_task_executor_enforces_adapter_tools(tmp_path) -> None:
+async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:
     """WorkTaskExecutor passes only the tools declared by the adapter."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -154,17 +159,19 @@ async def test_work_task_executor_enforces_adapter_tools(tmp_path) -> None:
     assert _tool_names(tools) == expected
 
 
-async def test_work_task_executor_unknown_adapter_tool_returns_failed(tmp_path) -> None:
+async def test_work_task_executor_unknown_adapter_tool_returns_failed(tmp_path: Path) -> None:
     """WorkTaskExecutor returns FAILED when an adapter declares an unknown tool."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
     adapter_registry = AdapterRegistry()
-    adapter_registry._adapters["broken"] = AdapterSpec(
-        name="broken",
-        description="test",
-        tools=["nonexistent_tool"],
-        prompt_template="do: {objective}\nsuccess: {success_condition}",
+    adapter_registry.register(
+        AdapterSpec(
+            name="broken",
+            description="test",
+            tools=["nonexistent_tool"],
+            prompt_template="do: {objective}\nsuccess: {success_condition}",
+        )
     )
     request = AgentRequest(
         agent_type=AgentType.WORK,
@@ -190,7 +197,7 @@ async def test_work_task_executor_unknown_adapter_tool_returns_failed(tmp_path) 
 
 
 async def test_work_task_executor_python_language_supplement_appears_in_prompt(
-    tmp_path,
+    tmp_path: Path,
 ) -> None:
     """WorkTaskExecutor includes the language plugin prompt supplement."""
     workspace = Workspace(tmp_path / "ws")
@@ -200,16 +207,18 @@ async def test_work_task_executor_python_language_supplement_appears_in_prompt(
     provider = MagicMock()
     provider.max_tokens = 8192
     language_registry = LanguageRegistry()
-    language_registry._plugins["python"] = LanguagePlugin(
-        name="python",
-        package_manager="uv",
-        init_command="uv init",
-        test_command="pytest",
-        sync_command="uv sync",
-        add_dependency_command="uv add {package}",
-        project_structure=[],
-        prompt_supplement="UNIQUE_EXECUTOR_SUPPLEMENT",
-        delta_example="",
+    language_registry.register(
+        LanguagePlugin(
+            name="python",
+            package_manager="uv",
+            init_command="uv init",
+            test_command="pytest",
+            sync_command="uv sync",
+            add_dependency_command="uv add {package}",
+            project_structure=[],
+            prompt_supplement="UNIQUE_EXECUTOR_SUPPLEMENT",
+            delta_example="",
+        )
     )
     executor = WorkTaskExecutor(
         registry=_registry(),
@@ -229,7 +238,7 @@ async def test_work_task_executor_python_language_supplement_appears_in_prompt(
     assert "UNIQUE_EXECUTOR_SUPPLEMENT" in user_prompt
 
 
-async def test_work_task_executor_keeps_read_only_policy(tmp_path) -> None:
+async def test_work_task_executor_keeps_read_only_policy(tmp_path: Path) -> None:
     """WorkTaskExecutor keeps the worker read-only policy in the prompt."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -256,7 +265,7 @@ async def test_work_task_executor_keeps_read_only_policy(tmp_path) -> None:
     assert "do not attempt to write files via tools" in user_prompt
 
 
-async def test_worker_tools_do_not_include_blackboard_tools(tmp_path) -> None:
+async def test_worker_tools_do_not_include_blackboard_tools(tmp_path: Path) -> None:
     """work_agent passes a registry with no blackboard tools — neither read nor write."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -278,7 +287,7 @@ async def test_worker_tools_do_not_include_blackboard_tools(tmp_path) -> None:
     assert _tool_names(tools).isdisjoint(BLACKBOARD_TOOL_NAMES)
 
 
-async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path) -> None:
+async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path: Path) -> None:
     """Neither user prompt nor system prompt seen by a worker mentions any blackboard tool."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -305,7 +314,7 @@ async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path) -> None:
         assert tool_name not in user_prompt
 
 
-async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
+async def test_worker_prompt_tool_mentions_match_registry(tmp_path: Path) -> None:
     """Worker-facing prompts mention only tools that are actually registered."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -334,7 +343,7 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
         assert unavailable not in user_prompt
 
 
-async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path) -> None:
+async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path: Path) -> None:
     """worker.py does not duplicate generic tool, JSON, or schema mechanics."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -369,7 +378,7 @@ async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path) -> None:
     assert "Produce ALL" not in user_prompt
 
 
-async def test_worker_prompt_keeps_read_only_policy(tmp_path) -> None:
+async def test_worker_prompt_keeps_read_only_policy(tmp_path: Path) -> None:
     """worker.py still tells workers to propose changes without mutating through tools."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -393,7 +402,7 @@ async def test_worker_prompt_keeps_read_only_policy(tmp_path) -> None:
     assert "task result" in user_prompt
 
 
-async def test_worker_prompt_includes_state_version_and_file_context(tmp_path) -> None:
+async def test_worker_prompt_includes_state_version_and_file_context(tmp_path: Path) -> None:
     """worker.py still includes StateView version and existing file context."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -434,7 +443,7 @@ def test_production_adapter_yamls_expose_no_blackboard_tools() -> None:
         assert not exposed, f"adapter '{name}' exposes blackboard tools: {exposed}"
 
 
-async def test_coding_adapter_receives_exactly_declared_tools(tmp_path) -> None:
+async def test_coding_adapter_receives_exactly_declared_tools(tmp_path: Path) -> None:
     """work_agent passes exactly the tools declared in coding.yaml — no more, no less."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -463,7 +472,7 @@ async def test_coding_adapter_receives_exactly_declared_tools(tmp_path) -> None:
     assert _tool_names(tools) == expected
 
 
-async def test_document_adapter_receives_exactly_declared_tools(tmp_path) -> None:
+async def test_document_adapter_receives_exactly_declared_tools(tmp_path: Path) -> None:
     """work_agent passes exactly the tools declared in document.yaml — no more, no less."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -487,7 +496,7 @@ async def test_document_adapter_receives_exactly_declared_tools(tmp_path) -> Non
     assert _tool_names(tools) == expected
 
 
-async def test_audit_adapter_receives_exactly_declared_tools(tmp_path) -> None:
+async def test_audit_adapter_receives_exactly_declared_tools(tmp_path: Path) -> None:
     """work_agent passes exactly the tools declared in audit.yaml — no more, no less."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -511,7 +520,7 @@ async def test_audit_adapter_receives_exactly_declared_tools(tmp_path) -> None:
     assert _tool_names(tools) == expected
 
 
-async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) -> None:
+async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path: Path) -> None:
     """audit adapter declares only read_file — list_files and run_tests must not be exposed."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -535,7 +544,7 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) 
     assert "run_tests" not in _tool_names(tools)
 
 
-async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
+async def test_worker_prompt_warns_against_empty_delta(tmp_path: Path) -> None:
     """coding.yaml warns that empty DeltaState is always wrong."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -564,7 +573,7 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
     assert "empty DeltaState is always wrong" in user_prompt
 
 
-async def test_language_not_appended_when_no_plugin(tmp_path) -> None:
+async def test_language_not_appended_when_no_plugin(tmp_path: Path) -> None:
     """work_agent omits 'Language:' when no language plugin is configured."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -586,7 +595,7 @@ async def test_language_not_appended_when_no_plugin(tmp_path) -> None:
     assert "Language:" not in user_prompt
 
 
-async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path) -> None:
+async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path: Path) -> None:
     """work_agent prompt refers to 'existing files', not 'existing codebase'."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -613,7 +622,7 @@ async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path) -> None:
     assert "existing codebase" not in user_prompt
 
 
-async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
+async def test_language_supplement_appears_in_worker_prompt(tmp_path: Path) -> None:
     """work_agent injects the language plugin's prompt_supplement into the rendered prompt."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -622,16 +631,18 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
     lr = LanguageRegistry()
-    lr._plugins["python"] = LanguagePlugin(
-        name="python",
-        package_manager="uv",
-        init_command="uv init",
-        test_command="pytest",
-        sync_command="uv sync",
-        add_dependency_command="uv add {package}",
-        project_structure=[],
-        prompt_supplement="UNIQUE_SUPPLEMENT_MARKER",
-        delta_example="",
+    lr.register(
+        LanguagePlugin(
+            name="python",
+            package_manager="uv",
+            init_command="uv init",
+            test_command="pytest",
+            sync_command="uv sync",
+            add_dependency_command="uv add {package}",
+            project_structure=[],
+            prompt_supplement="UNIQUE_SUPPLEMENT_MARKER",
+            delta_example="",
+        )
     )
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
@@ -647,7 +658,7 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
     assert "UNIQUE_SUPPLEMENT_MARKER" in user_prompt
 
 
-async def test_python_worker_prompt_includes_packaging_guidance(tmp_path) -> None:
+async def test_python_worker_prompt_includes_packaging_guidance(tmp_path: Path) -> None:
     """Python coding workers receive packaging guidance from the language supplement."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -680,7 +691,7 @@ async def test_python_worker_prompt_includes_packaging_guidance(tmp_path) -> Non
     assert "setup.py" in user_prompt
 
 
-async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None:
+async def test_language_delta_example_appears_in_worker_prompt(tmp_path: Path) -> None:
     """work_agent renders language-specific conventions into the prompt."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -689,16 +700,18 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None
     provider = MagicMock()
     provider.max_tokens = 8192
     lr = LanguageRegistry()
-    lr._plugins["python"] = LanguagePlugin(
-        name="python",
-        package_manager="uv",
-        init_command="uv init",
-        test_command="pytest",
-        sync_command="uv sync",
-        add_dependency_command="uv add {package}",
-        project_structure=[],
-        prompt_supplement="",
-        delta_example='{{"path": "DELTA_EXAMPLE_MARKER"}}',
+    lr.register(
+        LanguagePlugin(
+            name="python",
+            package_manager="uv",
+            init_command="uv init",
+            test_command="pytest",
+            sync_command="uv sync",
+            add_dependency_command="uv add {package}",
+            project_structure=[],
+            prompt_supplement="",
+            delta_example='{{"path": "DELTA_EXAMPLE_MARKER"}}',
+        )
     )
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
@@ -721,17 +734,19 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None
     assert "DELTA_EXAMPLE_MARKER" in user_prompt
 
 
-async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None:
+async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path: Path) -> None:
     """work_agent returns FAILED with a clear message when adapter declares an unknown tool."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
     adapter_registry = AdapterRegistry()
-    adapter_registry._adapters["broken"] = AdapterSpec(
-        name="broken",
-        description="test",
-        tools=["nonexistent_tool"],
-        prompt_template="do: {objective}\nsuccess: {success_condition}",
+    adapter_registry.register(
+        AdapterSpec(
+            name="broken",
+            description="test",
+            tools=["nonexistent_tool"],
+            prompt_template="do: {objective}\nsuccess: {success_condition}",
+        )
     )
     request = AgentRequest(
         agent_type=AgentType.WORK,
@@ -753,7 +768,7 @@ async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path) -> None
     assert "nonexistent_tool" in (response.error or "")
 
 
-async def test_run_agent_failure_propagates_as_failed_response(tmp_path) -> None:
+async def test_run_agent_failure_propagates_as_failed_response(tmp_path: Path) -> None:
     """work_agent returns the failed AgentResponse when TaskAttemptEngine raises RunAgentFailed."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -779,7 +794,7 @@ async def test_run_agent_failure_propagates_as_failed_response(tmp_path) -> None
     assert response.error == "provider error"
 
 
-async def test_successful_engine_result_wrapped_in_completed_response(tmp_path) -> None:
+async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: Path) -> None:
     """work_agent returns AgentResponse(COMPLETED, delta=...) for a successful engine run."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()

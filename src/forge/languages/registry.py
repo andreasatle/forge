@@ -39,6 +39,10 @@ class LanguageRegistry:
     def __init__(self) -> None:
         self._plugins: dict[str, LanguagePlugin] = {}
 
+    def register(self, plugin: LanguagePlugin) -> None:
+        """Register a language plugin directly."""
+        self._plugins[plugin.name] = plugin
+
     def load(self, languages_dir: Path) -> None:
         """Load all *.yaml language plugins from the given directory."""
         for path in sorted(languages_dir.glob("*.yaml")):

@@ -1,8 +1,8 @@
 """Critic agent — reviews agent output against the success condition."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import _build_system_prompt, _parse_response
-from forge.core.models import AgentRequest, CriticFinding, PlanSpec, StateView, WorkSpec
+from forge.agents.base import build_system_prompt, parse_response
+from forge.core.models import AgentRequest, CriticFinding, StateView, WorkSpec
 from forge.llm.providers import ChatMessage, LLMProvider
 
 
@@ -20,12 +20,10 @@ async def critic_agent(
         objective = spec.objective
         success_condition = spec.success_condition
         language = spec.language or "not specified"
-    elif isinstance(spec, PlanSpec):
+    else:
         objective = spec.northstar
         success_condition = "Plan comprehensively addresses the northstar goal"
         language = "n/a"
-    else:
-        raise TypeError(f"unsupported spec type: {type(spec).__name__}")
 
     adapter = registry.get("critic")
     user_prompt = adapter.prompt_template.format(
@@ -34,7 +32,7 @@ async def critic_agent(
         output_text=output_text,
         language=language,
     )
-    system_prompt = _build_system_prompt(None, CriticFinding)
+    system_prompt = build_system_prompt(None, CriticFinding)
     messages: list[ChatMessage] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -43,7 +41,7 @@ async def critic_agent(
     for attempt in range(max_retries + 1):
         raw = await provider.chat(messages)
         try:
-            parsed = _parse_response(raw, None, CriticFinding)
+            parsed = parse_response(raw, None, CriticFinding)
             return parsed  # type: ignore[return-value]
         except ValueError as e:
             if attempt >= max_retries:

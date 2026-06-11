@@ -1,11 +1,10 @@
 """Referee agent — reviews critic finding and makes the final disposition."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import _build_system_prompt, _parse_response
+from forge.agents.base import build_system_prompt, parse_response
 from forge.core.models import (
     AgentRequest,
     CriticFinding,
-    PlanSpec,
     RefereeDecision,
     StateView,
     WorkSpec,
@@ -32,12 +31,10 @@ async def referee_agent(
         objective = spec.objective
         success_condition = spec.success_condition
         language = spec.language or "not specified"
-    elif isinstance(spec, PlanSpec):
+    else:
         objective = spec.northstar
         success_condition = "Plan comprehensively addresses the northstar goal"
         language = "n/a"
-    else:
-        raise TypeError(f"unsupported spec type: {type(spec).__name__}")
 
     adapter = registry.get("referee")
     user_prompt = adapter.prompt_template.format(
@@ -49,7 +46,7 @@ async def referee_agent(
         critic_rationale=critic_finding.rationale,
         critic_hints=_render_hints(critic_finding.hints),
     )
-    system_prompt = _build_system_prompt(None, RefereeDecision)
+    system_prompt = build_system_prompt(None, RefereeDecision)
     messages: list[ChatMessage] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -58,7 +55,7 @@ async def referee_agent(
     for attempt in range(max_retries + 1):
         raw = await provider.chat(messages)
         try:
-            parsed = _parse_response(raw, None, RefereeDecision)
+            parsed = parse_response(raw, None, RefereeDecision)
             return parsed  # type: ignore[return-value]
         except ValueError as e:
             if attempt >= max_retries:
