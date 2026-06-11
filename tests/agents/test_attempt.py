@@ -11,6 +11,7 @@ from forge.agents.attempt import (
     RunAgentFailed,
 )
 from forge.core.models import (
+    AgentContract,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -28,6 +29,7 @@ from forge.core.models import (
     StateView,
     TaskSpec,
     WorkSpec,
+    render_agent_contract,
 )
 
 
@@ -316,6 +318,157 @@ async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
     assert "1. Required change: add tests" in prompts[2]
     assert "Revision request 2 (after 2 prior attempt(s))" in prompts[2]
     assert "1. Required change: handle failures" in prompts[2]
+
+
+async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> None:
+    """Reviewer-quoted invariant contract text is not duplicated in REQUIRED REVISION."""
+    plugin_guidance = "Language plugin guidance:\n" + "\n".join(
+        f"PLUGIN_RULE_{index}: follow this binding language rule" for index in range(80)
+    )
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do task",
+            success_condition="task done",
+            adapter="coding",
+            artifact="codebase",
+            language="toy",
+            contract=AgentContract(
+                objective="do task",
+                success_condition="task done",
+                constraints=[plugin_guidance],
+            ),
+        ),
+    )
+    contract_block = render_agent_contract(request)
+    base_prompt = f"base prompt\n\n{contract_block}\n\nProduce output satisfying this contract."
+    quoted_contract = (
+        f"The output missed a rule.\n\n{contract_block}\n\nAfter applying the contract, add tests."
+    )
+    first_delta = DeltaState(new_files=[FileWrite(path="main.toy", content="first")])
+    improved_delta = DeltaState(new_files=[FileWrite(path="main.toy", content="improved")])
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, delta=first_delta
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, delta=improved_delta
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale=quoted_contract,
+                revision_items=[
+                    RevisionItem(
+                        required_change=f"Respect this rule:\n\n{plugin_guidance}",
+                        rationale=f"{contract_block}\n\nThe language rule is binding.",
+                    )
+                ],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE,
+                rationale=quoted_contract,
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run(base_prompt)
+
+    assert result.status == ResponseStatus.COMPLETED
+    retry_prompt = prompts[1]
+    assert retry_prompt.count("AgentRequest contract:") == 1
+    assert retry_prompt.count("Language plugin guidance:") == 1
+    assert "same AgentRequest contract above" in retry_prompt
+    assert "[omitted repeated AgentRequest contract" in retry_prompt
+    assert "[omitted repeated language plugin guidance" in retry_prompt
+    assert "After applying the contract, add tests." in retry_prompt
+
+
+async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
+    """Accumulated revision history grows by deltas, not repeated full contract text."""
+    plugin_guidance = "Language plugin guidance:\n" + "\n".join(
+        f"LONG_BINDING_RULE_{index}: keep this language invariant" for index in range(120)
+    )
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do task",
+            success_condition="task done",
+            adapter="coding",
+            artifact="codebase",
+            language="toy",
+            contract=AgentContract(
+                objective="do task",
+                success_condition="task done",
+                constraints=[plugin_guidance],
+            ),
+        ),
+    )
+    contract_block = render_agent_contract(request)
+    base_prompt = f"base prompt\n\n{contract_block}"
+    quoted_contract = f"Fix the missing work.\n\n{contract_block}"
+    delta = DeltaState(new_files=[FileWrite(path="main.toy", content="code")])
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale=quoted_contract,
+                hints=[quoted_contract],
+            ),
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale=quoted_contract,
+                hints=[quoted_contract],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale=quoted_contract, override=False
+            ),
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale=quoted_contract, override=False
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run(base_prompt)
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert prompts[2].count("AgentRequest contract:") == 1
+    assert prompts[2].count("Language plugin guidance:") == 1
+    assert "Revision request 1 (after 1 prior attempt(s))" in prompts[2]
+    assert "Revision request 2 (after 2 prior attempt(s))" in prompts[2]
+    assert len(prompts[2]) - len(prompts[1]) < len(contract_block)
 
 
 async def test_rejected_validation_returns_failed_without_delta() -> None:

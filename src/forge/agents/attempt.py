@@ -1,6 +1,7 @@
 """AttemptEngine — generic attempt/validation/retry loop for work and plan tasks."""
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, cast, runtime_checkable
 
@@ -27,6 +28,16 @@ from forge.llm.providers import LLMProvider
 _logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+_MAX_REVISION_RATIONALE_CHARS = 1200
+_MAX_REVISION_CHANGE_CHARS = 1600
+_MAX_REVISION_ITEM_RATIONALE_CHARS = 900
+_REPEATED_CONTRACT_MARKER = (
+    "[omitted repeated AgentRequest contract; apply the contract block above]"
+)
+_REPEATED_PLUGIN_GUIDANCE_MARKER = (
+    "[omitted repeated language plugin guidance; apply the binding language constraints above]"
+)
 
 
 @runtime_checkable
@@ -244,6 +255,44 @@ def _build_revision_request(
     )
 
 
+def _strip_repeated_block(text: str, heading: str, marker: str) -> str:
+    """Remove an embedded invariant prompt block from reviewer-supplied retry text."""
+    start = text.find(heading)
+    if start == -1:
+        return text
+    before = text[:start].rstrip()
+    rest = text[start + len(heading) :]
+    match = re.search(r"\n\s*\n", rest)
+    after = rest[match.end() :].lstrip() if match else ""
+    parts = [part for part in (before, marker, after) if part]
+    return "\n".join(parts)
+
+
+def _truncate_revision_text(text: str, limit: int) -> str:
+    """Bound a retry-history field while preserving enough text to act on it."""
+    stripped = text.strip()
+    if len(stripped) <= limit:
+        return stripped
+    return f"{stripped[: limit - 15].rstrip()} ...[truncated]"
+
+
+def _compact_revision_text(text: str | None, limit: int) -> str:
+    """Compact reviewer text before placing it in accumulated producer retry history."""
+    if not text:
+        return ""
+    compact = _strip_repeated_block(
+        text,
+        "AgentRequest contract:",
+        _REPEATED_CONTRACT_MARKER,
+    )
+    compact = _strip_repeated_block(
+        compact,
+        "Language plugin guidance:",
+        _REPEATED_PLUGIN_GUIDANCE_MARKER,
+    )
+    return _truncate_revision_text(compact, limit)
+
+
 def _render_revision_requests(
     revision_requests: list[RevisionRequest],
     output_noun: str,
@@ -262,15 +311,22 @@ def _render_revision_requests(
                 f"Revision request {request_index} "
                 f"(after {revision_request.prior_attempts} prior attempt(s)):",
                 f"Previous disposition: {revision_request.disposition}",
-                f"Rationale: {revision_request.rationale}",
+                "Rationale: "
+                f"{_compact_revision_text(revision_request.rationale, _MAX_REVISION_RATIONALE_CHARS)}",
                 "Required changes:",
             ]
         )
         for item_index, item in enumerate(revision_request.items, start=1):
             criterion = f" [{item.criterion_id}]" if item.criterion_id else ""
-            lines.append(f"{item_index}. Required change{criterion}: {item.required_change}")
+            lines.append(
+                f"{item_index}. Required change{criterion}: "
+                f"{_compact_revision_text(item.required_change, _MAX_REVISION_CHANGE_CHARS)}"
+            )
             if item.rationale:
-                lines.append(f"   Rationale: {item.rationale}")
+                lines.append(
+                    "   Rationale: "
+                    f"{_compact_revision_text(item.rationale, _MAX_REVISION_ITEM_RATIONALE_CHARS)}"
+                )
     lines.extend(
         [
             "",
