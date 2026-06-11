@@ -183,29 +183,29 @@ def test_build_state_view_includes_current_version(tmp_path: Path) -> None:
     assert view.version == ss.current_version == 1
 
 
-def test_version_starts_at_one_when_artifact_has_files(tmp_path: Path) -> None:
-    """StateService initialises _version to 1 when the artifact directory already contains files."""
+def test_version_starts_at_zero_even_when_artifact_has_files(tmp_path: Path) -> None:
+    """StateService always initialises _version to 0 — bootstrap files are the version-0 state."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "existing.py").write_text("x = 1")
 
     ss = StateService(ws, "app")
 
-    assert ss.current_version == 1
+    assert ss.current_version == 0
 
 
-def test_apply_delta_increments_from_resumed_version(tmp_path: Path) -> None:
-    """apply_delta increments from version 1 when the artifact already had files on construction."""
+def test_apply_delta_increments_from_zero_even_with_existing_files(tmp_path: Path) -> None:
+    """apply_delta increments from 0 regardless of pre-existing files on construction."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "existing.py").write_text("x = 1")
     ss = StateService(ws, "app")
 
-    assert ss.current_version == 1
+    assert ss.current_version == 0
 
     ss.apply_delta(DeltaState(new_files=[FileWrite(path="new.py", content="y = 2")]))
 
-    assert ss.current_version == 2
+    assert ss.current_version == 1
 
 
 def test_noise_only_files_do_not_set_version_to_one(tmp_path: Path) -> None:
