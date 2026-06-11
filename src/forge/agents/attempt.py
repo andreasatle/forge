@@ -113,6 +113,18 @@ class PlanResponseValidator:
         for i, task in enumerate(output.tasks):
             lines.append(f"Task {i}: {task.objective}")
             lines.append(f"  Success condition: {task.success_condition}")
+            if task.acceptance_criteria:
+                lines.append("  Acceptance criteria:")
+                lines.extend(
+                    f"    - {criterion.id}: {criterion.text}"
+                    for criterion in task.acceptance_criteria
+                )
+            if task.constraints:
+                lines.append("  Constraints:")
+                lines.extend(f"    - {constraint}" for constraint in task.constraints)
+            if task.non_goals:
+                lines.append("  Non-goals:")
+                lines.extend(f"    - {non_goal}" for non_goal in task.non_goals)
             if task.artifact:
                 lines.append(f"  Artifact: {task.artifact}")
             if task.language:
@@ -131,7 +143,7 @@ class PlanResponseValidator:
         """Return planner-output review language."""
         return ReviewContext(
             output_noun="plan",
-            review_focus="whether the task decomposition fully covers the northstar goal",
+            review_focus="whether the task decomposition satisfies the planning contract",
             empty_output_guidance="If the plan contains no tasks, reject it.",
         )
 
@@ -154,8 +166,7 @@ def _validation_rejected_response(
         request_id=request.id,
         status=ResponseStatus.FAILED,
         error=(
-            f"validation rejected {output_noun} with disposition "
-            f"'{disposition.value}': {rationale}"
+            f"validation rejected {output_noun} with disposition '{disposition.value}': {rationale}"
         ),
         failure_kind=FailureKind.VALIDATION_REJECTED,
     )
@@ -230,7 +241,7 @@ class AttemptEngine[T]:
                         )
                         feedback = (
                             f"Your previous attempt produced no {self._validator.work_noun()}. "
-                            f"You must produce concrete output to satisfy the success condition."
+                            f"You must produce concrete output to satisfy the AgentRequest contract."
                         )
                         continue
                     if not self._validator.requires_nonempty():

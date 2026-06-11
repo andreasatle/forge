@@ -7,14 +7,14 @@ prompt_template: |
   the critic.
 
   Review focus: {review_focus}
+  Review only against this contract. Out-of-scope ideals are not grounds for rejection.
 
   Override the critic when:
-  - The critic is too harsh: the {output_noun} genuinely meets the success condition despite minor gaps
-  - The critic is too lenient: the {output_noun} has serious flaws the critic overlooked
+  - The critic is too harsh: the {output_noun} satisfies the contract despite minor gaps
+  - The critic is too lenient: the {output_noun} has serious contract violations the critic overlooked
+  - The critic relies on requirements, ideals, or improvements outside the contract
 
-  Objective: {objective}
-  Success condition: {success_condition}
-  Language: {language}
+  {contract_block}
 
   Critic verdict:
     Disposition: {critic_disposition}
@@ -29,3 +29,4 @@ prompt_template: |
   - Use lowercase disposition values: "accept", "revise", or "reject"
   - Set override to true if your disposition differs from the critic's ({critic_disposition})
   - Give an independent rationale even if you agree with the critic
+  - Do not reject or revise for unstated ideals outside the contract

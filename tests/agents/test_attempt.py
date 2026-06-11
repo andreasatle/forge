@@ -717,6 +717,15 @@ async def test_plan_response_validator_requires_nonempty() -> None:
     assert PlanResponseValidator().requires_nonempty() is True
 
 
+async def test_plan_response_validator_review_context_is_contract_bounded() -> None:
+    """Planner validation wording is bounded to the planning contract."""
+    context = PlanResponseValidator().review_context()
+
+    assert context.review_focus == "whether the task decomposition satisfies the planning contract"
+    assert "fully covers" not in context.review_focus
+    assert "northstar goal" not in context.review_focus
+
+
 async def test_plan_response_validator_render_for_critic_includes_tasks() -> None:
     """PlanResponseValidator.render_for_critic renders objectives and success conditions."""
     v = PlanResponseValidator()
@@ -776,11 +785,7 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
         ]
     )
     run_fn, _ = _make_run_fn(
-        [
-            AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, output=plan
-            )
-        ]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan)]
     )
     registry = _registry_with()
     engine = AttemptEngine(
@@ -829,12 +834,8 @@ async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
     )
     run_fn, prompts = _make_run_fn(
         [
-            AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, output=plan
-            ),
-            AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, output=plan
-            ),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan),
         ]
     )
     registry = _registry_with()

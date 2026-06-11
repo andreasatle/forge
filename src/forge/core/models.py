@@ -13,6 +13,10 @@ def _empty_request_ids() -> frozenset[RequestId]:
     return frozenset()
 
 
+def _empty_strings() -> list[str]:
+    return []
+
+
 class AgentType(Enum):
     """Discriminator enum for the two agent roles in the system."""
 
@@ -92,13 +96,78 @@ class ReviewContext(BaseModel, frozen=True):
     empty_output_guidance: str
 
 
+class AcceptanceCriterion(BaseModel, frozen=True):
+    """One explicit contract criterion for accepting an agent output."""
+
+    id: str
+    text: str
+
+
+def _empty_acceptance_criteria() -> list[AcceptanceCriterion]:
+    return []
+
+
+class AgentContract(BaseModel, frozen=True):
+    """Authoritative contract for producer/critic/referee judgment."""
+
+    objective: str
+    success_condition: str
+    acceptance_criteria: list[AcceptanceCriterion] = Field(
+        default_factory=_empty_acceptance_criteria
+    )
+    constraints: list[str] = Field(default_factory=_empty_strings)
+    non_goals: list[str] = Field(default_factory=_empty_strings)
+
+
+def _contract_value(data: dict[str, Any], key: str) -> object:
+    contract = data.get("contract")
+    if isinstance(contract, AgentContract):
+        return getattr(contract, key)
+    if isinstance(contract, dict):
+        contract_dict = cast(dict[str, object], contract)
+        return contract_dict.get(key)
+    return None
+
+
 class PlanSpec(BaseModel):
     """Spec for a planning agent request carrying the northstar goal."""
 
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["plan"] = "plan"
-    northstar: str
+    northstar: str = ""
+    contract: AgentContract = Field(
+        default_factory=lambda: AgentContract(
+            objective="",
+            success_condition="A bounded plan is produced for this objective.",
+        )
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_contract(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        data = dict(cast(dict[str, Any], data))
+        objective = data.get("northstar") or _contract_value(data, "objective")
+        if objective is not None and "northstar" not in data:
+            data["northstar"] = objective
+        if "contract" not in data and objective is not None:
+            data["contract"] = {
+                "objective": objective,
+                "success_condition": "A bounded plan is produced for this objective.",
+            }
+        return data
+
+    @model_validator(mode="after")
+    def _require_contract_fields(self) -> "PlanSpec":
+        if not self.northstar:
+            raise ValueError("PlanSpec requires northstar or contract.objective")
+        if not self.contract.objective:
+            raise ValueError("PlanSpec contract requires objective")
+        if not self.contract.success_condition:
+            raise ValueError("PlanSpec contract requires success_condition")
+        return self
 
 
 class WorkSpec(BaseModel):
@@ -107,11 +176,47 @@ class WorkSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     kind: Literal["work"] = "work"
-    objective: str
-    success_condition: str
+    objective: str = ""
+    success_condition: str = ""
+    contract: AgentContract = Field(
+        default_factory=lambda: AgentContract(objective="", success_condition="")
+    )
     adapter: str
     artifact: str
     language: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_contract(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        data = dict(cast(dict[str, Any], data))
+        objective = data.get("objective") or _contract_value(data, "objective")
+        success_condition = data.get("success_condition") or _contract_value(
+            data, "success_condition"
+        )
+        if objective is not None and "objective" not in data:
+            data["objective"] = objective
+        if success_condition is not None and "success_condition" not in data:
+            data["success_condition"] = success_condition
+        if "contract" not in data and objective is not None and success_condition is not None:
+            data["contract"] = {
+                "objective": objective,
+                "success_condition": success_condition,
+            }
+        return data
+
+    @model_validator(mode="after")
+    def _require_contract_fields(self) -> "WorkSpec":
+        if not self.objective:
+            raise ValueError("WorkSpec requires objective or contract.objective")
+        if not self.success_condition:
+            raise ValueError("WorkSpec requires success_condition or contract.success_condition")
+        if not self.contract.objective:
+            raise ValueError("WorkSpec contract requires objective")
+        if not self.contract.success_condition:
+            raise ValueError("WorkSpec contract requires success_condition")
+        return self
 
 
 AgentSpec = Annotated[
@@ -130,6 +235,52 @@ class AgentRequest(BaseModel):
     source: RequestSource
     spec: AgentSpec
     dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
+
+
+def _render_list_section(title: str, values: list[str]) -> list[str]:
+    lines = [f"{title}:"]
+    if not values:
+        lines.append("- (none)")
+    else:
+        lines.extend(f"- {value}" for value in values)
+    return lines
+
+
+def render_agent_contract(request: AgentRequest) -> str:
+    """Render the canonical AgentRequest contract block for prompts."""
+    spec = request.spec
+    contract = spec.contract
+    lines = [
+        "AgentRequest contract:",
+        f"Objective: {contract.objective}",
+        f"Success condition: {contract.success_condition}",
+        "Acceptance criteria:",
+    ]
+    if contract.acceptance_criteria:
+        lines.extend(
+            f"- {criterion.id}: {criterion.text}" for criterion in contract.acceptance_criteria
+        )
+    else:
+        lines.append("- (none)")
+    lines.extend(_render_list_section("Constraints", contract.constraints))
+    lines.extend(_render_list_section("Non-goals", contract.non_goals))
+    if isinstance(spec, WorkSpec):
+        lines.extend(
+            [
+                f"Artifact: {spec.artifact}",
+                f"Adapter: {spec.adapter}",
+                f"Language: {spec.language or 'not specified'}",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Artifact: n/a",
+                "Adapter: n/a",
+                "Language: n/a",
+            ]
+        )
+    return "\n".join(lines)
 
 
 class Edit(BaseModel, frozen=True):
@@ -152,10 +303,6 @@ def _empty_edits() -> list[Edit]:
 
 
 def _empty_file_writes() -> list[FileWrite]:
-    return []
-
-
-def _empty_strings() -> list[str]:
     return []
 
 
@@ -221,6 +368,11 @@ class TaskSpec(BaseModel, frozen=True):
 
     objective: str
     success_condition: str
+    acceptance_criteria: list[AcceptanceCriterion] = Field(
+        default_factory=_empty_acceptance_criteria
+    )
+    constraints: list[str] = Field(default_factory=_empty_strings)
+    non_goals: list[str] = Field(default_factory=_empty_strings)
     adapter: str
     artifact: str
     language: str | None = None

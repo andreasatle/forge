@@ -8,6 +8,8 @@ from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.base import PromptBuilder
 from forge.agents.worker import WorkTaskExecutor, work_agent
 from forge.core.models import (
+    AcceptanceCriterion,
+    AgentContract,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -19,6 +21,7 @@ from forge.core.models import (
     ResponseStatus,
     StateView,
     WorkSpec,
+    render_agent_contract,
 )
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
@@ -236,6 +239,52 @@ async def test_work_task_executor_python_language_supplement_appears_in_prompt(
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "UNIQUE_EXECUTOR_SUPPLEMENT" in user_prompt
+
+
+async def test_work_producer_prompt_includes_canonical_contract_block(
+    tmp_path: Path,
+) -> None:
+    """Worker producer prompt includes the same canonical AgentRequest contract block."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="inspect code",
+            success_condition="report changes",
+            contract=AgentContract(
+                objective="inspect code",
+                success_condition="report changes",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="names files")],
+                constraints=["avoid rewrites"],
+                non_goals=["format unrelated files"],
+            ),
+            adapter="coding",
+            artifact="codebase",
+            language="python",
+        ),
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=_language_registry_with_tests(),
+        provider=provider,
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await executor.run(request, _state_view(language="python"))
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert render_agent_contract(request) in user_prompt
+    assert "Produce output satisfying this contract." in user_prompt
 
 
 async def test_work_task_executor_keeps_read_only_policy(tmp_path: Path) -> None:
@@ -574,7 +623,7 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path: Path) -> None:
 
 
 async def test_language_not_appended_when_no_plugin(tmp_path: Path) -> None:
-    """work_agent omits 'Language:' when no language plugin is configured."""
+    """work_agent omits plugin language context when no language plugin is configured."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -592,7 +641,8 @@ async def test_language_not_appended_when_no_plugin(tmp_path: Path) -> None:
         )
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "Language:" not in user_prompt
+    assert "Language: not specified" in user_prompt
+    assert "Language: python" not in user_prompt
 
 
 async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path: Path) -> None:

@@ -6,12 +6,15 @@ import pytest
 
 from forge.agents.planner import PlannerTaskExecutor, plan_agent
 from forge.core.models import (
+    AcceptanceCriterion,
+    AgentContract,
     AgentRequest,
     AgentType,
     PlanResponse,
     PlanSpec,
     RequestSource,
     ResponseStatus,
+    render_agent_contract,
 )
 
 
@@ -93,6 +96,40 @@ async def test_planner_task_executor_preserves_artifact_language_context() -> No
     assert "    description: Backend API implementation." in user_prompt
     assert "  docs:\n    type: document\n    language: markdown" in user_prompt
     assert "    description: User-facing documentation." in user_prompt
+
+
+async def test_plan_producer_prompt_includes_canonical_contract_block() -> None:
+    """Planner producer prompt includes the canonical AgentRequest contract block."""
+    request = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(
+            northstar="build a web scraper",
+            contract=AgentContract(
+                objective="build a web scraper",
+                success_condition="planner emits bounded executable tasks",
+                acceptance_criteria=[
+                    AcceptanceCriterion(id="AC1", text="each task names an artifact")
+                ],
+                constraints=["at most 5 tasks"],
+                non_goals=["browser extension"],
+            ),
+        ),
+    )
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert render_agent_contract(request) in user_prompt
+    assert "Produce output satisfying this contract." in user_prompt
 
 
 async def test_planner_prompt_handles_missing_artifact_description() -> None:

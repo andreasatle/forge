@@ -10,6 +10,7 @@ from forge.core.models import (
     PlanSpec,
     ResponseStatus,
     StateView,
+    render_agent_contract,
 )
 from forge.llm.providers import LLMProvider
 
@@ -45,6 +46,10 @@ Rules:
   — phrase it as an observable test outcome, not as a description of the implementation
 
 Goal: {northstar}
+
+{contract_block}
+
+Produce output satisfying this contract.
 """
 
 _DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[], dependencies=[])
@@ -93,6 +98,7 @@ class PlannerTaskExecutor:
             northstar=spec.northstar,
             artifact_names=", ".join(self.artifact_names),
             artifact_details=artifact_details,
+            contract_block=render_agent_contract(request),
         )
 
         def correction_fn(error: Exception, bad_response: str) -> str:

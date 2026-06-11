@@ -9,12 +9,13 @@ from forge.core.models import (
     ReviewContext,
     StateView,
     WorkSpec,
+    render_agent_contract,
 )
 from forge.llm.providers import ChatMessage, LLMProvider
 
 _DEFAULT_REVIEW_CONTEXT = ReviewContext(
     output_noun="work",
-    review_focus="whether the output genuinely meets the success condition",
+    review_focus="whether the output genuinely satisfies the AgentRequest contract",
     empty_output_guidance="If no files were produced, reject it.",
 )
 
@@ -35,19 +36,18 @@ async def referee_agent(
 ) -> RefereeDecision:
     """Review the critic's finding and agent output; return the final RefereeDecision."""
     spec = request.spec
+    objective = spec.contract.objective
+    success_condition = spec.contract.success_condition
     if isinstance(spec, WorkSpec):
-        objective = spec.objective
-        success_condition = spec.success_condition
         language = spec.language or "not specified"
     else:
-        objective = spec.northstar
-        success_condition = "Plan comprehensively addresses the northstar goal"
         language = "n/a"
 
     adapter = registry.get("referee")
     user_prompt = adapter.prompt_template.format(
         objective=objective,
         success_condition=success_condition,
+        contract_block=render_agent_contract(request),
         output_text=output_text,
         language=language,
         output_noun=review_context.output_noun,

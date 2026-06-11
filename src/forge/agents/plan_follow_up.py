@@ -1,6 +1,7 @@
 """Planner follow-up conversion from PlanResponse to work AgentRequests."""
 
 from forge.core.models import (
+    AgentContract,
     AgentRequest,
     AgentType,
     PlanResponse,
@@ -27,6 +28,13 @@ class PlanFollowUpBuilder:
                 spec=WorkSpec(
                     objective=task.objective,
                     success_condition=task.success_condition,
+                    contract=AgentContract(
+                        objective=task.objective,
+                        success_condition=task.success_condition,
+                        acceptance_criteria=task.acceptance_criteria,
+                        constraints=task.constraints,
+                        non_goals=task.non_goals,
+                    ),
                     adapter=task.adapter,
                     artifact=task.artifact,
                     language=task.language,

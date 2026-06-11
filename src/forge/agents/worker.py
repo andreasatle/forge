@@ -9,6 +9,7 @@ from forge.core.models import (
     ResponseStatus,
     StateView,
     WorkSpec,
+    render_agent_contract,
 )
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
@@ -90,6 +91,8 @@ class WorkTaskExecutor:
             base_version=state_view.version,
             delta_example=delta_example,
         )
+        contract_block = render_agent_contract(request)
+        base_prompt += f"\n\n{contract_block}\n\nProduce output satisfying this contract."
         if plugin:
             base_prompt += f"\n\n{plugin.prompt_supplement}"
             base_prompt += f"\n\nLanguage: {spec.language}"

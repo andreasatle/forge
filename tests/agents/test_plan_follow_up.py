@@ -2,6 +2,7 @@
 
 from forge.agents.plan_follow_up import PlanFollowUpBuilder
 from forge.core.models import (
+    AcceptanceCriterion,
     AgentRequest,
     AgentType,
     PlanResponse,
@@ -88,6 +89,34 @@ def test_plan_follow_up_builder_propagates_artifact_and_language() -> None:
     assert isinstance(follow_up.spec, WorkSpec)
     assert follow_up.spec.artifact == "api"
     assert follow_up.spec.language == "python"
+
+
+def test_plan_follow_up_builder_preserves_contract_fields() -> None:
+    """Planner-emitted contract fields are copied into the generated WorkSpec contract."""
+    plan = PlanResponse(
+        kind="plan",
+        tasks=[
+            TaskSpec(
+                objective="write code",
+                success_condition="tests pass",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="unit tests cover parser")],
+                constraints=["use stdlib"],
+                non_goals=["network UI"],
+                adapter="coding",
+                artifact="api",
+                language="python",
+            )
+        ],
+    )
+
+    follow_up = PlanFollowUpBuilder(_plan_request()).build(plan)[0]
+
+    assert isinstance(follow_up.spec, WorkSpec)
+    assert follow_up.spec.contract.acceptance_criteria == [
+        AcceptanceCriterion(id="AC1", text="unit tests cover parser")
+    ]
+    assert follow_up.spec.contract.constraints == ["use stdlib"]
+    assert follow_up.spec.contract.non_goals == ["network UI"]
 
 
 def test_plan_follow_up_builder_ignores_out_of_range_dependency_indices() -> None:

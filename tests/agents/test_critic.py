@@ -10,6 +10,8 @@ from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import render_files
 from forge.agents.critic import critic_agent
 from forge.core.models import (
+    AcceptanceCriterion,
+    AgentContract,
     AgentRequest,
     AgentType,
     CriticDisposition,
@@ -21,6 +23,7 @@ from forge.core.models import (
     ReviewContext,
     StateView,
     WorkSpec,
+    render_agent_contract,
 )
 
 
@@ -40,6 +43,27 @@ def _request() -> AgentRequest:
             success_condition="function prints Hello, World!",
             adapter="coding",
             artifact="codebase",
+        ),
+    )
+
+
+def _rich_request() -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write a hello world function",
+            success_condition="function prints Hello, World!",
+            contract=AgentContract(
+                objective="write a hello world function",
+                success_condition="function prints Hello, World!",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="prints once")],
+                constraints=["use Python"],
+                non_goals=["CLI flags"],
+            ),
+            adapter="coding",
+            artifact="codebase",
+            language="python",
         ),
     )
 
@@ -127,7 +151,7 @@ async def test_critic_prompt_uses_plan_review_context() -> None:
         _registry(),
         review_context=ReviewContext(
             output_noun="plan",
-            review_focus="whether the task decomposition covers the northstar goal",
+            review_focus="whether the task decomposition satisfies the planning contract",
             empty_output_guidance="If the plan contains no tasks, reject it.",
         ),
     )
@@ -135,10 +159,34 @@ async def test_critic_prompt_uses_plan_review_context() -> None:
     messages = provider.chat.call_args.args[0]
     prompt = messages[1]["content"]
     assert "assess the plan below" in prompt
-    assert "task decomposition covers the northstar goal" in prompt
+    assert "task decomposition satisfies the planning contract" in prompt
     assert "If the plan contains no tasks, reject it." in prompt
+    assert render_agent_contract(_plan_request()) in prompt
     assert "work below" not in prompt
     assert "If no files were produced" not in prompt
+    assert "fully covers the northstar goal" not in prompt
+
+
+async def test_critic_prompt_includes_canonical_contract_and_scope_boundary() -> None:
+    """Critic prompt uses the canonical contract block and forbids out-of-scope rejection."""
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good.", "hints": []})
+    provider = _provider(finding_json)
+    request = _rich_request()
+
+    await critic_agent(request, _state_view(), _rendered_output(), provider, _registry())
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    contract_block = render_agent_contract(request)
+    assert contract_block in prompt
+    assert "- AC1: prints once" in prompt
+    assert "- use Python" in prompt
+    assert "- CLI flags" in prompt
+    assert "Artifact: codebase" in prompt
+    assert "Adapter: coding" in prompt
+    assert "Language: python" in prompt
+    assert "Do not revise or reject for unstated ideals" in prompt
+    assert "improvements outside the contract" in prompt
 
 
 async def test_critic_agent_retries_on_invalid_json() -> None:

@@ -5,6 +5,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from forge.core.models import (
+    AcceptanceCriterion,
+    AgentContract,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -28,6 +30,7 @@ from forge.core.models import (
     ToolCallRequest,
     ToolCallResponse,
     WorkSpec,
+    render_agent_contract,
 )
 
 # --- IntegrateSpec removed ---
@@ -194,6 +197,73 @@ def test_work_spec_with_artifact_serializes_correctly():
     data = spec.model_dump()
     restored = WorkSpec.model_validate(data)
     assert restored.artifact == "codebase"
+
+
+def test_old_work_spec_shape_backfills_contract() -> None:
+    """Legacy WorkSpec objective/success_condition fields populate the contract."""
+    spec = WorkSpec(
+        objective="write parser",
+        success_condition="parser passes tests",
+        adapter="coding",
+        artifact="codebase",
+    )
+
+    assert spec.contract.objective == "write parser"
+    assert spec.contract.success_condition == "parser passes tests"
+
+
+def test_old_plan_spec_shape_backfills_contract() -> None:
+    """Legacy PlanSpec northstar field populates a bounded planning contract."""
+    spec = PlanSpec(northstar="build a scraper")
+
+    assert spec.contract.objective == "build a scraper"
+    assert spec.contract.success_condition == "A bounded plan is produced for this objective."
+
+
+def test_contract_only_work_spec_shape_backfills_legacy_fields() -> None:
+    """Contract-first WorkSpec input still exposes temporary legacy fields."""
+    spec = WorkSpec(
+        contract=AgentContract(objective="write parser", success_condition="tests pass"),
+        adapter="coding",
+        artifact="codebase",
+    )
+
+    assert spec.objective == "write parser"
+    assert spec.success_condition == "tests pass"
+
+
+def test_render_agent_contract_includes_contract_and_routing_fields() -> None:
+    """The canonical contract block includes contract fields plus work routing fields."""
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write parser",
+            success_condition="tests pass",
+            contract=AgentContract(
+                objective="write parser",
+                success_condition="tests pass",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="parses valid input")],
+                constraints=["use stdlib"],
+                non_goals=["network fetching"],
+            ),
+            adapter="coding",
+            artifact="codebase",
+            language="python",
+        ),
+    )
+
+    block = render_agent_contract(request)
+
+    assert "AgentRequest contract:" in block
+    assert "Objective: write parser" in block
+    assert "Success condition: tests pass" in block
+    assert "- AC1: parses valid input" in block
+    assert "- use stdlib" in block
+    assert "- network fetching" in block
+    assert "Artifact: codebase" in block
+    assert "Adapter: coding" in block
+    assert "Language: python" in block
 
 
 def test_work_spec_has_no_target_entity_field():

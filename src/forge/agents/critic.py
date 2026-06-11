@@ -1,13 +1,20 @@
-"""Critic agent — reviews agent output against the success condition."""
+"""Critic agent — reviews agent output against the AgentRequest contract."""
 
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.base import build_system_prompt, parse_response
-from forge.core.models import AgentRequest, CriticFinding, ReviewContext, StateView, WorkSpec
+from forge.core.models import (
+    AgentRequest,
+    CriticFinding,
+    ReviewContext,
+    StateView,
+    WorkSpec,
+    render_agent_contract,
+)
 from forge.llm.providers import ChatMessage, LLMProvider
 
 _DEFAULT_REVIEW_CONTEXT = ReviewContext(
     output_noun="work",
-    review_focus="whether the output genuinely meets the success condition",
+    review_focus="whether the output genuinely satisfies the AgentRequest contract",
     empty_output_guidance="If no files were produced, reject it.",
 )
 
@@ -21,21 +28,20 @@ async def critic_agent(
     review_context: ReviewContext = _DEFAULT_REVIEW_CONTEXT,
     max_retries: int = 3,
 ) -> CriticFinding:
-    """Review agent output against the request's success condition."""
+    """Review agent output against the request's AgentRequest contract."""
     spec = request.spec
+    objective = spec.contract.objective
+    success_condition = spec.contract.success_condition
     if isinstance(spec, WorkSpec):
-        objective = spec.objective
-        success_condition = spec.success_condition
         language = spec.language or "not specified"
     else:
-        objective = spec.northstar
-        success_condition = "Plan comprehensively addresses the northstar goal"
         language = "n/a"
 
     adapter = registry.get("critic")
     user_prompt = adapter.prompt_template.format(
         objective=objective,
         success_condition=success_condition,
+        contract_block=render_agent_contract(request),
         output_text=output_text,
         language=language,
         output_noun=review_context.output_noun,
