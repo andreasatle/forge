@@ -76,6 +76,11 @@ async def test_planner_task_executor_preserves_artifact_language_context() -> No
         provider=provider,
         artifact_names=["api", "docs"],
         artifact_languages={"api": "python", "docs": "markdown"},
+        artifact_types={"api": "coding", "docs": "document"},
+        artifact_descriptions={
+            "api": "Backend API implementation.",
+            "docs": "User-facing documentation.",
+        },
     )
 
     response = await executor.run(request)
@@ -84,8 +89,78 @@ async def test_planner_task_executor_preserves_artifact_language_context() -> No
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
     assert "artifact must be one of: api, docs" in user_prompt
-    assert "  api: python" in user_prompt
-    assert "  docs: markdown" in user_prompt
+    assert "Available artifacts:" in user_prompt
+    assert "  api:\n    type: coding\n    language: python" in user_prompt
+    assert "    description: Backend API implementation." in user_prompt
+    assert "  docs:\n    type: document\n    language: markdown" in user_prompt
+    assert "    description: User-facing documentation." in user_prompt
+
+
+async def test_planner_prompt_handles_missing_artifact_description() -> None:
+    """Planner prompt stays clean when an artifact has no description."""
+    request = _make_request()
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+        artifact_types={"codebase": "coding"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "  codebase:\n    type: coding\n    language: python" in user_prompt
+    assert "description:" not in user_prompt
+
+
+async def test_planner_prompt_includes_artifact_description() -> None:
+    """Planner prompt includes configured artifact descriptions."""
+    request = _make_request()
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["docs"],
+        artifact_languages={},
+        artifact_types={"docs": "document"},
+        artifact_descriptions={
+            "docs": "User-facing documentation for installing and running the scraper."
+        },
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "  docs:\n    type: document" in user_prompt
+    assert (
+        "    description: User-facing documentation for installing and running the scraper."
+        in user_prompt
+    )
+
+
+async def test_planner_prompt_only_mentions_configured_artifacts() -> None:
+    """Planner prompt derives allowed artifacts only from configured artifact_names."""
+    request = _make_request()
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+        artifact_types={"codebase": "coding"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "artifact must be one of: codebase" in user_prompt
+    assert "  codebase:\n    type: coding\n    language: python" in user_prompt
+    assert "docs" not in user_prompt
 
 
 async def test_planner_task_executor_format_failure_exhausts_retries() -> None:

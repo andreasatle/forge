@@ -462,21 +462,30 @@ async def test_make_plan_handler_passes_critic_and_referee_providers() -> None:
     async def capturing_plan_agent(*args: object, **kwargs: object) -> AgentResponse:
         captured["critic_provider"] = kwargs.get("critic_provider")
         captured["referee_provider"] = kwargs.get("referee_provider")
+        captured["registry"] = kwargs.get("registry")
+        captured["artifact_types"] = kwargs.get("artifact_types")
+        captured["artifact_descriptions"] = kwargs.get("artifact_descriptions")
         return AgentResponse(request_id=args[0].id, status=ResponseStatus.COMPLETED)  # type: ignore[union-attr]
 
+    registry = _mock_registry()
     with patch("forge.core.runner.plan_agent", capturing_plan_agent):
         handler = make_plan_handler(
-            _mock_registry(),
+            registry,
             artifact_names=["codebase"],
             artifact_languages={"codebase": "python"},
             provider=_mock_provider(),
             critic_provider=critic,
             referee_provider=referee,
+            artifact_types={"codebase": "coding"},
+            artifact_descriptions={"codebase": "Python implementation."},
         )
         await handler(_plan_request())
 
     assert captured["critic_provider"] is critic
     assert captured["referee_provider"] is referee
+    assert captured["registry"] is registry
+    assert captured["artifact_types"] == {"codebase": "coding"}
+    assert captured["artifact_descriptions"] == {"codebase": "Python implementation."}
 
 
 async def test_make_work_handler_passes_critic_and_referee_providers(tmp_path: Path) -> None:

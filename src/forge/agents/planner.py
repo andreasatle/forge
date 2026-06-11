@@ -34,8 +34,8 @@ Fix the error and return corrected JSON only — no explanation, no markdown.
 PLAN_PROMPT = """
 You are a planning agent. Given a goal, decompose it into at most 5 concrete tasks.
 
-Available artifacts and their languages:
-{artifact_language_list}
+Available artifacts:
+{artifact_details}
 
 Each coding task must declare the correct language for its artifact.
 
@@ -65,6 +65,8 @@ class PlannerTaskExecutor:
         provider: LLMProvider,
         artifact_names: list[str],
         artifact_languages: dict[str, str],
+        artifact_types: dict[str, str] | None = None,
+        artifact_descriptions: dict[str, str] | None = None,
         max_retries: int = 3,
         critic_provider: LLMProvider | None = None,
         referee_provider: LLMProvider | None = None,
@@ -74,6 +76,8 @@ class PlannerTaskExecutor:
         self.provider = provider
         self.artifact_names = artifact_names
         self.artifact_languages = artifact_languages
+        self.artifact_types = artifact_types or {}
+        self.artifact_descriptions = artifact_descriptions or {}
         self.max_retries = max_retries
         self.critic_provider = critic_provider
         self.referee_provider = referee_provider
@@ -90,14 +94,11 @@ class PlannerTaskExecutor:
                 error=f"expected PlanSpec, got {type(spec).__name__}",
             )
 
-        artifact_language_list = (
-            "\n".join(f"  {name}: {lang}" for name, lang in self.artifact_languages.items())
-            or "  (no languages declared)"
-        )
+        artifact_details = self._render_artifact_details()
         prompt = PLAN_PROMPT.format(
             northstar=spec.northstar,
             artifact_names=", ".join(self.artifact_names),
-            artifact_language_list=artifact_language_list,
+            artifact_details=artifact_details,
         )
 
         def correction_fn(error: Exception, bad_response: str) -> str:
@@ -142,6 +143,22 @@ class PlannerTaskExecutor:
         except RunAgentFailed as e:
             return e.response
 
+    def _render_artifact_details(self) -> str:
+        blocks: list[str] = []
+        for name in self.artifact_names:
+            lines = [f"  {name}:"]
+            artifact_type = self.artifact_types.get(name)
+            if artifact_type:
+                lines.append(f"    type: {artifact_type}")
+            language = self.artifact_languages.get(name)
+            if language:
+                lines.append(f"    language: {language}")
+            description = self.artifact_descriptions.get(name)
+            if description:
+                lines.append(f"    description: {description}")
+            blocks.append("\n".join(lines))
+        return "\n".join(blocks)
+
 
 async def plan_agent(
     request: AgentRequest,
@@ -151,13 +168,19 @@ async def plan_agent(
     max_retries: int = 3,
     critic_provider: LLMProvider | None = None,
     referee_provider: LLMProvider | None = None,
+    registry: AdapterRegistry | None = None,
+    artifact_types: dict[str, str] | None = None,
+    artifact_descriptions: dict[str, str] | None = None,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     return await PlannerTaskExecutor(
         provider=provider,
         artifact_names=artifact_names,
         artifact_languages=artifact_languages,
+        artifact_types=artifact_types,
+        artifact_descriptions=artifact_descriptions,
         max_retries=max_retries,
         critic_provider=critic_provider,
         referee_provider=referee_provider,
+        registry=registry,
     ).run(request)

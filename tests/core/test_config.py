@@ -62,15 +62,44 @@ def test_load_parses_artifacts_list(tmp_path: Path) -> None:
     """load() parses multiple artifacts into ArtifactConfig instances."""
     p = _write_yaml(
         tmp_path,
-        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: codebase\n    type: coding\n    language: python\n  - name: docs\n    type: document\n",
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n"
+        "  - name: codebase\n"
+        "    type: coding\n"
+        "    language: python\n"
+        "    description: Python package.\n"
+        "  - name: docs\n"
+        "    type: document\n",
     )
     config = ForgeConfig.load(p)
     assert len(config.artifacts) == 2
     assert config.artifacts[0].name == "codebase"
     assert config.artifacts[0].type == "coding"
     assert config.artifacts[0].language == "python"
+    assert config.artifacts[0].description == "Python package."
     assert config.artifacts[1].name == "docs"
     assert config.artifacts[1].type == "document"
+    assert config.artifacts[1].description is None
+
+
+def test_artifact_description_parses(tmp_path: Path) -> None:
+    """load() parses optional artifact descriptions."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n"
+        "  - name: codebase\n"
+        "    type: coding\n"
+        "    language: python\n"
+        "    description: Python package containing implementation and tests.\n",
+    )
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].description == "Python package containing implementation and tests."
+
+
+def test_missing_artifact_description_remains_valid(tmp_path: Path) -> None:
+    """Artifact configs without descriptions remain valid."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].description is None
 
 
 def test_load_raises_on_missing_artifacts_key(tmp_path: Path) -> None:

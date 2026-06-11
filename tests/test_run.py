@@ -58,9 +58,15 @@ async def test_start_wires_nested_planner_and_worker_models(
         max_retries: int = 3,
         critic_provider: _FakeProvider | None = None,
         referee_provider: _FakeProvider | None = None,
+        registry: AdapterRegistry | None = None,
+        artifact_types: dict[str, str] | None = None,
+        artifact_descriptions: dict[str, str] | None = None,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None
+        assert registry is not None
+        assert artifact_types == {"codebase": "coding"}
+        assert artifact_descriptions == {"codebase": "Implementation and tests."}
         captured["planner_provider"] = provider.producer
         captured["planner_critic"] = critic_provider.producer
         captured["planner_referee"] = referee_provider.producer
@@ -121,7 +127,14 @@ async def test_start_wires_nested_planner_and_worker_models(
     config = ForgeConfig(
         northstar="build a tool",
         workspace=tmp_path / "ws",
-        artifacts=[ArtifactConfig(name="codebase", type="coding", language="python")],
+        artifacts=[
+            ArtifactConfig(
+                name="codebase",
+                type="coding",
+                language="python",
+                description="Implementation and tests.",
+            )
+        ],
         models=ModelsConfig(
             planner=PwcModelConfig(
                 producer="ollama/planner",

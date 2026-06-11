@@ -15,6 +15,7 @@ class ArtifactConfig:
     name: str
     type: str  # "coding" | "document" | "audit"
     language: str | None = None
+    description: str | None = None
 
 
 @dataclass
@@ -158,6 +159,9 @@ def _load_artifacts(artifacts_data: Sequence[object]) -> list[ArtifactConfig]:
                 name=_required_string(artifact.get("name"), f"artifacts[{index}].name"),
                 type=_required_string(artifact.get("type"), f"artifacts[{index}].type"),
                 language=_optional_string(artifact.get("language"), f"artifacts[{index}].language"),
+                description=_optional_string(
+                    artifact.get("description"), f"artifacts[{index}].description"
+                ),
             )
         )
     return artifacts

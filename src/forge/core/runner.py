@@ -91,6 +91,8 @@ def make_plan_handler(
     max_retries: int = 3,
     critic_provider: LLMProvider | None = None,
     referee_provider: LLMProvider | None = None,
+    artifact_types: dict[str, str] | None = None,
+    artifact_descriptions: dict[str, str] | None = None,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
 
@@ -107,6 +109,9 @@ def make_plan_handler(
             max_retries,
             critic_provider=critic_provider,
             referee_provider=referee_provider,
+            registry=registry,
+            artifact_types=artifact_types,
+            artifact_descriptions=artifact_descriptions,
         )
 
     return plan_handler

@@ -55,6 +55,8 @@ def _reset(config: ForgeConfig) -> None:
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     artifact_names = [a.name for a in config.artifacts]
     artifact_languages = {a.name: a.language for a in config.artifacts if a.language}
+    artifact_types = {a.name: a.type for a in config.artifacts}
+    artifact_descriptions = {a.name: a.description for a in config.artifacts if a.description}
 
     language_registry = LanguageRegistry()
     language_registry.load(_LANGUAGES_DIR)
@@ -115,6 +117,8 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             config.max_retries,
             critic_provider=planner_critic_provider,
             referee_provider=planner_referee_provider,
+            artifact_types=artifact_types,
+            artifact_descriptions=artifact_descriptions,
         ),
     )
     runner.register(

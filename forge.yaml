@@ -8,17 +8,19 @@ max_tool_iterations: 25
 models:
   planner:
     producer: claude/claude-haiku-4-5
-    critic: null
-    referee: null
+    critic: claude/claude-haiku-4-5
+    referee: claude/claude-haiku-4-5
   worker:
     producer: openai/gpt-4o
-    critic: null
-    referee: null
+    critic: openai/gpt-4o
+    referee: openai/gpt-4o
   integrator:
     producer: ollama/gemma4:e4b
 artifacts:
   - name: codebase
     type: coding
     language: python
+    description: Python package containing the scraper implementation and tests.
   - name: docs
     type: document
+    description: User-facing documentation for installing, running, and using the scraper.
