@@ -12,11 +12,13 @@ from forge.core.models import (
     FailureKind,
     FileWrite,
     NodeState,
+    PlanResponse,
     PlanSpec,
     RequestId,
     RequestSource,
     ResponseStatus,
     SchedulerState,
+    TaskSpec,
     WorkSpec,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
@@ -107,6 +109,84 @@ async def test_follow_up_requests_added_and_executed() -> None:
 
     assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
     assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
+
+
+async def test_scheduler_derives_follow_up_from_accepted_plan_output() -> None:
+    """Accepted PlanResponse output is converted to WORK nodes by the scheduler."""
+    planner = _plan_request()
+    plan = PlanResponse(
+        tasks=[
+            TaskSpec(
+                objective="A",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+            TaskSpec(
+                objective="B",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+                depends_on=[0],
+            ),
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=plan,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(_base_state(), planner)
+
+    work_nodes = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.WORK and isinstance(n.request.spec, WorkSpec)
+    ]
+    assert len(work_nodes) == 2
+
+    def objective(node: DAGNode) -> str:
+        assert isinstance(node.request.spec, WorkSpec)
+        return node.request.spec.objective
+
+    work_a = next(n for n in work_nodes if objective(n) == "A")
+    work_b = next(n for n in work_nodes if objective(n) == "B")
+    assert work_a.node_state == NodeState.INTEGRATED
+    assert work_b.node_state == NodeState.INTEGRATED
+    assert work_b.request.dependencies == frozenset({work_a.request.id})
+
+
+async def test_scheduler_does_not_derive_follow_up_from_failed_plan_output() -> None:
+    """Rejected planner responses do not create work nodes even when output is present."""
+    planner = _plan_request()
+    plan = PlanResponse(
+        tasks=[
+            TaskSpec(
+                objective="A",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            )
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            output=plan,
+            error="bad plan",
+        )
+
+    final = await Scheduler(runner=runner).run(_base_state(), planner)
+
+    assert final.dag[planner.id].node_state == NodeState.FAILED
+    assert all(n.request.agent_type != AgentType.WORK for n in final.dag.values())
 
 
 async def test_failed_node_cancels_dependents() -> None:
@@ -604,3 +684,30 @@ async def test_work_node_non_empty_delta_integrates_normally() -> None:
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
     mock_integrate.assert_called_once()
+
+
+async def test_work_node_integrates_typed_delta_output() -> None:
+    """Scheduler integrates DeltaState from response.output."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+    delta = DeltaState(new_files=[FileWrite(path="src/main.py", content="x = 1")])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=delta,
+        )
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = AgentResponse(
+            request_id=work.id, status=ResponseStatus.COMPLETED
+        )
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    mock_integrate.assert_called_once()
+    assert mock_integrate.call_args.kwargs["delta"] == delta

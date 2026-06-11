@@ -16,8 +16,10 @@ from forge.core.models import (
     CriticFinding,
     DeltaState,
     FileWrite,
+    PlanSpec,
     RefereeDecision,
     RequestSource,
+    ReviewContext,
     StateView,
     WorkSpec,
 )
@@ -40,6 +42,14 @@ def _request() -> AgentRequest:
             adapter="coding",
             artifact="codebase",
         ),
+    )
+
+
+def _plan_request() -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a scraper"),
     )
 
 
@@ -120,6 +130,36 @@ async def test_referee_overrides_critic_sets_override_true() -> None:
     )
     assert result.override is True
     assert result.disposition == CriticDisposition.ACCEPT
+
+
+async def test_referee_prompt_uses_plan_review_context() -> None:
+    """Planner referee validation is framed as plan review, not generic work review."""
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+
+    await referee_agent(
+        _plan_request(),
+        _state_view(),
+        "Task 0: fetch pages",
+        _critic_accept(),
+        provider,
+        _registry(),
+        review_context=ReviewContext(
+            output_noun="plan",
+            review_focus="whether the task decomposition covers the northstar goal",
+            empty_output_guidance="If the plan contains no tasks, reject it.",
+        ),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "reviewed the plan below" in prompt
+    assert "Review focus: whether the task decomposition covers the northstar goal" in prompt
+    assert "Empty output rule: If the plan contains no tasks, reject it." in prompt
+    assert "work below" not in prompt
+    assert "If no files were produced" not in prompt
 
 
 async def test_referee_agent_retries_on_invalid_json() -> None:

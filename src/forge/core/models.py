@@ -1,10 +1,10 @@
 """Core Pydantic models and enums shared across all forge components."""
 
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 RequestId = UUID
 
@@ -82,6 +82,14 @@ class RefereeDecision(BaseModel, frozen=True):
     disposition: CriticDisposition
     rationale: str
     override: bool
+
+
+class ReviewContext(BaseModel, frozen=True):
+    """Language used to frame critic/referee review for a typed producer output."""
+
+    output_noun: str
+    review_focus: str
+    empty_output_guidance: str
 
 
 class PlanSpec(BaseModel):
@@ -186,24 +194,6 @@ class RunResult(BaseModel, frozen=True):
     summary: str = ""
 
 
-def _empty_agent_requests() -> list[AgentRequest]:
-    return []
-
-
-class AgentResponse(BaseModel):
-    """Immutable result returned by an agent after processing a request."""
-
-    model_config = ConfigDict(frozen=True)
-
-    request_id: RequestId
-    status: ResponseStatus
-    delta: DeltaState | None = None
-    follow_up: list[AgentRequest] = Field(default_factory=_empty_agent_requests)
-    error: str | None = None
-    failure_kind: FailureKind | None = None
-    ran_tests_and_passed: bool = False
-
-
 class FileView(BaseModel, frozen=True):
     """A file in the artifact directory with its path and full content."""
 
@@ -242,6 +232,52 @@ class PlanResponse(BaseModel, frozen=True):
 
     kind: Literal["plan"] = "plan"
     tasks: list[TaskSpec]
+
+
+ProducerOutput = PlanResponse | DeltaState
+
+
+def _empty_agent_requests() -> list[AgentRequest]:
+    return []
+
+
+class AgentResponse(BaseModel):
+    """Immutable result returned by an agent after processing a request."""
+
+    model_config = ConfigDict(frozen=True)
+
+    request_id: RequestId
+    status: ResponseStatus
+    output: ProducerOutput | None = None
+    delta: DeltaState | None = None
+    follow_up: list[AgentRequest] = Field(default_factory=_empty_agent_requests)
+    error: str | None = None
+    failure_kind: FailureKind | None = None
+    ran_tests_and_passed: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_legacy_delta(cls, data: object) -> object:
+        """Keep legacy delta construction compatible while output becomes canonical."""
+        if not isinstance(data, dict):
+            return data
+        values: dict[str, object] = dict(cast(dict[str, object], data))
+        output = values.get("output")
+        delta = values.get("delta")
+        if output is None and isinstance(delta, DeltaState):
+            values["output"] = delta
+        elif delta is None and isinstance(output, DeltaState):
+            values["delta"] = output
+        return values
+
+    @model_validator(mode="after")
+    def _sync_parsed_legacy_delta(self) -> "AgentResponse":
+        """Sync parsed legacy delta payloads after Pydantic has built nested models."""
+        if self.output is None and self.delta is not None:
+            object.__setattr__(self, "output", self.delta)
+        elif self.delta is None and isinstance(self.output, DeltaState):
+            object.__setattr__(self, "delta", self.output)
+        return self
 
 
 class ToolCallRequest(BaseModel, frozen=True):

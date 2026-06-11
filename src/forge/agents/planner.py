@@ -1,14 +1,8 @@
 """Planning agent that decomposes a northstar goal into concrete work tasks."""
 
-from collections.abc import Callable
-from typing import cast
-
-from pydantic import BaseModel
-
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.attempt import AttemptEngine, PlanResponseValidator, RunAgentFailed
 from forge.agents.base import run_agent
-from forge.agents.plan_follow_up import PlanFollowUpBuilder
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -108,10 +102,6 @@ class PlannerTaskExecutor:
                 error=error,
             )
 
-        follow_up_builder = cast(
-            Callable[[BaseModel], list[AgentRequest]],
-            PlanFollowUpBuilder(request).build,
-        )
         provider = self.provider
         max_retries = self.max_retries
 
@@ -123,7 +113,6 @@ class PlannerTaskExecutor:
                 current_prompt,
                 correction_prompt_fn=correction_fn,
                 final_response_type=PlanResponse,
-                follow_up_builder=follow_up_builder,
                 max_retries=max_retries,
             )
 

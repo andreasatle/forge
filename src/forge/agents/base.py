@@ -17,6 +17,8 @@ from forge.core.models import (
     Edit,
     FailureKind,
     FileWrite,
+    PlanResponse,
+    ProducerOutput,
     ResponseStatus,
     StateView,
     ToolCallRequest,
@@ -465,12 +467,17 @@ class ToolLoop:
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 continue
 
+            delta = _merge_delta(tracked_delta, parsed) if isinstance(parsed, DeltaState) else None
+            output: ProducerOutput | None = None
+            if delta is not None:
+                output = delta
+            elif isinstance(parsed, PlanResponse):
+                output = parsed
             return AgentResponse(
                 request_id=self.request.id,
                 status=ResponseStatus.COMPLETED,
-                delta=_merge_delta(tracked_delta, parsed)
-                if isinstance(parsed, DeltaState)
-                else None,
+                output=output,
+                delta=delta,
                 follow_up=self.follow_up_builder(parsed)
                 if self.follow_up_builder is not None
                 else [],

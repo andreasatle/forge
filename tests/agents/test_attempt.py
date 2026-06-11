@@ -738,25 +738,47 @@ async def test_plan_response_validator_render_for_critic_includes_tasks() -> Non
     assert "python" in text
 
 
-async def test_plan_engine_goes_through_full_pwc_loop() -> None:
-    """AttemptEngine with PlanResponseValidator calls critic and referee for plan output."""
+async def test_plan_response_validator_extracts_only_typed_output() -> None:
+    """PlanResponseValidator never reconstructs a plan from follow_up requests."""
     request = _plan_request()
     follow_ups = [
         AgentRequest(
             agent_type=AgentType.WORK,
             source=RequestSource.PLANNER,
             spec=WorkSpec(
-                objective="scrape pages",
+                objective="derived work",
                 success_condition="tests pass",
                 adapter="coding",
                 artifact="codebase",
             ),
         )
     ]
+    response = AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.COMPLETED,
+        follow_up=follow_ups,
+    )
+
+    assert PlanResponseValidator().extract_from_response(response) is None
+
+
+async def test_plan_engine_goes_through_full_pwc_loop() -> None:
+    """AttemptEngine with PlanResponseValidator calls critic and referee for plan output."""
+    request = _plan_request()
+    plan = PlanResponse(
+        tasks=[
+            TaskSpec(
+                objective="scrape pages",
+                success_condition="tests pass",
+                adapter="coding",
+                artifact="codebase",
+            )
+        ]
+    )
     run_fn, _ = _make_run_fn(
         [
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=follow_ups
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=plan
             )
         ]
     )
@@ -784,33 +806,34 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.follow_up == follow_ups
+    assert result.output == plan
     mock_critic.assert_called_once()
     mock_referee.assert_called_once()
+    assert mock_critic.call_args.args[2].startswith("Task 0: scrape pages")
+    assert mock_critic.call_args.kwargs["review_context"].output_noun == "plan"
+    assert mock_referee.call_args.kwargs["review_context"].output_noun == "plan"
 
 
 async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
     """AttemptEngine retries plan with feedback when critic returns REVISE."""
     request = _plan_request()
-    follow_ups = [
-        AgentRequest(
-            agent_type=AgentType.WORK,
-            source=RequestSource.PLANNER,
-            spec=WorkSpec(
+    plan = PlanResponse(
+        tasks=[
+            TaskSpec(
                 objective="scrape pages",
                 success_condition="tests pass",
                 adapter="coding",
                 artifact="codebase",
-            ),
-        )
-    ]
+            )
+        ]
+    )
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=follow_ups
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=plan
             ),
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=follow_ups
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=plan
             ),
         ]
     )

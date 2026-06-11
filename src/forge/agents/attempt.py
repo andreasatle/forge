@@ -16,9 +16,8 @@ from forge.core.models import (
     FailureKind,
     PlanResponse,
     ResponseStatus,
+    ReviewContext,
     StateView,
-    TaskSpec,
-    WorkSpec,
 )
 from forge.llm.providers import LLMProvider
 
@@ -51,6 +50,10 @@ class OutputValidator(Protocol[T]):
         """Return True when empty output should trigger a retry rather than ALREADY_DONE."""
         ...
 
+    def review_context(self) -> ReviewContext:
+        """Return language for critic/referee prompts for this output type."""
+        ...
+
 
 class DeltaStateValidator:
     """OutputValidator for DeltaState — validates file/edit output from work agents."""
@@ -60,8 +63,8 @@ class DeltaStateValidator:
         self._state_view = state_view
 
     def extract_from_response(self, response: AgentResponse) -> DeltaState | None:
-        """Return the delta from the response."""
-        return response.delta
+        """Return typed DeltaState output from the response."""
+        return response.output if isinstance(response.output, DeltaState) else None
 
     def is_empty(self, output: DeltaState) -> bool:
         """Return True when the delta has no files, edits, or dependencies."""
@@ -79,26 +82,24 @@ class DeltaStateValidator:
         """Return the adapter's requires_nonempty_output flag."""
         return self._adapter.requires_nonempty_output
 
+    def review_context(self) -> ReviewContext:
+        """Return worker-output review language."""
+        return ReviewContext(
+            output_noun=self._adapter.work_noun,
+            review_focus="whether the proposed file, edit, and dependency delta satisfies the task",
+            empty_output_guidance=(
+                "If no files, edits, or dependencies were produced, reject unless the "
+                "success condition is already demonstrably met."
+            ),
+        )
+
 
 class PlanResponseValidator:
     """OutputValidator for PlanResponse — validates task decomposition from plan agents."""
 
     def extract_from_response(self, response: AgentResponse) -> PlanResponse | None:
-        """Reconstruct a PlanResponse from the follow_up requests in the response."""
-        if response.status != ResponseStatus.COMPLETED:
-            return None
-        tasks = [
-            TaskSpec(
-                objective=req.spec.objective,
-                success_condition=req.spec.success_condition,
-                adapter=req.spec.adapter,
-                artifact=req.spec.artifact,
-                language=req.spec.language,
-            )
-            for req in response.follow_up
-            if isinstance(req.spec, WorkSpec)
-        ]
-        return PlanResponse(tasks=tasks)
+        """Return typed PlanResponse output from the response."""
+        return response.output if isinstance(response.output, PlanResponse) else None
 
     def is_empty(self, output: PlanResponse) -> bool:
         """Always returns False — planners never trigger ALREADY_DONE."""
@@ -126,6 +127,14 @@ class PlanResponseValidator:
         """Return True — plan agents must always produce tasks."""
         return True
 
+    def review_context(self) -> ReviewContext:
+        """Return planner-output review language."""
+        return ReviewContext(
+            output_noun="plan",
+            review_focus="whether the task decomposition fully covers the northstar goal",
+            empty_output_guidance="If the plan contains no tasks, reject it.",
+        )
+
 
 class RunAgentFailed(Exception):
     """Raised when run_agent returns a non-COMPLETED response."""
@@ -139,11 +148,15 @@ def _validation_rejected_response(
     request: AgentRequest,
     disposition: CriticDisposition,
     rationale: str,
+    output_noun: str = "output",
 ) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.FAILED,
-        error=(f"validation rejected work with disposition '{disposition.value}': {rationale}"),
+        error=(
+            f"validation rejected {output_noun} with disposition "
+            f"'{disposition.value}': {rationale}"
+        ),
         failure_kind=FailureKind.VALIDATION_REJECTED,
     )
 
@@ -204,6 +217,7 @@ class AttemptEngine[T]:
                     return AgentResponse(
                         request_id=self._request.id,
                         status=ResponseStatus.ALREADY_DONE,
+                        output=response.output,
                         delta=response.delta,
                     )
                 if self._critic_provider is None:
@@ -228,6 +242,7 @@ class AttemptEngine[T]:
                         return AgentResponse(
                             request_id=self._request.id,
                             status=ResponseStatus.ALREADY_DONE,
+                            output=response.output,
                             delta=response.delta,
                         )
                     _logger.info(
@@ -238,7 +253,10 @@ class AttemptEngine[T]:
                     return AgentResponse(
                         request_id=self._request.id,
                         status=ResponseStatus.FAILED,
-                        error=f"worker produced no {self._validator.work_noun()} after {self._max_attempts} attempts",
+                        error=(
+                            f"producer produced no {self._validator.work_noun()} "
+                            f"after {self._max_attempts} attempts"
+                        ),
                         failure_kind=FailureKind.VALIDATION_REJECTED,
                     )
                 try:
@@ -248,6 +266,7 @@ class AttemptEngine[T]:
                         self._validator.render_for_critic(output),
                         self._critic_provider,
                         cast(AdapterRegistry, self._registry),
+                        review_context=self._validator.review_context(),
                     )
                 except ValueError as e:
                     _logger.warning(
@@ -266,6 +285,7 @@ class AttemptEngine[T]:
                     return AgentResponse(
                         request_id=self._request.id,
                         status=ResponseStatus.ALREADY_DONE,
+                        output=response.output,
                         delta=response.delta,
                     )
                 if finding.disposition == CriticDisposition.REJECT:
@@ -275,7 +295,10 @@ class AttemptEngine[T]:
                         self._max_attempts,
                     )
                     return _validation_rejected_response(
-                        self._request, finding.disposition, finding.rationale
+                        self._request,
+                        finding.disposition,
+                        finding.rationale,
+                        self._validator.work_noun(),
                     )
                 _logger.info(
                     "attempt %d/%d: critic=%s on empty output — retrying",
@@ -311,6 +334,7 @@ class AttemptEngine[T]:
                     output_text,
                     self._critic_provider,
                     cast(AdapterRegistry, self._registry),
+                    review_context=self._validator.review_context(),
                 )
                 decision = await referee_agent(
                     self._request,
@@ -319,6 +343,7 @@ class AttemptEngine[T]:
                     finding,
                     self._referee_provider,
                     cast(AdapterRegistry, self._registry),
+                    review_context=self._validator.review_context(),
                 )
             except ValueError as e:
                 _logger.warning(
@@ -342,7 +367,10 @@ class AttemptEngine[T]:
                 return response
             if decision.disposition == CriticDisposition.REJECT:
                 return _validation_rejected_response(
-                    self._request, decision.disposition, decision.rationale
+                    self._request,
+                    decision.disposition,
+                    decision.rationale,
+                    self._validator.work_noun(),
                 )
 
             hints_text = (
@@ -366,6 +394,7 @@ class AttemptEngine[T]:
             self._request,
             CriticDisposition.REVISE,
             "maximum validation attempts exhausted without an accept disposition",
+            self._validator.work_noun(),
         )
 
 

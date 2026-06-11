@@ -16,7 +16,9 @@ from forge.core.models import (
     CriticFinding,
     DeltaState,
     FileWrite,
+    PlanSpec,
     RequestSource,
+    ReviewContext,
     StateView,
     WorkSpec,
 )
@@ -39,6 +41,14 @@ def _request() -> AgentRequest:
             adapter="coding",
             artifact="codebase",
         ),
+    )
+
+
+def _plan_request() -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a scraper"),
     )
 
 
@@ -102,6 +112,33 @@ async def test_critic_agent_returns_reject_finding() -> None:
         _request(), _state_view(), _rendered_empty(), _provider(finding_json), _registry()
     )
     assert result.disposition == CriticDisposition.REJECT
+
+
+async def test_critic_prompt_uses_plan_review_context() -> None:
+    """Planner validation is framed as plan review, not generic work review."""
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good plan.", "hints": []})
+    provider = _provider(finding_json)
+
+    await critic_agent(
+        _plan_request(),
+        _state_view(),
+        "Task 0: fetch pages",
+        provider,
+        _registry(),
+        review_context=ReviewContext(
+            output_noun="plan",
+            review_focus="whether the task decomposition covers the northstar goal",
+            empty_output_guidance="If the plan contains no tasks, reject it.",
+        ),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "assess the plan below" in prompt
+    assert "task decomposition covers the northstar goal" in prompt
+    assert "If the plan contains no tasks, reject it." in prompt
+    assert "work below" not in prompt
+    assert "If no files were produced" not in prompt
 
 
 async def test_critic_agent_retries_on_invalid_json() -> None:

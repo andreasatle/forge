@@ -374,6 +374,21 @@ def test_agent_response_failure_kind_none_when_completed():
     assert response.failure_kind is None
 
 
+def test_agent_response_legacy_delta_dict_populates_output():
+    """Legacy serialized delta payloads populate typed producer output on load."""
+    request = _make_request()
+    response = AgentResponse.model_validate(
+        {
+            "request_id": request.id,
+            "status": "completed",
+            "delta": {"dependencies": ["requests"]},
+        }
+    )
+
+    assert response.delta == DeltaState(dependencies=["requests"])
+    assert response.output == response.delta
+
+
 # --- CriticDisposition ---
 
 

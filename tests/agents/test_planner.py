@@ -8,10 +8,10 @@ from forge.agents.planner import PlannerTaskExecutor, plan_agent
 from forge.core.models import (
     AgentRequest,
     AgentType,
+    PlanResponse,
     PlanSpec,
     RequestSource,
     ResponseStatus,
-    WorkSpec,
 )
 
 
@@ -41,8 +41,8 @@ async def test_planner_succeeds_on_first_attempt() -> None:
     assert provider.chat.call_count == 1
 
 
-async def test_planner_task_executor_emits_follow_up_work_tasks() -> None:
-    """PlannerTaskExecutor owns plan orchestration and follow-up task creation."""
+async def test_planner_task_executor_returns_typed_plan_output() -> None:
+    """PlannerTaskExecutor preserves PlanResponse as typed producer output."""
     request = _make_request()
     provider = _mock_provider(
         '{"kind": "plan", "tasks": ['
@@ -59,13 +59,12 @@ async def test_planner_task_executor_emits_follow_up_work_tasks() -> None:
     response = await executor.run(request)
 
     assert response.status == ResponseStatus.COMPLETED
-    assert len(response.follow_up) == 1
-    follow_up = response.follow_up[0]
-    assert follow_up.agent_type == AgentType.WORK
-    assert follow_up.source == RequestSource.PLANNER
-    assert isinstance(follow_up.spec, WorkSpec)
-    assert follow_up.spec.objective == "Fetch pages"
-    assert follow_up.spec.language == "python"
+    assert isinstance(response.output, PlanResponse)
+    assert response.follow_up == []
+    assert len(response.output.tasks) == 1
+    task = response.output.tasks[0]
+    assert task.objective == "Fetch pages"
+    assert task.language == "python"
 
 
 async def test_planner_task_executor_preserves_artifact_language_context() -> None:
@@ -273,8 +272,8 @@ async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
     assert "Respond with ONLY a JSON object" not in user_prompt
 
 
-async def test_planner_follow_up_contains_only_work_nodes() -> None:
-    """plan_agent follow_up contains only WORK nodes — never INTEGRATE or PLAN nodes."""
+async def test_planner_output_contains_tasks_not_follow_up_nodes() -> None:
+    """plan_agent returns PlanResponse tasks, not scheduler AgentRequests."""
     request = _make_request()
     provider = _mock_provider(
         '{"kind": "plan", "tasks": ['
@@ -286,12 +285,14 @@ async def test_planner_follow_up_contains_only_work_nodes() -> None:
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
     assert response.status == ResponseStatus.COMPLETED
-    assert len(response.follow_up) == 1
-    assert all(r.agent_type == AgentType.WORK for r in response.follow_up)
+    assert isinstance(response.output, PlanResponse)
+    assert len(response.output.tasks) == 1
+    assert response.output.tasks[0].objective == "A"
+    assert response.follow_up == []
 
 
-async def test_planner_dependency_wiring_is_task_to_task() -> None:
-    """Work node with depends_on=[0] depends directly on work node 0, not an integrate node."""
+async def test_planner_preserves_task_dependency_indices() -> None:
+    """PlanResponse keeps planner task dependency indices for scheduler conversion."""
     request = _make_request()
     provider = _mock_provider(
         '{"kind": "plan", "tasks": ['
@@ -304,14 +305,10 @@ async def test_planner_dependency_wiring_is_task_to_task() -> None:
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
-    work_a = next(
-        r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "A"
-    )
-    work_b = next(
-        r for r in response.follow_up if isinstance(r.spec, WorkSpec) and r.spec.objective == "B"
-    )
-    assert work_a.id in work_b.dependencies
-    assert len(work_b.dependencies) == 1
+    assert isinstance(response.output, PlanResponse)
+    task_b = next(task for task in response.output.tasks if task.objective == "B")
+    assert task_b.depends_on == [0]
+    assert response.follow_up == []
 
 
 async def test_planner_prompt_requires_testable_success_conditions() -> None:

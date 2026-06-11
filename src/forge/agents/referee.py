@@ -6,10 +6,17 @@ from forge.core.models import (
     AgentRequest,
     CriticFinding,
     RefereeDecision,
+    ReviewContext,
     StateView,
     WorkSpec,
 )
 from forge.llm.providers import ChatMessage, LLMProvider
+
+_DEFAULT_REVIEW_CONTEXT = ReviewContext(
+    output_noun="work",
+    review_focus="whether the output genuinely meets the success condition",
+    empty_output_guidance="If no files were produced, reject it.",
+)
 
 
 def _render_hints(hints: list[str]) -> str:
@@ -23,6 +30,7 @@ async def referee_agent(
     critic_finding: CriticFinding,
     provider: LLMProvider,
     registry: AdapterRegistry,
+    review_context: ReviewContext = _DEFAULT_REVIEW_CONTEXT,
     max_retries: int = 3,
 ) -> RefereeDecision:
     """Review the critic's finding and agent output; return the final RefereeDecision."""
@@ -42,6 +50,9 @@ async def referee_agent(
         success_condition=success_condition,
         output_text=output_text,
         language=language,
+        output_noun=review_context.output_noun,
+        review_focus=review_context.review_focus,
+        empty_output_guidance=review_context.empty_output_guidance,
         critic_disposition=critic_finding.disposition.value,
         critic_rationale=critic_finding.rationale,
         critic_hints=_render_hints(critic_finding.hints),

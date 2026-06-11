@@ -7,13 +7,16 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from forge.agents.integrator import integrate
+from forge.agents.plan_follow_up import PlanFollowUpBuilder
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
     DAGNode,
+    DeltaState,
     FailureKind,
     NodeState,
+    PlanResponse,
     RequestId,
     RequestSource,
     ResponseStatus,
@@ -96,6 +99,18 @@ class Scheduler:
                     state = self._cancel_dependents(state, node.request.id)
                 else:
                     response: AgentResponse = result
+                    if (
+                        node.request.agent_type == AgentType.PLAN
+                        and response.status == ResponseStatus.COMPLETED
+                        and isinstance(response.output, PlanResponse)
+                    ):
+                        response = response.model_copy(
+                            update={
+                                "follow_up": PlanFollowUpBuilder(node.request).build(
+                                    response.output
+                                )
+                            }
+                        )
                     updated = current.with_response(response)
                     state = state.update_node(updated)
 
@@ -111,7 +126,11 @@ class Scheduler:
                             if isinstance(spec, WorkSpec):
                                 ss = self._state_services.get(spec.artifact)
                                 if ss is not None:
-                                    delta = response.delta
+                                    delta = (
+                                        response.output
+                                        if isinstance(response.output, DeltaState)
+                                        else None
+                                    )
                                     if delta is None or (
                                         not delta.new_files
                                         and not delta.edits
