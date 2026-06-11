@@ -9,6 +9,7 @@ from forge.core.config import ForgeConfig
 from forge.core.models import (
     AgentRequest,
     AgentType,
+    DAGNode,
     PlanSpec,
     RequestSource,
     SchedulerState,
@@ -50,6 +51,20 @@ def _reset(config: ForgeConfig) -> None:
     workspace.init()
     workspace.reset([a.name for a in config.artifacts])
     print(f"workspace reset: {config.workspace}")
+
+
+def _format_failed_node(node: DAGNode) -> str:
+    lines = [f"✗ failed: {node.request.agent_type.value} ({node.request.id})"]
+    response = node.response
+    if response is None:
+        return "\n".join(lines)
+
+    lines.append(f"  status: {response.status.value}")
+    if response.failure_kind is not None:
+        lines.append(f"  failure_kind: {response.failure_kind.value}")
+    if response.error:
+        lines.append(f"  error: {response.error}")
+    return "\n".join(lines)
 
 
 async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
@@ -151,9 +166,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
         on_node_completed=lambda node: print(
             f"✓ integrated: {node.request.agent_type.value} ({node.request.id})"
         ),
-        on_node_failed=lambda node: print(
-            f"✗ failed: {node.request.agent_type.value} ({node.request.id})"
-        ),
+        on_node_failed=lambda node: print(_format_failed_node(node)),
         on_idle=lambda state: print(f"~ idle: {len(state.dag)} nodes in DAG"),
     )
 

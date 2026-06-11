@@ -19,6 +19,9 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
+    DAGNode,
+    FailureKind,
+    PlanSpec,
     RequestSource,
     ResponseStatus,
     SchedulerState,
@@ -28,7 +31,7 @@ from forge.core.models import (
 from forge.core.scheduler import SchedulerCallbacks
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
-from forge.run import _start
+from forge.run import _format_failed_node, _start
 
 
 class _FakeProvider:
@@ -37,6 +40,29 @@ class _FakeProvider:
     def __init__(self, producer: str) -> None:
         self.producer = producer
         self.max_tokens = 8192
+
+
+def test_failed_plan_node_output_includes_response_reason() -> None:
+    """CLI failure text includes failed plan response details."""
+    request = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a scraper"),
+    )
+    response = AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.VALIDATION_REJECTED,
+        error="validation rejected work with disposition 'reject': missing tests",
+    )
+    node = DAGNode(request=request).with_response(response)
+
+    text = _format_failed_node(node)
+
+    assert "✗ failed: plan" in text
+    assert "status: failed" in text
+    assert "failure_kind: validation_rejected" in text
+    assert "validation rejected work with disposition 'reject': missing tests" in text
 
 
 async def test_start_wires_nested_planner_and_worker_models(
