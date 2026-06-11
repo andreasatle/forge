@@ -150,6 +150,7 @@ class PromptBuilder:
                     '  each entry: {"path": "...", "old": "exact text to replace", "new": "replacement"}',
                     "- Never put file content in edits.",
                     "- Never put old/new strings in new_files.",
+                    "- edits.old must never be empty — if you need to add content to an existing file, use the actual existing text as old. If the file does not exist yet, use new_files instead of edits.",
                     "IMPORTANT: your response must include base_version set to the current state version shown above.",
                 ]
         return "\n".join(lines)

@@ -110,6 +110,43 @@ def test_apply_delta_raises_on_old_string_not_found(tmp_path: Path) -> None:
         )
 
 
+def test_apply_delta_raises_on_empty_old_string(tmp_path: Path) -> None:
+    """apply_delta raises ValueError when edit.old is empty."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
+
+    with pytest.raises(ValueError, match="empty 'old' string"):
+        StateService(ws, "app").apply_delta(
+            DeltaState(edits=[Edit(path="a.py", old="", new="x = 2")])
+        )
+
+
+def test_apply_delta_raises_on_whitespace_only_old_string(tmp_path: Path) -> None:
+    """apply_delta raises ValueError when edit.old is whitespace-only."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
+
+    with pytest.raises(ValueError, match="empty 'old' string"):
+        StateService(ws, "app").apply_delta(
+            DeltaState(edits=[Edit(path="a.py", old="   ", new="x = 2")])
+        )
+
+
+def test_apply_delta_succeeds_with_valid_old_string(tmp_path: Path) -> None:
+    """apply_delta does not raise when edit.old is a non-empty, non-whitespace string."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
+
+    StateService(ws, "app").apply_delta(
+        DeltaState(edits=[Edit(path="a.py", old="x = 1", new="x = 2")])
+    )
+
+    assert (ws.artifact_dir("app") / "a.py").read_text() == "x = 2\n"
+
+
 def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:
     """build_state_view omits .venv, __pycache__, .pyc, lock files, and other noise."""
     ws = _ws(tmp_path)

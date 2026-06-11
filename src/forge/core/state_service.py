@@ -136,6 +136,11 @@ class StateService:
             target.write_text(fw.content, encoding="utf-8")
 
         for edit in delta.edits:
+            if not edit.old or not edit.old.strip():
+                raise ValueError(
+                    f"Edit for {edit.path} has empty 'old' string — "
+                    "use new_files to create content, not edits"
+                )
             target = artifact_dir / edit.path
             if not target.exists():
                 raise FileNotFoundError(f"file not found: {edit.path}")
