@@ -139,6 +139,39 @@ async def test_referee_agrees_with_critic_sets_override_false() -> None:
     assert result.disposition == CriticDisposition.ACCEPT
 
 
+async def test_referee_revision_items_preserve_criterion_ids() -> None:
+    """referee_agent preserves structured revision items with acceptance criterion ids."""
+    decision_json = json.dumps(
+        {
+            "disposition": "revise",
+            "rationale": "A contract criterion is still unmet.",
+            "override": False,
+            "revision_items": [
+                {
+                    "criterion_id": "AC1",
+                    "required_change": "Add direct verification for the greeting output.",
+                    "rationale": "AC1 requires the output behavior to be verified.",
+                }
+            ],
+        }
+    )
+    result = await referee_agent(
+        _rich_request(),
+        _state_view(),
+        _rendered_output(),
+        _critic_reject(),
+        _provider(decision_json),
+        _registry(),
+    )
+    assert result.disposition == CriticDisposition.REVISE
+    assert len(result.revision_items) == 1
+    assert result.revision_items[0].criterion_id == "AC1"
+    assert (
+        result.revision_items[0].required_change
+        == "Add direct verification for the greeting output."
+    )
+
+
 async def test_referee_overrides_critic_sets_override_true() -> None:
     """referee_agent returns override=True when it overrides the critic's disposition."""
     decision_json = json.dumps(

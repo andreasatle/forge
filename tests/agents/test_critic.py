@@ -123,6 +123,31 @@ async def test_critic_agent_returns_revise_finding_with_hints() -> None:
     assert len(result.hints) == 1
 
 
+async def test_critic_revision_items_preserve_criterion_ids() -> None:
+    """critic_agent preserves structured revision items with acceptance criterion ids."""
+    finding_json = json.dumps(
+        {
+            "disposition": "revise",
+            "rationale": "Missing required test.",
+            "hints": ["Add the test"],
+            "revision_items": [
+                {
+                    "criterion_id": "AC1",
+                    "required_change": "Add a test for the greeting output.",
+                    "rationale": "AC1 requires the output behavior to be verified.",
+                }
+            ],
+        }
+    )
+    result = await critic_agent(
+        _rich_request(), _state_view(), _rendered_output(), _provider(finding_json), _registry()
+    )
+    assert result.disposition == CriticDisposition.REVISE
+    assert len(result.revision_items) == 1
+    assert result.revision_items[0].criterion_id == "AC1"
+    assert result.revision_items[0].required_change == "Add a test for the greeting output."
+
+
 async def test_critic_agent_returns_reject_finding() -> None:
     """critic_agent returns CriticFinding with REJECT when no output was produced."""
     finding_json = json.dumps(

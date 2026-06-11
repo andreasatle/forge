@@ -29,4 +29,6 @@ prompt_template: |
   - Use lowercase disposition values: "accept", "revise", or "reject"
   - Set override to true if your disposition differs from the critic's ({critic_disposition})
   - Give an independent rationale even if you agree with the critic
+  - For "revise", populate revision_items with concrete required changes
+  - When a required change corresponds to an acceptance criterion, set criterion_id to that criterion's id
   - Do not reject or revise for unstated ideals outside the contract

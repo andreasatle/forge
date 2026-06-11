@@ -24,6 +24,7 @@ from forge.core.models import (
     RefereeDecision,
     RequestSource,
     ResponseStatus,
+    RevisionItem,
     StateView,
     TaskSpec,
     WorkSpec,
@@ -155,7 +156,7 @@ async def test_accept_on_first_attempt_returns_immediately() -> None:
 
 
 async def test_revise_injects_feedback_and_retries() -> None:
-    """Engine retries with feedback injected in the prompt when disposition is REVISE."""
+    """Engine retries with a structured required-revision block when disposition is REVISE."""
     request = _work_request()
     first_delta = DeltaState(new_files=[FileWrite(path="main.py", content="first")])
     improved_delta = DeltaState(new_files=[FileWrite(path="main.py", content="improved")])
@@ -194,8 +195,123 @@ async def test_revise_injects_feedback_and_retries() -> None:
     assert result.status == ResponseStatus.COMPLETED
     assert result.delta == improved_delta
     assert len(prompts) == 2
-    assert "Revise your implementation addressing the feedback above" in prompts[1]
-    assert "add tests" in prompts[1]
+    assert "REQUIRED REVISION" in prompts[1]
+    assert "Previous disposition: revise" in prompts[1]
+    assert "Rationale: agreed" in prompts[1]
+    assert "1. Required change: add tests" in prompts[1]
+    assert "The next output must address every required change listed below." in prompts[1]
+
+
+async def test_revise_prompt_preserves_structured_criterion_ids() -> None:
+    """Structured revision items supplied by the referee are rendered with criterion ids."""
+    request = _work_request()
+    first_delta = DeltaState(new_files=[FileWrite(path="main.py", content="first")])
+    improved_delta = DeltaState(new_files=[FileWrite(path="main.py", content="improved")])
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, delta=first_delta
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, delta=improved_delta
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="missing tests",
+                revision_items=[
+                    RevisionItem(
+                        criterion_id="AC2",
+                        required_change="Add unit tests for parser failures.",
+                        rationale="The contract requires parser failure coverage.",
+                    )
+                ],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE,
+                rationale="tests are required",
+                override=False,
+                revision_items=[
+                    RevisionItem(
+                        criterion_id="AC2",
+                        required_change="Add parser failure tests.",
+                        rationale="Acceptance criterion AC2 is unmet.",
+                    )
+                ],
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert "1. Required change [AC2]: Add parser failure tests." in prompts[1]
+    assert "Rationale: Acceptance criterion AC2 is unmet." in prompts[1]
+
+
+async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
+    """Successive revise rounds accumulate all prior RevisionRequests in the prompt."""
+    request = _work_request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="missing tests",
+                hints=["add tests"],
+            ),
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="missing error handling",
+                hints=["handle failures"],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale="tests missing", override=False
+            ),
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE,
+                rationale="error handling missing",
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 3
+    assert "Revision request 1 (after 1 prior attempt(s))" in prompts[2]
+    assert "1. Required change: add tests" in prompts[2]
+    assert "Revision request 2 (after 2 prior attempt(s))" in prompts[2]
+    assert "1. Required change: handle failures" in prompts[2]
 
 
 async def test_rejected_validation_returns_failed_without_delta() -> None:
@@ -618,8 +734,9 @@ async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
     assert result.status == ResponseStatus.COMPLETED
     assert result.delta == delta
     assert len(prompts) == 2
-    assert "Revise your implementation addressing the feedback above" in prompts[1]
-    assert "add some code" in prompts[1]
+    assert "REQUIRED REVISION" in prompts[1]
+    assert "Revise your implementation now." in prompts[1]
+    assert "1. Required change: add some code" in prompts[1]
 
 
 async def test_work_noun_comes_from_adapter_spec() -> None:
@@ -684,7 +801,8 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert "Revise your document addressing the feedback above" in prompts[1]
+    assert "REQUIRED REVISION" in prompts[1]
+    assert "Revise your document now." in prompts[1]
     assert "Revise your implementation" not in prompts[1]
 
 
@@ -820,7 +938,7 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
 
 
 async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
-    """AttemptEngine retries plan with feedback when critic returns REVISE."""
+    """AttemptEngine retries plans with the same structured RevisionRequest mechanism."""
     request = _plan_request()
     plan = PlanResponse(
         tasks=[
@@ -871,5 +989,6 @@ async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
 
     assert result.status == ResponseStatus.COMPLETED
     assert len(prompts) == 2
-    assert "Revise your plan addressing the feedback above" in prompts[1]
-    assert "add error handling" in prompts[1]
+    assert "REQUIRED REVISION" in prompts[1]
+    assert "Revise your plan now." in prompts[1]
+    assert "1. Required change: add error handling" in prompts[1]

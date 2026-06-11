@@ -74,12 +74,37 @@ class CriticDisposition(Enum):
     ALREADY_DONE = "already_done"
 
 
+class RevisionItem(BaseModel, frozen=True):
+    """One required change requested by a critic/referee revision."""
+
+    criterion_id: str | None = Field(
+        default=None,
+        description="Acceptance criterion id this change addresses, when applicable.",
+    )
+    required_change: str
+    rationale: str | None = None
+
+
+def _empty_revision_items() -> list[RevisionItem]:
+    return []
+
+
+class RevisionRequest(BaseModel, frozen=True):
+    """Typed request for a producer to revise output against the same AgentRequest contract."""
+
+    disposition: Literal["revise"] = "revise"
+    rationale: str
+    items: list[RevisionItem]
+    prior_attempts: int
+
+
 class CriticFinding(BaseModel, frozen=True):
     """A critic's assessment of a piece of work."""
 
     disposition: CriticDisposition
     rationale: str
     hints: list[str] = Field(default_factory=list)
+    revision_items: list[RevisionItem] = Field(default_factory=_empty_revision_items)
 
 
 class RefereeDecision(BaseModel, frozen=True):
@@ -88,6 +113,7 @@ class RefereeDecision(BaseModel, frozen=True):
     disposition: CriticDisposition
     rationale: str
     override: bool
+    revision_items: list[RevisionItem] = Field(default_factory=_empty_revision_items)
 
 
 class ReviewContext(BaseModel, frozen=True):
