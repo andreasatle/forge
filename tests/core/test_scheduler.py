@@ -10,6 +10,7 @@ from forge.core.models import (
     DAGNode,
     DeltaState,
     FailureKind,
+    FileWrite,
     NodeState,
     PlanSpec,
     RequestId,
@@ -50,6 +51,7 @@ def _ok(request: AgentRequest, *, follow_up: list[AgentRequest] | None = None) -
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
+        delta=DeltaState(new_files=[FileWrite(path="src/out.py", content="x = 1")]),
         follow_up=follow_up or [],
     )
 
@@ -521,3 +523,84 @@ async def test_already_done_fires_on_node_completed() -> None:
     await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
 
     assert any(n.request.id == work.id for n in completed)
+
+
+async def test_work_node_none_delta_marked_failed() -> None:
+    """WORK node completing with delta=None is marked FAILED before integrate is called."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=None)
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    mock_integrate.assert_not_called()
+
+
+async def test_work_node_empty_delta_marked_failed() -> None:
+    """WORK node completing with an empty DeltaState is marked FAILED before integrate is called."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id, status=ResponseStatus.COMPLETED, delta=DeltaState()
+        )
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    mock_integrate.assert_not_called()
+
+
+async def test_work_node_already_done_empty_delta_skips_guard() -> None:
+    """ALREADY_DONE response with empty delta is not caught by the empty-delta guard."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _already_done(request)
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    mock_integrate.assert_not_called()
+
+
+async def test_work_node_non_empty_delta_integrates_normally() -> None:
+    """WORK node with a non-empty delta passes the guard and reaches integrate()."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="src/main.py", content="x = 1")]),
+        )
+
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = AgentResponse(
+            request_id=work.id, status=ResponseStatus.COMPLETED
+        )
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    mock_integrate.assert_called_once()

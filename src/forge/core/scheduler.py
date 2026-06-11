@@ -12,7 +12,6 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
-    DeltaState,
     FailureKind,
     NodeState,
     RequestId,
@@ -112,30 +111,47 @@ class Scheduler:
                             if isinstance(spec, WorkSpec):
                                 ss = self._state_services.get(spec.artifact)
                                 if ss is not None:
-                                    integration_response = await integrate(
-                                        request_id=node.request.id,
-                                        state_service=ss,
-                                        delta=response.delta or DeltaState(),
-                                    )
-                                    if integration_response.status == ResponseStatus.FAILED:
-                                        if (
-                                            integration_response.failure_kind
-                                            == FailureKind.STALE_DELTA
-                                        ):
-                                            retry_count = self._stale_retry_counts.get(
-                                                node.request.id, 0
+                                    delta = response.delta
+                                    if delta is None or (
+                                        not delta.new_files
+                                        and not delta.edits
+                                        and not delta.dependencies
+                                    ):
+                                        updated = current.with_response(
+                                            AgentResponse(
+                                                request_id=node.request.id,
+                                                status=ResponseStatus.FAILED,
+                                                error="completed with empty delta — no files, edits, or dependencies produced",
                                             )
-                                            if retry_count < 3:
-                                                self._stale_retry_counts[node.request.id] = (
-                                                    retry_count + 1
+                                        )
+                                        integration_failed = True
+                                    else:
+                                        integration_response = await integrate(
+                                            request_id=node.request.id,
+                                            state_service=ss,
+                                            delta=delta,
+                                        )
+                                        if integration_response.status == ResponseStatus.FAILED:
+                                            if (
+                                                integration_response.failure_kind
+                                                == FailureKind.STALE_DELTA
+                                            ):
+                                                retry_count = self._stale_retry_counts.get(
+                                                    node.request.id, 0
                                                 )
-                                                pending_node = current.with_state(NodeState.PENDING)
-                                                state = state.update_node(pending_node)
-                                                stale_retry = True
+                                                if retry_count < 3:
+                                                    self._stale_retry_counts[node.request.id] = (
+                                                        retry_count + 1
+                                                    )
+                                                    pending_node = current.with_state(
+                                                        NodeState.PENDING
+                                                    )
+                                                    state = state.update_node(pending_node)
+                                                    stale_retry = True
+                                                else:
+                                                    integration_failed = True
                                             else:
                                                 integration_failed = True
-                                        else:
-                                            integration_failed = True
 
                         if integration_failed:
                             failed_node = updated.with_state(NodeState.FAILED)
