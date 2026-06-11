@@ -5,9 +5,19 @@ from typing import cast
 
 from pydantic import BaseModel
 
+from forge.adapters.registry import AdapterRegistry
+from forge.agents.attempt import AttemptEngine, PlanResponseValidator, RunAgentFailed
 from forge.agents.base import run_agent
 from forge.agents.plan_follow_up import PlanFollowUpBuilder
-from forge.core.models import AgentRequest, AgentResponse, PlanResponse, PlanSpec, ResponseStatus
+from forge.core.models import (
+    AgentRequest,
+    AgentResponse,
+    PlanResponse,
+    PlanSpec,
+    ResponseStatus,
+    StateView,
+    WorkSpec,
+)
 from forge.llm.providers import LLMProvider
 
 CORRECTION_PROMPT = """
@@ -44,6 +54,8 @@ Rules:
 Goal: {northstar}
 """
 
+_DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[], dependencies=[])
+
 
 class PlannerTaskExecutor:
     """Own planner prompt construction and PlanResponse execution."""
@@ -55,11 +67,19 @@ class PlannerTaskExecutor:
         artifact_names: list[str],
         artifact_languages: dict[str, str],
         max_retries: int = 3,
+        critic_provider: LLMProvider | None = None,
+        referee_provider: LLMProvider | None = None,
+        registry: AdapterRegistry | None = None,
+        max_attempts: int = 3,
     ) -> None:
         self.provider = provider
         self.artifact_names = artifact_names
         self.artifact_languages = artifact_languages
         self.max_retries = max_retries
+        self.critic_provider = critic_provider
+        self.referee_provider = referee_provider
+        self.registry = registry
+        self.max_attempts = max_attempts
 
     async def run(self, request: AgentRequest) -> AgentResponse:
         """Send the northstar goal to the planner LLM and return follow-up work requests."""
@@ -88,19 +108,40 @@ class PlannerTaskExecutor:
                 error=error,
             )
 
-        return await run_agent(
-            request,
-            PlanSpec,
-            self.provider,
-            prompt,
-            max_retries=self.max_retries,
-            correction_prompt_fn=correction_fn,
-            final_response_type=PlanResponse,
-            follow_up_builder=cast(
-                Callable[[BaseModel], list[AgentRequest]],
-                PlanFollowUpBuilder(request).build,
-            ),
+        follow_up_builder = cast(
+            Callable[[BaseModel], list[AgentRequest]],
+            PlanFollowUpBuilder(request).build,
         )
+        provider = self.provider
+        max_retries = self.max_retries
+
+        async def _run_fn(current_prompt: str) -> AgentResponse:
+            return await run_agent(
+                request,
+                PlanSpec,
+                provider,
+                current_prompt,
+                correction_prompt_fn=correction_fn,
+                final_response_type=PlanResponse,
+                follow_up_builder=follow_up_builder,
+                max_retries=max_retries,
+            )
+
+        engine = AttemptEngine(
+            request=request,
+            state_view=_DUMMY_STATE_VIEW,
+            validator=PlanResponseValidator(),
+            run_fn=_run_fn,
+            registry=self.registry,
+            critic_provider=self.critic_provider,
+            referee_provider=self.referee_provider,
+            max_attempts=self.max_attempts,
+        )
+
+        try:
+            return await engine.run(prompt)
+        except RunAgentFailed as e:
+            return e.response
 
 
 async def plan_agent(

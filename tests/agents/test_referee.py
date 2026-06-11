@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forge.adapters.registry import AdapterRegistry
+from forge.agents.base import _render_files
 from forge.agents.referee import referee_agent
 from forge.core.models import (
     AgentRequest,
@@ -46,8 +47,13 @@ def _state_view() -> StateView:
     return StateView(artifact_name="codebase", language="python", files=[], dependencies=[])
 
 
-def _delta_with_file() -> DeltaState:
-    return DeltaState(new_files=[FileWrite(path="main.py", content='print("Hello, World!")')])
+def _rendered_output() -> str:
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content='print("Hello, World!")')])
+    return _render_files(delta, _state_view())
+
+
+def _rendered_empty() -> str:
+    return _render_files(DeltaState(), _state_view())
 
 
 def _critic_accept() -> CriticFinding:
@@ -76,7 +82,7 @@ async def test_referee_agent_returns_referee_decision() -> None:
     result = await referee_agent(
         _request(),
         _state_view(),
-        _delta_with_file(),
+        _rendered_output(),
         _critic_accept(),
         _provider(decision_json),
         _registry(),
@@ -90,7 +96,7 @@ async def test_referee_agrees_with_critic_sets_override_false() -> None:
     result = await referee_agent(
         _request(),
         _state_view(),
-        _delta_with_file(),
+        _rendered_output(),
         _critic_accept(),
         _provider(decision_json),
         _registry(),
@@ -107,7 +113,7 @@ async def test_referee_overrides_critic_sets_override_true() -> None:
     result = await referee_agent(
         _request(),
         _state_view(),
-        _delta_with_file(),
+        _rendered_output(),
         _critic_reject(),
         _provider(decision_json),
         _registry(),
@@ -124,7 +130,7 @@ async def test_referee_agent_retries_on_invalid_json() -> None:
     provider = MagicMock()
     provider.chat = AsyncMock(side_effect=["bad json", good_json])
     result = await referee_agent(
-        _request(), _state_view(), _delta_with_file(), _critic_accept(), provider, _registry()
+        _request(), _state_view(), _rendered_output(), _critic_accept(), provider, _registry()
     )
     assert isinstance(result, RefereeDecision)
     assert provider.chat.call_count == 2
@@ -138,7 +144,7 @@ async def test_referee_agent_raises_after_max_retries_exceeded() -> None:
         await referee_agent(
             _request(),
             _state_view(),
-            DeltaState(),
+            _rendered_empty(),
             _critic_accept(),
             provider,
             _registry(),

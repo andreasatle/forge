@@ -1,11 +1,11 @@
 """Referee agent — reviews critic finding and makes the final disposition."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import _build_system_prompt, _parse_response, _render_files
+from forge.agents.base import _build_system_prompt, _parse_response
 from forge.core.models import (
     AgentRequest,
     CriticFinding,
-    DeltaState,
+    PlanSpec,
     RefereeDecision,
     StateView,
     WorkSpec,
@@ -20,23 +20,31 @@ def _render_hints(hints: list[str]) -> str:
 async def referee_agent(
     request: AgentRequest,
     state_view: StateView,
-    delta: DeltaState,
+    output_text: str,
     critic_finding: CriticFinding,
     provider: LLMProvider,
     registry: AdapterRegistry,
     max_retries: int = 3,
 ) -> RefereeDecision:
-    """Review the critic's finding and worker's delta; return the final RefereeDecision."""
+    """Review the critic's finding and agent output; return the final RefereeDecision."""
     spec = request.spec
-    if not isinstance(spec, WorkSpec):
-        raise TypeError(f"expected WorkSpec, got {type(spec).__name__}")
+    if isinstance(spec, WorkSpec):
+        objective = spec.objective
+        success_condition = spec.success_condition
+        language = spec.language or "not specified"
+    elif isinstance(spec, PlanSpec):
+        objective = spec.northstar
+        success_condition = "Plan comprehensively addresses the northstar goal"
+        language = "n/a"
+    else:
+        raise TypeError(f"unsupported spec type: {type(spec).__name__}")
 
     adapter = registry.get("referee")
     user_prompt = adapter.prompt_template.format(
-        objective=spec.objective,
-        success_condition=spec.success_condition,
-        files=_render_files(delta, state_view),
-        language=spec.language or "not specified",
+        objective=objective,
+        success_condition=success_condition,
+        output_text=output_text,
+        language=language,
         critic_disposition=critic_finding.disposition.value,
         critic_rationale=critic_finding.rationale,
         critic_hints=_render_hints(critic_finding.hints),

@@ -1,7 +1,8 @@
 """Worker agent that executes a task using an adapter and tool registry."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.attempt import RunAgentFailed, TaskAttemptEngine
+from forge.agents.attempt import AttemptEngine, DeltaStateValidator, RunAgentFailed
+from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
@@ -78,9 +79,7 @@ class WorkTaskExecutor:
             if plugin:
                 delta_example = plugin.delta_example.format(base_version=state_view.version)
             else:
-                delta_example = _FALLBACK_DELTA_EXAMPLE.format(
-                    base_version=state_view.version
-                )
+                delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=state_view.version)
         else:
             delta_example = ""
 
@@ -110,17 +109,32 @@ class WorkTaskExecutor:
             "\nPropose file creations and edits only through your task result."
         )
 
-        engine = TaskAttemptEngine(
+        provider = self.provider
+        max_retries = self.max_retries
+        max_tool_iterations = self.max_tool_iterations
+
+        async def _run_fn(prompt: str) -> AgentResponse:
+            return await run_agent(
+                request,
+                WorkSpec,
+                provider,
+                prompt,
+                tools=tools,
+                adapter_spec=adapter,
+                max_retries=max_retries,
+                max_tool_iterations=max_tool_iterations,
+            )
+
+        validator = DeltaStateValidator(adapter, state_view)
+        engine = AttemptEngine(
             request=request,
             state_view=state_view,
-            provider=self.provider,
+            validator=validator,
+            run_fn=_run_fn,
             registry=self.registry,
-            tools=tools,
             critic_provider=self.critic_provider,
             referee_provider=self.referee_provider,
             max_attempts=self.max_attempts,
-            max_retries=self.max_retries,
-            max_tool_iterations=self.max_tool_iterations,
         )
 
         try:

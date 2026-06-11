@@ -1,30 +1,38 @@
-"""Critic agent — reviews worker output against the success condition."""
+"""Critic agent — reviews agent output against the success condition."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import _build_system_prompt, _parse_response, _render_files
-from forge.core.models import AgentRequest, CriticFinding, DeltaState, StateView, WorkSpec
+from forge.agents.base import _build_system_prompt, _parse_response
+from forge.core.models import AgentRequest, CriticFinding, PlanSpec, StateView, WorkSpec
 from forge.llm.providers import ChatMessage, LLMProvider
 
 
 async def critic_agent(
     request: AgentRequest,
     state_view: StateView,
-    delta: DeltaState,
+    output_text: str,
     provider: LLMProvider,
     registry: AdapterRegistry,
     max_retries: int = 3,
 ) -> CriticFinding:
-    """Review a worker's DeltaState against the request's success condition."""
+    """Review agent output against the request's success condition."""
     spec = request.spec
-    if not isinstance(spec, WorkSpec):
-        raise TypeError(f"expected WorkSpec, got {type(spec).__name__}")
+    if isinstance(spec, WorkSpec):
+        objective = spec.objective
+        success_condition = spec.success_condition
+        language = spec.language or "not specified"
+    elif isinstance(spec, PlanSpec):
+        objective = spec.northstar
+        success_condition = "Plan comprehensively addresses the northstar goal"
+        language = "n/a"
+    else:
+        raise TypeError(f"unsupported spec type: {type(spec).__name__}")
 
     adapter = registry.get("critic")
     user_prompt = adapter.prompt_template.format(
-        objective=spec.objective,
-        success_condition=spec.success_condition,
-        files=_render_files(delta, state_view),
-        language=spec.language or "not specified",
+        objective=objective,
+        success_condition=success_condition,
+        output_text=output_text,
+        language=language,
     )
     system_prompt = _build_system_prompt(None, CriticFinding)
     messages: list[ChatMessage] = [

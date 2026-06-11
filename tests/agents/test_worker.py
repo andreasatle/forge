@@ -116,7 +116,7 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path) -
         provider=provider,
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
         )
@@ -143,7 +143,7 @@ async def test_work_task_executor_enforces_adapter_tools(tmp_path) -> None:
         provider=provider,
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -218,7 +218,7 @@ async def test_work_task_executor_python_language_supplement_appears_in_prompt(
         provider=provider,
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -244,7 +244,7 @@ async def test_work_task_executor_keeps_read_only_policy(tmp_path) -> None:
         provider=provider,
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -265,7 +265,7 @@ async def test_worker_tools_do_not_include_blackboard_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -287,7 +287,7 @@ async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -314,7 +314,7 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -343,7 +343,7 @@ async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -378,7 +378,7 @@ async def test_worker_prompt_keeps_read_only_policy(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -409,7 +409,7 @@ async def test_worker_prompt_includes_state_version_and_file_context(tmp_path) -
         version=7,
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -445,7 +445,7 @@ async def test_coding_adapter_receives_exactly_declared_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -474,7 +474,7 @@ async def test_document_adapter_receives_exactly_declared_tools(tmp_path) -> Non
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -498,7 +498,7 @@ async def test_audit_adapter_receives_exactly_declared_tools(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -521,7 +521,7 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path) 
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -544,7 +544,7 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -573,7 +573,7 @@ async def test_language_not_appended_when_no_plugin(tmp_path) -> None:
     provider = MagicMock()
     provider.max_tokens = 8192
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -601,7 +601,7 @@ async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path) -> None:
         dependencies=[],
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -634,7 +634,7 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path) -> None:
         delta_example="",
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -658,7 +658,7 @@ async def test_python_worker_prompt_includes_packaging_guidance(tmp_path) -> Non
     language_registry = LanguageRegistry()
     language_registry.load(Path(__file__).parents[2] / "languages")
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -701,7 +701,7 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path) -> None
         delta_example='{{"path": "DELTA_EXAMPLE_MARKER"}}',
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
@@ -768,7 +768,7 @@ async def test_run_agent_failure_propagates_as_failed_response(tmp_path) -> None
         failure_kind=FailureKind.PROVIDER_ERROR,
     )
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = failed_response
         response = await work_agent(
             request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
@@ -789,7 +789,7 @@ async def test_successful_engine_result_wrapped_in_completed_response(tmp_path) 
     provider.max_tokens = 8192
     delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
 
-    with patch("forge.agents.attempt.run_agent", new_callable=AsyncMock) as mock_run:
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = AgentResponse(
             request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
         )

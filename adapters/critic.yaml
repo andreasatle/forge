@@ -9,7 +9,7 @@ prompt_template: |
   Success condition: {success_condition}
   Language: {language}
 
-  {files}
+  {output_text}
 
   Disposition criteria:
   - ACCEPT: the work fully and correctly meets the success condition with no meaningful gaps
