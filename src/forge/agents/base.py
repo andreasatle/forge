@@ -54,9 +54,12 @@ class PromptBuilder:
         self,
         tools: ToolRegistry | None,
         final_response_type: type[BaseModel],
+        *,
+        always_show_final: bool = False,
     ) -> None:
         self.tools = tools
         self.final_response_type = final_response_type
+        self.always_show_final = always_show_final
 
     @staticmethod
     def compact_response_schema(response_type: type[BaseModel]) -> dict[str, object]:
@@ -94,7 +97,9 @@ class PromptBuilder:
         """Build the system prompt string, showing tool and schema sections as appropriate."""
         tracked_delta = tracked_delta or DeltaState()
         has_tools = self.tools is not None and bool(self.tools)
-        show_final = self.tools is None or not _is_empty_delta(tracked_delta)
+        show_final = (
+            self.tools is None or not _is_empty_delta(tracked_delta) or self.always_show_final
+        )
         step2 = "2. " if has_tools and show_final else ""
         lines: list[str] = [
             "You must respond with JSON only — no markdown, no explanation.",
@@ -145,6 +150,7 @@ class PromptBuilder:
                     '  each entry: {"path": "...", "old": "exact text to replace", "new": "replacement"}',
                     "- Never put file content in edits.",
                     "- Never put old/new strings in new_files.",
+                    "IMPORTANT: your response must include base_version set to the current state version shown above.",
                 ]
         return "\n".join(lines)
 
@@ -354,7 +360,11 @@ class ToolLoop:
         self.correction_prompt_fn = correction_prompt_fn
         self.adapter_spec = adapter_spec
         self.follow_up_builder = follow_up_builder
-        self.prompt_builder = PromptBuilder(tools, final_response_type)
+        self.prompt_builder = PromptBuilder(
+            tools,
+            final_response_type,
+            always_show_final=request.agent_type == AgentType.WORK,
+        )
         self.response_parser = ResponseParser(final_response_type)
         self.tool_executor = TrackedToolExecutor(tools)
 

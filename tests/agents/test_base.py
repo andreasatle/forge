@@ -931,6 +931,19 @@ def test_prompt_builder_includes_new_files_vs_edits_format_clarification():
     assert "Never put old/new strings in new_files." in prompt
 
 
+def test_prompt_builder_always_shows_delta_schema_for_work_agents_with_empty_delta():
+    """PromptBuilder includes DeltaState schema on first turn when always_show_final is True."""
+    registry, _ = _make_registry()
+    prompt = PromptBuilder(registry, DeltaState, always_show_final=True).build()
+    assert "new_files" in prompt
+
+
+def test_prompt_builder_includes_base_version_instruction_for_delta_state():
+    """PromptBuilder includes base_version instruction in DeltaState format rules."""
+    prompt = PromptBuilder(None, DeltaState).build()
+    assert "base_version set to the current state version" in prompt
+
+
 async def test_run_agent_rejects_premature_delta_state_when_no_tool_calls_made():
     """With tools and no prior tool calls, an empty DeltaState is rejected with tool-call format in the error."""
     registry, _ = _make_registry()
