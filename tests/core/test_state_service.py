@@ -183,6 +183,46 @@ def test_build_state_view_includes_current_version(tmp_path: Path) -> None:
     assert view.version == ss.current_version == 1
 
 
+def test_version_starts_at_one_when_artifact_has_files(tmp_path: Path) -> None:
+    """StateService initialises _version to 1 when the artifact directory already contains files."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    (ws.artifact_dir("app") / "existing.py").write_text("x = 1")
+
+    ss = StateService(ws, "app")
+
+    assert ss.current_version == 1
+
+
+def test_apply_delta_increments_from_resumed_version(tmp_path: Path) -> None:
+    """apply_delta increments from version 1 when the artifact already had files on construction."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    (ws.artifact_dir("app") / "existing.py").write_text("x = 1")
+    ss = StateService(ws, "app")
+
+    assert ss.current_version == 1
+
+    ss.apply_delta(DeltaState(new_files=[FileWrite(path="new.py", content="y = 2")]))
+
+    assert ss.current_version == 2
+
+
+def test_noise_only_files_do_not_set_version_to_one(tmp_path: Path) -> None:
+    """Version stays 0 when the artifact directory contains only noise files (e.g. .venv, .pyc)."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    artifact_dir = ws.artifact_dir("app")
+    (artifact_dir / ".venv").mkdir()
+    (artifact_dir / ".venv" / "lib.py").write_text("x")
+    (artifact_dir / "__pycache__").mkdir()
+    (artifact_dir / "__pycache__" / "main.cpython-312.pyc").write_text("x")
+
+    ss = StateService(ws, "app")
+
+    assert ss.current_version == 0
+
+
 # --- run_tests ---
 
 

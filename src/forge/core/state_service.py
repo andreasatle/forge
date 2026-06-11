@@ -84,7 +84,11 @@ class StateService:
         self._workspace = workspace
         self._artifact_name = artifact_name
         self._plugin = plugin
-        self._version: int = 0
+        artifact_dir = workspace.artifact_dir(artifact_name)
+        has_files = artifact_dir.exists() and any(
+            f.is_file() and not _is_noise(f, artifact_dir) for f in artifact_dir.rglob("*")
+        )
+        self._version: int = 1 if has_files else 0
 
     @property
     def current_version(self) -> int:
