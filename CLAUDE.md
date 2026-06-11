@@ -17,6 +17,9 @@ The core loop:
 - Agents do not import from the scheduler
 - Core models live in `forge/core/models.py` — do not redefine elsewhere
 
+## Before Starting Any Task
+Read docs/AGENT.md first — it is the authoritative bootstrap brief for Forge architecture, invariants, and design preferences.
+
 ## Code Rules
 - **Pydantic** for data that crosses boundaries or needs validation
 - **Dataclass** for internal config and lightweight containers
