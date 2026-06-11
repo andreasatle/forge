@@ -156,45 +156,88 @@ def test_max_tokens_parsed_from_yaml(tmp_path: Path) -> None:
 
 
 def test_models_defaults_to_ollama_when_absent(tmp_path: Path) -> None:
-    """load() defaults all model strings to ollama/gemma4:e4b when models section is absent."""
+    """load() defaults planner and worker producers when models section is absent."""
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
-    assert config.models.planner == "ollama/gemma4:e4b"
-    assert config.models.worker == "ollama/gemma4:e4b"
-    assert config.models.integrator == "ollama/gemma4:e4b"
+    assert config.models.planner.producer == "ollama/gemma4:e4b"
+    assert config.models.planner.critic is None
+    assert config.models.planner.referee is None
+    assert config.models.worker.producer == "ollama/gemma4:e4b"
+    assert config.models.worker.critic is None
+    assert config.models.worker.referee is None
+    assert config.models.integrator.producer is None
 
 
-def test_models_section_parsed_correctly(tmp_path: Path) -> None:
-    """load() reads model strings from the models section when declared."""
+def test_old_flat_models_section_parsed_correctly(tmp_path: Path) -> None:
+    """load() keeps accepting the old flat model section."""
     yaml = (
         "northstar: 'goal'\nworkspace: ./ws\n"
         + _ARTIFACTS_YAML
-        + "models:\n  planner: claude/claude-sonnet-4-20250514\n  worker: openai/gpt-4o\n  integrator: ollama/gemma4:e4b\n"
+        + "models:\n"
+        + "  planner: claude/claude-sonnet-4-20250514\n"
+        + "  worker: openai/gpt-4o\n"
+        + "  integrator: ollama/gemma4:e4b\n"
+        + "  critic: claude/planner-critic\n"
+        + "  referee: openai/referee\n"
     )
     p = _write_yaml(tmp_path, yaml)
     config = ForgeConfig.load(p)
-    assert config.models.planner == "claude/claude-sonnet-4-20250514"
-    assert config.models.worker == "openai/gpt-4o"
-    assert config.models.integrator == "ollama/gemma4:e4b"
+    assert config.models.planner.producer == "claude/claude-sonnet-4-20250514"
+    assert config.models.worker.producer == "openai/gpt-4o"
+    assert config.models.integrator.producer == "ollama/gemma4:e4b"
+    assert config.models.planner.critic == "claude/planner-critic"
+    assert config.models.planner.referee == "openai/referee"
+    assert config.models.worker.critic == "claude/planner-critic"
+    assert config.models.worker.referee == "openai/referee"
+
+
+def test_new_nested_models_section_parsed_correctly(tmp_path: Path) -> None:
+    """load() reads producer/critic/referee nested under scheduler roles."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  planner:\n"
+        + "    producer: claude/planner\n"
+        + "    critic: claude/planner-critic\n"
+        + "    referee: claude/planner-referee\n"
+        + "  worker:\n"
+        + "    producer: openai/worker\n"
+        + "    critic: openai/worker-critic\n"
+        + "    referee: openai/worker-referee\n"
+        + "  integrator:\n"
+        + "    producer: ollama/integrator\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.planner.producer == "claude/planner"
+    assert config.models.planner.critic == "claude/planner-critic"
+    assert config.models.planner.referee == "claude/planner-referee"
+    assert config.models.worker.producer == "openai/worker"
+    assert config.models.worker.critic == "openai/worker-critic"
+    assert config.models.worker.referee == "openai/worker-referee"
+    assert config.models.integrator.producer == "ollama/integrator"
 
 
 def test_models_config_defaults() -> None:
-    """ModelsConfig defaults all fields to ollama/gemma4:e4b when constructed without args."""
+    """ModelsConfig defaults planner and worker producers when constructed without args."""
     m = ModelsConfig()
-    assert m.planner == "ollama/gemma4:e4b"
-    assert m.worker == "ollama/gemma4:e4b"
-    assert m.integrator == "ollama/gemma4:e4b"
+    assert m.planner.producer == "ollama/gemma4:e4b"
+    assert m.worker.producer == "ollama/gemma4:e4b"
+    assert m.integrator.producer is None
 
 
 def test_models_critic_and_referee_default_to_none() -> None:
-    """ModelsConfig defaults critic and referee to None when not provided."""
+    """ModelsConfig defaults nested critic and referee to None when not provided."""
     m = ModelsConfig()
-    assert m.critic is None
-    assert m.referee is None
+    assert m.planner.critic is None
+    assert m.planner.referee is None
+    assert m.worker.critic is None
+    assert m.worker.referee is None
 
 
-def test_models_critic_and_referee_parsed_from_yaml(tmp_path: Path) -> None:
-    """load() reads critic and referee model strings from the models section when declared."""
+def test_old_flat_critic_and_referee_map_to_planner_and_worker(tmp_path: Path) -> None:
+    """load() maps old global critic/referee to both PWC configs."""
     yaml = (
         "northstar: 'goal'\nworkspace: ./ws\n"
         + _ARTIFACTS_YAML
@@ -202,16 +245,20 @@ def test_models_critic_and_referee_parsed_from_yaml(tmp_path: Path) -> None:
     )
     p = _write_yaml(tmp_path, yaml)
     config = ForgeConfig.load(p)
-    assert config.models.critic == "ollama/gemma4:e4b"
-    assert config.models.referee == "ollama/gemma4:e4b"
+    assert config.models.planner.critic == "ollama/gemma4:e4b"
+    assert config.models.planner.referee == "ollama/gemma4:e4b"
+    assert config.models.worker.critic == "ollama/gemma4:e4b"
+    assert config.models.worker.referee == "ollama/gemma4:e4b"
 
 
 def test_models_critic_and_referee_absent_defaults_to_none(tmp_path: Path) -> None:
-    """load() sets critic and referee to None when omitted from the models section."""
+    """load() sets nested critic and referee to None when omitted from the models section."""
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
-    assert config.models.critic is None
-    assert config.models.referee is None
+    assert config.models.planner.critic is None
+    assert config.models.planner.referee is None
+    assert config.models.worker.critic is None
+    assert config.models.worker.referee is None
 
 
 def test_max_tool_iterations_defaults_to_25(tmp_path: Path) -> None:

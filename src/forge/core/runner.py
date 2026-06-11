@@ -89,6 +89,8 @@ def make_plan_handler(
     artifact_languages: dict[str, str],
     provider: LLMProvider,
     max_retries: int = 3,
+    critic_provider: LLMProvider | None = None,
+    referee_provider: LLMProvider | None = None,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
 
@@ -97,6 +99,14 @@ def make_plan_handler(
             return AgentResponse(
                 request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[]
             )
-        return await plan_agent(request, artifact_names, artifact_languages, provider, max_retries)
+        return await plan_agent(
+            request,
+            artifact_names,
+            artifact_languages,
+            provider,
+            max_retries,
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
+        )
 
     return plan_handler

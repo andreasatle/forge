@@ -81,20 +81,40 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
     registry.load(_ADAPTERS_DIR)
     print(f"adapters: {registry.names()}")
 
-    planner_provider = make_provider(config.models.planner, config.max_tokens)
-    worker_provider = make_provider(config.models.worker, config.max_tokens)
-    critic_provider = (
-        make_provider(config.models.critic, config.max_tokens) if config.models.critic else None
+    planner_provider = make_provider(config.models.planner.producer, config.max_tokens)
+    planner_critic_provider = (
+        make_provider(config.models.planner.critic, config.max_tokens)
+        if config.models.planner.critic
+        else None
     )
-    referee_provider = (
-        make_provider(config.models.referee, config.max_tokens) if config.models.referee else None
+    planner_referee_provider = (
+        make_provider(config.models.planner.referee, config.max_tokens)
+        if config.models.planner.referee
+        else None
+    )
+    worker_provider = make_provider(config.models.worker.producer, config.max_tokens)
+    worker_critic_provider = (
+        make_provider(config.models.worker.critic, config.max_tokens)
+        if config.models.worker.critic
+        else None
+    )
+    worker_referee_provider = (
+        make_provider(config.models.worker.referee, config.max_tokens)
+        if config.models.worker.referee
+        else None
     )
 
     runner = Runner()
     runner.register(
         AgentType.PLAN,
         make_plan_handler(
-            registry, artifact_names, artifact_languages, planner_provider, config.max_retries
+            registry,
+            artifact_names,
+            artifact_languages,
+            planner_provider,
+            config.max_retries,
+            critic_provider=planner_critic_provider,
+            referee_provider=planner_referee_provider,
         ),
     )
     runner.register(
@@ -107,8 +127,8 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             state_services=state_services,
             max_retries=config.max_retries,
             max_tool_iterations=config.max_tool_iterations,
-            critic_provider=critic_provider,
-            referee_provider=referee_provider,
+            critic_provider=worker_critic_provider,
+            referee_provider=worker_referee_provider,
         ),
     )
 
