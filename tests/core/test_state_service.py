@@ -2,7 +2,9 @@
 
 # pyright: reportPrivateUsage=false
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -353,3 +355,93 @@ def test_parse_test_result_failure_text_with_nonzero_exit_returns_false() -> Non
     """_parse_test_result does not inspect language-specific failure text."""
     result = _parse_test_result("failure", returncode=1)
     assert result.passed is False
+
+
+# --- git-transactional apply_delta ---
+
+
+def _make_subprocess_mock(stash_stdout: str = "") -> Callable[..., MagicMock]:
+    """Return a subprocess.run side-effect that returns a sensible mock for every call."""
+
+    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = ""
+        result.stderr = ""
+        if isinstance(cmd, list) and "stash" in cmd and "pop" not in cmd and "drop" not in cmd:
+            result.stdout = stash_stdout
+        return result
+
+    return _run
+
+
+def test_apply_delta_does_not_increment_version_on_test_failure(tmp_path: Path) -> None:
+    """_version stays at 0 when the plugin's tests fail after applying the delta."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    with patch("subprocess.run", side_effect=_make_subprocess_mock("No local changes to save")):
+        with patch.object(
+            ss, "run_tests", return_value=RunResult(passed=False, summary="FAILED", output="FAILED")
+        ):
+            with pytest.raises(RuntimeError, match="tests failed"):
+                ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
+
+    assert ss.current_version == 0
+
+
+def test_apply_delta_commits_to_git_history_on_success(tmp_path: Path) -> None:
+    """apply_delta issues a git commit and increments _version when tests pass."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    commit_calls: list[Any] = []
+
+    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = "No local changes to save"
+        result.stderr = ""
+        if isinstance(cmd, list) and "commit" in cmd:
+            commit_calls.append(cmd)
+        return result
+
+    with patch("subprocess.run", side_effect=_run):
+        with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+            ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
+
+    assert ss.current_version == 1
+    assert len(commit_calls) == 1
+    assert "integrated:" in commit_calls[0][-1]
+
+
+def test_apply_delta_calls_stash_pop_on_test_failure(tmp_path: Path) -> None:
+    """apply_delta calls git stash pop to restore artifact state when tests fail."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    pop_calls: list[Any] = []
+
+    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = ""  # non-empty stash was created
+        result.stderr = ""
+        if isinstance(cmd, list) and "stash" in cmd and "pop" in cmd:
+            pop_calls.append(cmd)
+        return result
+
+    with patch("subprocess.run", side_effect=_run):
+        with patch.object(
+            ss, "run_tests", return_value=RunResult(passed=False, summary="FAIL", output="FAIL")
+        ):
+            with pytest.raises(RuntimeError):
+                ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
+
+    assert len(pop_calls) == 1

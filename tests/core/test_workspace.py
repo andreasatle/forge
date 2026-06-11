@@ -1,6 +1,8 @@
 """Tests for Workspace directory initialisation, reset, and path helpers."""
 
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -194,3 +196,34 @@ def test_init_artifact_skips_init_when_plugin_is_none(tmp_path: Path) -> None:
     ws.init_artifact("codebase")
     assert ws.artifact_dir("codebase").is_dir()
     assert list(ws.artifact_dir("codebase").iterdir()) == []
+
+
+def test_init_artifact_runs_git_init_for_language_backed_artifacts(tmp_path: Path) -> None:
+    """init_artifact initializes a git repo when a plugin is provided and the directory is new."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    git_cmds: list[Any] = []
+
+    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
+        if isinstance(cmd, list) and cmd[0] == "git":
+            git_cmds.append(cmd)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("forge.core.workspace.shutil.which", return_value="/usr/bin/git"):
+        with patch("subprocess.run", side_effect=_run):
+            ws.init_artifact("codebase", _make_plugin())
+
+    assert ["git", "init"] in git_cmds
+    assert ["git", "add", "-A"] in git_cmds
+    assert any(c[:3] == ["git", "commit", "-m"] and "init: codebase" in c[-1] for c in git_cmds)
+
+
+def test_init_artifact_raises_when_git_not_available(tmp_path: Path) -> None:
+    """init_artifact raises RuntimeError when git is not found in PATH."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    with patch("forge.core.workspace.shutil.which", return_value=None):
+        with pytest.raises(RuntimeError, match="git is required"):
+            ws.init_artifact("codebase", _make_plugin())

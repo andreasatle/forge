@@ -51,9 +51,16 @@ class Workspace:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         if plugin is None or any(artifact_dir.iterdir()):
             return
+        if not shutil.which("git"):
+            raise RuntimeError(
+                "git is required for language-backed artifacts but not found in PATH"
+            )
         cmd = plugin.init_command.format(artifact_name=name)
         subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
         subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
+        subprocess.run(["git", "init"], cwd=artifact_dir, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=artifact_dir, check=True)
+        subprocess.run(["git", "commit", "-m", f"init: {name}"], cwd=artifact_dir, check=True)
 
     def reset(self, artifact_names: list[str]) -> None:
         """Delete state, blackboard, and all contents of artifact directories."""

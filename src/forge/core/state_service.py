@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 from forge.core.models import DeltaState, FileView, RunResult, StateView
@@ -90,8 +91,23 @@ class StateService:
         )
 
     def apply_delta(self, delta: DeltaState) -> None:
-        """Apply a DeltaState to the artifact directory — writes files and applies edits."""
+        """Apply a DeltaState to the artifact directory — writes files, applies edits, and tests.
+
+        When a language plugin is configured the artifact has a git repo. This method uses git
+        stash as a transaction: stash before applying, commit on success, pop on test failure.
+        """
         artifact_dir = self._workspace.artifact_dir(self._artifact_name)
+
+        stashed = False
+        if self._plugin:
+            subprocess.run(["git", "-C", str(artifact_dir), "add", "-A"], check=True)
+            stash_result = subprocess.run(
+                ["git", "-C", str(artifact_dir), "stash"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            stashed = "No local changes to save" not in stash_result.stdout
 
         for fw in delta.new_files:
             target = artifact_dir / fw.path
@@ -122,7 +138,32 @@ class StateService:
                 cmd = self._plugin.add_dependency_command.format(package=dep)
                 subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
 
-        self._version += 1
+        if self._plugin:
+            test_result = self.run_tests()
+            if test_result.passed:
+                if stashed:
+                    subprocess.run(["git", "-C", str(artifact_dir), "stash", "drop"], check=True)
+                subprocess.run(["git", "-C", str(artifact_dir), "add", "-A"], check=True)
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(artifact_dir),
+                        "commit",
+                        "-m",
+                        f"integrated: {uuid.uuid4()}",
+                    ],
+                    check=True,
+                )
+                self._version += 1
+            else:
+                if stashed:
+                    subprocess.run(["git", "-C", str(artifact_dir), "stash", "pop"], check=True)
+                raise RuntimeError(
+                    f"tests failed after delta: {test_result.summary}\n{test_result.output}"
+                )
+        else:
+            self._version += 1
 
     def run_tests(self) -> RunResult:
         """Run the language plugin test command and return structured result."""
