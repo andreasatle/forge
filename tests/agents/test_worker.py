@@ -814,3 +814,34 @@ async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: 
 
     assert response.status == ResponseStatus.COMPLETED
     assert response.delta == delta
+
+
+async def test_worker_prompt_includes_explicit_base_version_instruction(tmp_path: Path) -> None:
+    """worker.py emits an explicit base_version instruction on the line after 'State version: N'."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    state_view = StateView(
+        artifact_name="codebase",
+        language=None,
+        files=[],
+        dependencies=[],
+        version=42,
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider, state_view)
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "State version: 42" in user_prompt
+    assert "You MUST set base_version to 42 in your response." in user_prompt
+    version_line_idx = user_prompt.index("State version: 42")
+    must_line_idx = user_prompt.index("You MUST set base_version to 42 in your response.")
+    assert must_line_idx > version_line_idx
