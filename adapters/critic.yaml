@@ -26,5 +26,6 @@ prompt_template: |
   - hints must be specific and actionable
   - For "revise", populate revision_items with concrete required changes
   - When a required change corresponds to an acceptance criterion, set criterion_id to that criterion's id
-  - hints must stay within the contract
+  - hints and revision_items must stay within the contract
+  - Never request a change that contradicts any constraint, non-goal, artifact, adapter, language, or language plugin guidance in the contract
   - hints must be an empty list [] when disposition is "accept"

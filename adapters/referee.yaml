@@ -13,6 +13,7 @@ prompt_template: |
   - The critic is too harsh: the {output_noun} satisfies the contract despite minor gaps
   - The critic is too lenient: the {output_noun} has serious contract violations the critic overlooked
   - The critic relies on requirements, ideals, or improvements outside the contract
+  - The critic requests revisions that contradict constraints, non-goals, artifact, adapter, language, or language plugin guidance in the contract
 
   {contract_block}
 
@@ -20,6 +21,8 @@ prompt_template: |
     Disposition: {critic_disposition}
     Rationale: {critic_rationale}
     Hints: {critic_hints}
+    Revision items:
+      {critic_revision_items}
 
   {output_text}
 
@@ -32,3 +35,4 @@ prompt_template: |
   - For "revise", populate revision_items with concrete required changes
   - When a required change corresponds to an acceptance criterion, set criterion_id to that criterion's id
   - Do not reject or revise for unstated ideals outside the contract
+  - Never emit revision_items that contradict any constraint, non-goal, artifact, adapter, language, or language plugin guidance in the contract

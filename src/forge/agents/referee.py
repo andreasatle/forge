@@ -24,6 +24,19 @@ def _render_hints(hints: list[str]) -> str:
     return ", ".join(hints) if hints else "(none)"
 
 
+def _render_revision_items(finding: CriticFinding) -> str:
+    """Render structured critic revision items for referee review."""
+    if not finding.revision_items:
+        return "(none)"
+    lines: list[str] = []
+    for index, item in enumerate(finding.revision_items, start=1):
+        criterion = f" [{item.criterion_id}]" if item.criterion_id else ""
+        lines.append(f"{index}. Required change{criterion}: {item.required_change}")
+        if item.rationale:
+            lines.append(f"   Rationale: {item.rationale}")
+    return "\n".join(lines)
+
+
 async def referee_agent(
     request: AgentRequest,
     state_view: StateView,
@@ -56,6 +69,7 @@ async def referee_agent(
         critic_disposition=critic_finding.disposition.value,
         critic_rationale=critic_finding.rationale,
         critic_hints=_render_hints(critic_finding.hints),
+        critic_revision_items=_render_revision_items(critic_finding),
     )
     system_prompt = build_system_prompt(None, RefereeDecision)
     messages: list[ChatMessage] = [

@@ -68,6 +68,28 @@ def _rich_request() -> AgentRequest:
     )
 
 
+def _plugin_guidance_request() -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write a module",
+            success_condition="tests pass",
+            contract=AgentContract(
+                objective="write a module",
+                success_condition="tests pass",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="module imports")],
+                constraints=[
+                    "Language plugin guidance:\nUse direct imports only.\nNever use forbidden imports."
+                ],
+            ),
+            adapter="coding",
+            artifact="codebase",
+            language="toy",
+        ),
+    )
+
+
 def _plan_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.PLAN,
@@ -212,6 +234,22 @@ async def test_critic_prompt_includes_canonical_contract_and_scope_boundary() ->
     assert "Language: python" in prompt
     assert "Do not revise or reject for unstated ideals" in prompt
     assert "improvements outside the contract" in prompt
+
+
+async def test_critic_prompt_treats_plugin_guidance_as_binding_contract() -> None:
+    """Critic prompt includes plugin guidance and forbids revision items that contradict it."""
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good.", "hints": []})
+    provider = _provider(finding_json)
+    request = _plugin_guidance_request()
+
+    await critic_agent(request, _state_view(), _rendered_output(), provider, _registry())
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "Language plugin guidance:" in prompt
+    assert "Never use forbidden imports." in prompt
+    assert "revision_items must stay within the contract" in prompt
+    assert "Never request a change that contradicts any constraint" in prompt
 
 
 async def test_critic_agent_retries_on_invalid_json() -> None:

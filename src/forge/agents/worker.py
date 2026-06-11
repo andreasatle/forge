@@ -12,7 +12,7 @@ from forge.core.models import (
     render_agent_contract,
 )
 from forge.core.workspace import Workspace
-from forge.languages.registry import LanguageRegistry
+from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.llm.providers import LLMProvider
 from forge.tools.builtin import build_read_registry
 from forge.tools.registry import ToolRegistry
@@ -20,6 +20,25 @@ from forge.tools.registry import ToolRegistry
 _FALLBACK_DELTA_EXAMPLE = (
     "No language-specific file layout conventions are configured for this artifact."
 )
+_LANGUAGE_GUIDANCE_CONSTRAINT_PREFIX = "Language plugin guidance:"
+
+
+def _request_with_language_guidance(
+    request: AgentRequest,
+    spec: WorkSpec,
+    plugin: LanguagePlugin | None,
+) -> AgentRequest:
+    """Promote plugin-owned guidance into the canonical node contract."""
+    if plugin is None or not plugin.prompt_supplement.strip():
+        return request
+    guidance = f"{_LANGUAGE_GUIDANCE_CONSTRAINT_PREFIX}\n{plugin.prompt_supplement.strip()}"
+    if guidance in spec.contract.constraints:
+        return request
+    contract = spec.contract.model_copy(
+        update={"constraints": [*spec.contract.constraints, guidance]}
+    )
+    updated_spec = spec.model_copy(update={"contract": contract})
+    return request.model_copy(update={"spec": updated_spec})
 
 
 class WorkTaskExecutor:
@@ -60,6 +79,14 @@ class WorkTaskExecutor:
 
         adapter = self.registry.get(spec.adapter)
         plugin = self.language_registry.get(spec.language) if spec.language else None
+        contract_request = _request_with_language_guidance(request, spec, plugin)
+        contract_spec = contract_request.spec
+        if not isinstance(contract_spec, WorkSpec):
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                error=f"expected WorkSpec, got {type(contract_spec).__name__}",
+            )
         full_registry = build_read_registry(
             self.workspace,
             spec.artifact,
@@ -91,10 +118,9 @@ class WorkTaskExecutor:
             base_version=state_view.version,
             delta_example=delta_example,
         )
-        contract_block = render_agent_contract(request)
+        contract_block = render_agent_contract(contract_request)
         base_prompt += f"\n\n{contract_block}\n\nProduce output satisfying this contract."
         if plugin:
-            base_prompt += f"\n\n{plugin.prompt_supplement}"
             base_prompt += f"\n\nLanguage: {spec.language}"
 
         base_prompt += f"\n\nState version: {state_view.version}"
@@ -120,7 +146,7 @@ class WorkTaskExecutor:
 
         async def _run_fn(prompt: str) -> AgentResponse:
             return await run_agent(
-                request,
+                contract_request,
                 WorkSpec,
                 provider,
                 prompt,
@@ -132,7 +158,7 @@ class WorkTaskExecutor:
 
         validator = DeltaStateValidator(adapter, state_view)
         engine = AttemptEngine(
-            request=request,
+            request=contract_request,
             state_view=state_view,
             validator=validator,
             run_fn=_run_fn,

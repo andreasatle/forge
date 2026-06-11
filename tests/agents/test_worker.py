@@ -13,10 +13,13 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
+    CriticDisposition,
+    CriticFinding,
     DeltaState,
     FailureKind,
     FileView,
     FileWrite,
+    RefereeDecision,
     RequestSource,
     ResponseStatus,
     StateView,
@@ -692,7 +695,7 @@ async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path: Path) ->
 
 
 async def test_language_supplement_appears_in_worker_prompt(tmp_path: Path) -> None:
-    """work_agent injects the language plugin's prompt_supplement into the rendered prompt."""
+    """work_agent injects language plugin guidance into the canonical contract."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -725,6 +728,81 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path: Path) -> N
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "UNIQUE_SUPPLEMENT_MARKER" in user_prompt
+    assert "Language plugin guidance:" in user_prompt
+    producer_request = mock_run_agent.call_args.args[0]
+    assert isinstance(producer_request.spec, WorkSpec)
+    assert any(
+        "UNIQUE_SUPPLEMENT_MARKER" in constraint
+        for constraint in producer_request.spec.contract.constraints
+    )
+
+
+async def test_producer_critic_and_referee_receive_same_plugin_guidance(
+    tmp_path: Path,
+) -> None:
+    """The worker promotes plugin guidance into the request shared by producer and reviewers."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="toy")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    language_registry = LanguageRegistry()
+    language_registry.register(
+        LanguagePlugin(
+            name="toy",
+            package_manager="toy-packages",
+            init_command="toy init",
+            test_command="toy test",
+            sync_command="toy sync",
+            add_dependency_command="toy add {package}",
+            project_structure=["module.toy"],
+            prompt_supplement="TOY_REVIEWER_CONTRACT_GUIDANCE",
+            delta_example='{{"new_files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
+        )
+    )
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            delta=DeltaState(new_files=[FileWrite(path="module.toy", content="ok")]),
+        )
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT,
+            rationale="meets contract",
+            hints=[],
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT,
+            rationale="meets contract",
+            override=False,
+        )
+
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            language_registry,
+            provider,
+            _state_view(language="toy"),
+            critic_provider=MagicMock(),
+            referee_provider=MagicMock(),
+        )
+
+    producer_request = mock_run_agent.call_args.args[0]
+    critic_request = mock_critic.call_args.args[0]
+    referee_request = mock_referee.call_args.args[0]
+    assert producer_request == critic_request == referee_request
+    assert isinstance(producer_request.spec, WorkSpec)
+    assert any(
+        "TOY_REVIEWER_CONTRACT_GUIDANCE" in constraint
+        for constraint in producer_request.spec.contract.constraints
+    )
 
 
 async def test_python_worker_prompt_includes_packaging_guidance(tmp_path: Path) -> None:

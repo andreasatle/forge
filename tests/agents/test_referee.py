@@ -22,6 +22,7 @@ from forge.core.models import (
     RefereeDecision,
     RequestSource,
     ReviewContext,
+    RevisionItem,
     StateView,
     WorkSpec,
     render_agent_contract,
@@ -69,6 +70,28 @@ def _rich_request() -> AgentRequest:
     )
 
 
+def _plugin_guidance_request() -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write a module",
+            success_condition="tests pass",
+            contract=AgentContract(
+                objective="write a module",
+                success_condition="tests pass",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="module imports")],
+                constraints=[
+                    "Language plugin guidance:\nUse direct imports only.\nNever use forbidden imports."
+                ],
+            ),
+            adapter="coding",
+            artifact="codebase",
+            language="toy",
+        ),
+    )
+
+
 def _plan_request() -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.PLAN,
@@ -99,6 +122,21 @@ def _critic_reject() -> CriticFinding:
         disposition=CriticDisposition.REJECT,
         rationale="Does not meet requirements.",
         hints=["Add output"],
+    )
+
+
+def _critic_contract_violating_revise() -> CriticFinding:
+    return CriticFinding(
+        disposition=CriticDisposition.REVISE,
+        rationale="Use the forbidden import style.",
+        hints=["Use forbidden imports."],
+        revision_items=[
+            RevisionItem(
+                criterion_id="AC1",
+                required_change="Use forbidden imports.",
+                rationale="The critic incorrectly prefers this style.",
+            )
+        ],
     )
 
 
@@ -250,6 +288,40 @@ async def test_referee_prompt_includes_canonical_contract_and_scope_boundary() -
     assert "Language: python" in prompt
     assert "Out-of-scope ideals are not grounds for rejection" in prompt
     assert "outside the contract" in prompt
+
+
+async def test_referee_can_override_critic_revision_items_that_contradict_plugin_guidance() -> None:
+    """Referee receives plugin guidance and critic revision items so it can override them."""
+    decision_json = json.dumps(
+        {
+            "disposition": "accept",
+            "rationale": "The critic requested a change forbidden by the contract.",
+            "override": True,
+            "revision_items": [],
+        }
+    )
+    provider = _provider(decision_json)
+    request = _plugin_guidance_request()
+
+    result = await referee_agent(
+        request,
+        _state_view(),
+        _rendered_output(),
+        _critic_contract_violating_revise(),
+        provider,
+        _registry(),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert result.disposition == CriticDisposition.ACCEPT
+    assert result.override is True
+    assert "Language plugin guidance:" in prompt
+    assert "Never use forbidden imports." in prompt
+    assert "Use forbidden imports." in prompt
+    assert "Revision items:" in prompt
+    assert "The critic requests revisions that contradict constraints" in prompt
+    assert "Never emit revision_items that contradict any constraint" in prompt
 
 
 async def test_referee_agent_retries_on_invalid_json() -> None:
