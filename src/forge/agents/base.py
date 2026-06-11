@@ -6,10 +6,11 @@ from collections.abc import Callable
 from typing import cast
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from forge.adapters.registry import AdapterSpec
 from forge.core.models import (
+    AgentDiagnostic,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -32,6 +33,10 @@ class ToolError(Exception):
     """Raised when a tool call fails during execution (distinct from JSON parse errors)."""
 
 
+_MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS = 4000
+_MAX_BAD_VALUE_CHARS = 300
+
+
 def _classify_failure(exc: Exception) -> FailureKind:
     """Map an exception to a FailureKind."""
     if isinstance(exc, httpx.TimeoutException):
@@ -47,6 +52,92 @@ def _classify_failure(exc: Exception) -> FailureKind:
     if isinstance(exc, ValueError):
         return FailureKind.INVALID_JSON
     return FailureKind.UNKNOWN
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    """Return a bounded diagnostic excerpt."""
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 14]}...[truncated]"
+
+
+def _validation_path(loc: object) -> str | None:
+    """Render a Pydantic error location as a compact dotted path."""
+    if not isinstance(loc, tuple) or not loc:
+        return None
+    parts = cast(tuple[object, ...], loc)
+    return ".".join(str(part) for part in parts)
+
+
+def _compact_bad_value(value: object) -> str:
+    """Render a compact, bounded representation of a validation input value."""
+    try:
+        rendered = json.dumps(value, ensure_ascii=False)
+    except TypeError:
+        rendered = repr(value)
+    return _truncate_text(rendered, _MAX_BAD_VALUE_CHARS)
+
+
+def _validation_error_items(error: Exception) -> list[tuple[str | None, str | None]]:
+    """Extract validation paths and bad-value excerpts from wrapped Pydantic errors."""
+    cause = error.__cause__
+    if not isinstance(cause, ValidationError):
+        return []
+    items: list[tuple[str | None, str | None]] = []
+    for entry in cause.errors():
+        path = _validation_path(entry.get("loc"))
+        bad_value = entry.get("input")
+        bad_excerpt = _compact_bad_value(bad_value) if "input" in entry else None
+        items.append((path, bad_excerpt))
+    return items
+
+
+def _invalid_response_diagnostic(error: Exception, raw: str) -> AgentDiagnostic:
+    """Build a bounded diagnostic for an invalid structured response."""
+    items = _validation_error_items(error)
+    first_path = items[0][0] if items else None
+    first_bad_value = items[0][1] if items else None
+    return AgentDiagnostic(
+        kind="invalid_structured_output",
+        message=str(error),
+        validation_path=first_path,
+        bad_value_excerpt=first_bad_value,
+        raw_response_excerpt=_truncate_text(raw, _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS),
+    )
+
+
+def _delta_state_json_repair_prompt(error: Exception, raw: str) -> str:
+    """Render precise, non-contradictory repair instructions for DeltaState JSON."""
+    items = _validation_error_items(error)
+    lines = [
+        "JSON REPAIR REQUIRED",
+        "Your previous response was invalid for the required DeltaState schema.",
+        f"Validation error: {error}",
+    ]
+    if items:
+        lines.append("")
+        lines.append("Invalid schema locations:")
+        for path, bad_value in items[:5]:
+            location = path or "(root)"
+            if bad_value is None:
+                lines.append(f"- {location}")
+            else:
+                lines.append(f"- {location}: bad value excerpt {bad_value}")
+    lines.extend(
+        [
+            "",
+            "Required DeltaState shape:",
+            "- new_files must be an array of JSON objects.",
+            '  Each new_files item must be {"path": "...", "content": "..."}',
+            "- edits must be an array of JSON objects.",
+            '  Each edits item must be {"path": "...", "old": "...", "new": "..."}',
+            '- Do not use string entries like "path:..." or "content:...".',
+            "- Do not use a mapping keyed by filepath; use arrays of objects.",
+            "- Keep the original AgentRequest contract intact.",
+            "- Return valid JSON only, with no markdown or explanation.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 class PromptBuilder:
@@ -387,6 +478,7 @@ class ToolLoop:
         any_tool_called = False
         ran_tests_and_passed = False
         retry_count = 0
+        invalid_response_diagnostics: list[AgentDiagnostic] = []
 
         for _ in range(self.max_tool_iterations):
             messages[0] = {
@@ -426,12 +518,14 @@ class ToolLoop:
                         ran_tests_and_passed=ran_tests_and_passed,
                     )
             except ValueError as e:
+                invalid_response_diagnostics.append(_invalid_response_diagnostic(e, raw))
                 if retry_count >= self.max_retries:
                     return AgentResponse(
                         request_id=self.request.id,
                         status=ResponseStatus.FAILED,
                         error=f"agent failed after {self.max_retries} retries: {e}",
                         failure_kind=FailureKind.INVALID_JSON,
+                        diagnostics=invalid_response_diagnostics,
                     )
                 retry_count += 1
                 print(f"  agent retry {retry_count}/{self.max_retries}: {e}")
@@ -439,10 +533,7 @@ class ToolLoop:
                     self.correction_prompt_fn(e, raw)
                     if self.correction_prompt_fn
                     else (
-                        f"Invalid response: {e}. "
-                        'new_files must be a list of objects: [{"path": "...", "content": "..."}]\n'
-                        'edits must be a list of objects: [{"path": "...", "old": "...", "new": "..."}]\n'
-                        "Do not use dicts or nested objects. Respond with valid JSON."
+                        _delta_state_json_repair_prompt(e, raw)
                         if self.final_response_type is DeltaState
                         else f"Invalid response: {e}. Respond with valid JSON."
                     )

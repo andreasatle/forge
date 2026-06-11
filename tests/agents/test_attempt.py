@@ -200,6 +200,10 @@ async def test_revise_injects_feedback_and_retries() -> None:
     assert "Rationale: agreed" in prompts[1]
     assert "1. Required change: add tests" in prompts[1]
     assert "The next output must address every required change listed below." in prompts[1]
+    assert "FINAL OUTPUT FORMAT REMINDER" in prompts[1]
+    assert "Return valid JSON only matching DeltaState." in prompts[1]
+    assert "new_files must be an array of JSON objects" in prompts[1]
+    assert 'Do not use string entries like "path:...".' in prompts[1]
 
 
 async def test_revise_prompt_preserves_structured_criterion_ids() -> None:

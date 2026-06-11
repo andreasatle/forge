@@ -49,6 +49,13 @@ from forge.tools.schemas import (
 _NONEMPTY_DELTA = (
     '{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
 )
+_MALFORMED_DELTA_WITH_STRING_FILE_ENTRIES = (
+    '{"new_files": ['
+    '{"path": "src/main.py", "content": "x = 1"}, '
+    '"path:tests/test_scraper.py", '
+    '"content:import pytest\\n"'
+    '], "edits": [], "dependencies": [], "base_version": 0}'
+)
 
 
 class _DoThingRequest(BaseModel):
@@ -1064,7 +1071,9 @@ async def test_tool_loop_correction_message_includes_format_reminder_on_delta_st
     """Correction message after a DeltaState parse failure includes the field format reminder."""
     request = _work_request()
     provider = _mock_provider()
-    provider.chat = AsyncMock(side_effect=["not valid json", _NONEMPTY_DELTA])
+    provider.chat = AsyncMock(
+        side_effect=[_MALFORMED_DELTA_WITH_STRING_FILE_ENTRIES, _NONEMPTY_DELTA]
+    )
 
     await ToolLoop(
         request=request,
@@ -1077,9 +1086,68 @@ async def test_tool_loop_correction_message_includes_format_reminder_on_delta_st
 
     second_call_messages = provider.chat.call_args_list[1][0][0]
     correction = second_call_messages[-1]["content"]
-    assert "new_files must be a list of objects" in correction
-    assert "edits must be a list of objects" in correction
-    assert "Do not use dicts or nested objects" in correction
+    assert "JSON REPAIR REQUIRED" in correction
+    assert "new_files.1" in correction
+    assert '"path:tests/test_scraper.py"' in correction
+    assert "new_files must be an array of JSON objects" in correction
+    assert 'Each new_files item must be {"path": "...", "content": "..."}' in correction
+    assert "edits must be an array of JSON objects" in correction
+    assert 'Each edits item must be {"path": "...", "old": "...", "new": "..."}' in correction
+    assert 'Do not use string entries like "path:..."' in correction
+    assert "Do not use a mapping keyed by filepath" in correction
+    assert "Do not use dicts" not in correction
+
+
+async def test_tool_loop_preserves_raw_invalid_response_diagnostics_on_retry_exhaustion():
+    """Parse-exhausted AgentResponse carries bounded invalid response diagnostics."""
+    request = _work_request()
+    provider = _mock_provider(_MALFORMED_DELTA_WITH_STRING_FILE_ENTRIES)
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=DeltaState,
+        max_retries=0,
+    ).run()
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.INVALID_JSON
+    assert response.diagnostics
+    diagnostic = response.diagnostics[0]
+    assert diagnostic.kind == "invalid_structured_output"
+    assert diagnostic.validation_path == "new_files.1"
+    assert diagnostic.bad_value_excerpt == '"path:tests/test_scraper.py"'
+    assert diagnostic.raw_response_excerpt is not None
+    assert "path:tests/test_scraper.py" in diagnostic.raw_response_excerpt
+    assert len(diagnostic.raw_response_excerpt) <= 4000
+
+
+async def test_tool_loop_retry_preserves_original_prompt_plus_json_repair_block():
+    """Invalid structured output retry keeps the original prompt and appends repair guidance."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[_MALFORMED_DELTA_WITH_STRING_FILE_ENTRIES, _NONEMPTY_DELTA]
+    )
+    original_prompt = "AgentRequest contract: satisfy AC1"
+
+    await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt=original_prompt,
+        tools=None,
+        final_response_type=DeltaState,
+        max_retries=3,
+    ).run()
+
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    assert second_call_messages[1]["role"] == "user"
+    assert second_call_messages[1]["content"] == original_prompt
+    assert second_call_messages[-1]["role"] == "user"
+    assert "JSON REPAIR REQUIRED" in second_call_messages[-1]["content"]
+    assert "Keep the original AgentRequest contract intact." in second_call_messages[-1]["content"]
 
 
 async def test_run_agent_allows_empty_delta_without_tool_calls_when_adapter_allows_it():

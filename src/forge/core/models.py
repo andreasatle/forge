@@ -422,6 +422,20 @@ def _empty_agent_requests() -> list[AgentRequest]:
     return []
 
 
+class AgentDiagnostic(BaseModel, frozen=True):
+    """Bounded diagnostic context captured from a failed agent attempt."""
+
+    kind: str
+    message: str
+    validation_path: str | None = None
+    bad_value_excerpt: str | None = None
+    raw_response_excerpt: str | None = None
+
+
+def _empty_agent_diagnostics() -> list[AgentDiagnostic]:
+    return []
+
+
 class AgentResponse(BaseModel):
     """Immutable result returned by an agent after processing a request."""
 
@@ -435,6 +449,7 @@ class AgentResponse(BaseModel):
     error: str | None = None
     failure_kind: FailureKind | None = None
     ran_tests_and_passed: bool = False
+    diagnostics: list[AgentDiagnostic] = Field(default_factory=_empty_agent_diagnostics)
 
     @model_validator(mode="before")
     @classmethod

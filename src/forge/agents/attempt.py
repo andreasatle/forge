@@ -57,6 +57,10 @@ class OutputValidator(Protocol[T]):
         """Return language for critic/referee prompts for this output type."""
         ...
 
+    def final_output_reminder(self) -> str:
+        """Return a compact output-format reminder for retry prompts."""
+        ...
+
 
 class DeltaStateValidator:
     """OutputValidator for DeltaState — validates file/edit output from work agents."""
@@ -94,6 +98,20 @@ class DeltaStateValidator:
                 "If no files, edits, or dependencies were produced, reject unless the "
                 "success condition is already demonstrably met."
             ),
+        )
+
+    def final_output_reminder(self) -> str:
+        """Return a compact DeltaState output-format reminder."""
+        return "\n".join(
+            [
+                "FINAL OUTPUT FORMAT REMINDER",
+                "Return valid JSON only matching DeltaState.",
+                "- new_files must be an array of JSON objects.",
+                '  Each new_files item must be {"path": "...", "content": "..."}',
+                "- edits must be an array of JSON objects.",
+                '  Each edits item must be {"path": "...", "old": "...", "new": "..."}',
+                '- Do not use string entries like "path:...".',
+            ]
         )
 
 
@@ -148,6 +166,17 @@ class PlanResponseValidator:
             output_noun="plan",
             review_focus="whether the task decomposition satisfies the planning contract",
             empty_output_guidance="If the plan contains no tasks, reject it.",
+        )
+
+    def final_output_reminder(self) -> str:
+        """Return a compact PlanResponse output-format reminder."""
+        return "\n".join(
+            [
+                "FINAL OUTPUT FORMAT REMINDER",
+                "Return valid JSON only matching PlanResponse.",
+                '- Top-level kind must be "plan".',
+                "- tasks must be an array of task objects satisfying the AgentRequest contract.",
+            ]
         )
 
 
@@ -218,6 +247,7 @@ def _build_revision_request(
 def _render_revision_requests(
     revision_requests: list[RevisionRequest],
     output_noun: str,
+    final_output_reminder: str,
 ) -> str:
     """Render accumulated RevisionRequests as a prominent producer retry block."""
     lines = [
@@ -248,6 +278,8 @@ def _render_revision_requests(
             "Do not repeat the previous output unless it has been changed to address every required change.",
         ]
     )
+    if final_output_reminder:
+        lines.extend(["", final_output_reminder])
     return "\n".join(lines)
 
 
@@ -284,7 +316,11 @@ class AttemptEngine[T]:
                 if not revision_requests
                 else (
                     f"{prompt}\n\n"
-                    f"{_render_revision_requests(revision_requests, self._validator.work_noun())}"
+                    f"{_render_revision_requests(
+                        revision_requests,
+                        self._validator.work_noun(),
+                        self._validator.final_output_reminder(),
+                    )}"
                 )
             )
             response = await self._run_fn(current_prompt)
