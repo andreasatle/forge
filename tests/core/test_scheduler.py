@@ -414,6 +414,38 @@ async def test_integration_failure_marks_node_failed() -> None:
         )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
+    response = final.dag[work.id].response
+    assert response is not None
+    assert response.status == ResponseStatus.FAILED
+
+
+async def test_integration_failure_preserves_integration_response() -> None:
+    """Integration failures replace the completed producer response on the failed node."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    integration_response = AgentResponse(
+        request_id=work.id,
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.TEST_FAILED,
+        error="integration tests failed: assertion failed",
+    )
+    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
+        mock_integrate.return_value = integration_response
+        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+            state, _plan_request()
+        )
+
+    response = final.dag[work.id].response
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    assert response is not None
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.TEST_FAILED
+    assert response.error == "integration tests failed: assertion failed"
 
 
 async def test_integration_failure_cancels_transitive_dependents() -> None:
@@ -531,6 +563,10 @@ async def test_stale_delta_fails_after_3_retries() -> None:
         )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
+    response = final.dag[work.id].response
+    assert response is not None
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.STALE_DELTA
     assert mock_integrate.call_count == 4  # 1 initial + 3 retries
 
 

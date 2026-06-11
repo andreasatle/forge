@@ -59,6 +59,8 @@ class FailureKind(Enum):
     MAX_ITERATIONS = "max_iterations"
     TOOL_ERROR = "tool_error"
     STALE_DELTA = "stale_delta"
+    INTEGRATION_FAILED = "integration_failed"
+    TEST_FAILED = "test_failed"
     VALIDATION_REJECTED = "validation_rejected"
     UNKNOWN = "unknown"
 

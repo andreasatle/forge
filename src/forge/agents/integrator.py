@@ -38,6 +38,8 @@ async def integrate(
         return AgentResponse(
             request_id=request_id,
             status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.INTEGRATION_FAILED,
+            error=f"integration apply failed: {e}",
             delta=delta.model_copy(update={"errors": errors}),
         )
 
@@ -49,6 +51,8 @@ async def integrate(
         return AgentResponse(
             request_id=request_id,
             status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.TEST_FAILED,
+            error=f"integration tests failed: {description}",
             delta=delta.model_copy(update={"errors": errors}),
         )
 

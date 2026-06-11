@@ -6,6 +6,7 @@ from uuid import uuid4
 from forge.agents.integrator import integrate
 from forge.core.models import (
     DeltaState,
+    FailureKind,
     FileWrite,
     ResponseStatus,
     RunResult,
@@ -118,6 +119,8 @@ async def test_returns_failed_when_apply_raises():
     ss.apply_delta.side_effect = RuntimeError("boom")
     response = await integrate(request_id=uuid4(), state_service=ss, delta=DeltaState())
     assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
+    assert response.error == "integration apply failed: boom"
 
 
 # --- test failure ---
@@ -138,6 +141,8 @@ async def test_returns_failed_when_tests_fail():
     ss = _mock_ss(passed=False, failures=["FAILED tests/test_foo.py::test_x"], summary="1 failed")
     response = await integrate(request_id=uuid4(), state_service=ss, delta=DeltaState())
     assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.TEST_FAILED
+    assert response.error == "integration tests failed: 1 failed\nFAILED tests/test_foo.py::test_x"
 
 
 # --- clean integration ---

@@ -168,8 +168,16 @@ class Scheduler:
                                                     state = state.update_node(pending_node)
                                                     stale_retry = True
                                                 else:
+                                                    updated = current.with_response(
+                                                        integration_response
+                                                    )
+                                                    state = state.update_node(updated)
                                                     integration_failed = True
                                             else:
+                                                updated = current.with_response(
+                                                    integration_response
+                                                )
+                                                state = state.update_node(updated)
                                                 integration_failed = True
 
                         if integration_failed:

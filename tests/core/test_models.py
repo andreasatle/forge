@@ -417,6 +417,8 @@ def test_failure_kind_has_expected_values():
         "max_iterations",
         "tool_error",
         "stale_delta",
+        "integration_failed",
+        "test_failed",
         "validation_rejected",
         "unknown",
     }
