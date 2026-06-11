@@ -155,6 +155,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             artifact_descriptions=artifact_descriptions,
             artifact_language_guidance=artifact_language_guidance,
             telemetry_sink=telemetry_sink,
+            max_attempts=config.models.planner.max_attempts,
         ),
     )
     runner.register(
@@ -170,6 +171,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             critic_provider=worker_critic_provider,
             referee_provider=worker_referee_provider,
             telemetry_sink=telemetry_sink,
+            max_attempts=config.models.worker.max_attempts,
         ),
     )
 

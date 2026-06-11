@@ -25,6 +25,7 @@ class PwcModelConfig:
     producer: str = "ollama/gemma4:e4b"
     critic: str | None = "ollama/gemma4:e4b"
     referee: str | None = "ollama/gemma4:e4b"
+    max_attempts: int = 3
 
 
 @dataclass
@@ -199,6 +200,7 @@ def _load_pwc_model_config(
         referee=_optional_model(model_data.get("referee"), f"{field}.referee")
         if "referee" in model_data
         else fallback_referee or producer,
+        max_attempts=_optional_int(model_data.get("max_attempts"), 3, f"{field}.max_attempts"),
     )
 
 

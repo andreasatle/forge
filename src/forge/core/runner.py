@@ -55,6 +55,7 @@ def make_work_handler(
     critic_provider: LLMProvider | None = None,
     referee_provider: LLMProvider | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    max_attempts: int = 3,
 ) -> Handler:
     """Return a handler that delegates work requests to work_agent."""
 
@@ -81,6 +82,7 @@ def make_work_handler(
             critic_provider=critic_provider,
             referee_provider=referee_provider,
             telemetry_sink=telemetry_sink,
+            max_attempts=max_attempts,
         )
 
     return work_handler
@@ -98,6 +100,7 @@ def make_plan_handler(
     artifact_descriptions: dict[str, str] | None = None,
     artifact_language_guidance: dict[str, str] | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    max_attempts: int = 3,
 ) -> Handler:
     """Return a handler that delegates user-source plan requests to plan_agent."""
 
@@ -119,6 +122,7 @@ def make_plan_handler(
             artifact_descriptions=artifact_descriptions,
             artifact_language_guidance=artifact_language_guidance,
             telemetry_sink=telemetry_sink,
+            max_attempts=max_attempts,
         )
 
     return plan_handler

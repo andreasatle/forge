@@ -382,6 +382,33 @@ def test_integrator_producer_null_remains_accepted(tmp_path: Path) -> None:
     assert config.models.integrator.producer is None
 
 
+def test_pwc_max_attempts_defaults_to_three(tmp_path: Path) -> None:
+    """PwcModelConfig max_attempts defaults to 3 when absent from YAML."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.models.planner.max_attempts == 3
+    assert config.models.worker.max_attempts == 3
+
+
+def test_pwc_max_attempts_parsed_from_yaml(tmp_path: Path) -> None:
+    """PwcModelConfig max_attempts is read correctly when declared in YAML."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  planner:\n"
+        + "    producer: ollama/planner\n"
+        + "    max_attempts: 7\n"
+        + "  worker:\n"
+        + "    producer: ollama/worker\n"
+        + "    max_attempts: 5\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.planner.max_attempts == 7
+    assert config.models.worker.max_attempts == 5
+
+
 def test_max_tool_iterations_defaults_to_25(tmp_path: Path) -> None:
     """load() defaults max_tool_iterations to 25 when not present in YAML."""
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)

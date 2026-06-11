@@ -90,6 +90,7 @@ async def test_start_wires_nested_planner_and_worker_models(
         artifact_descriptions: dict[str, str] | None = None,
         artifact_language_guidance: dict[str, str] | None = None,
         telemetry_sink: TelemetrySink | None = None,
+        max_attempts: int = 3,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None

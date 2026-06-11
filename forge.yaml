@@ -14,6 +14,7 @@ models:
     producer: openai/gpt-4o
     critic: openai/gpt-4o
     referee: openai/gpt-4o
+    max_attempts: 5
   integrator:
     producer: ollama/gemma4:e4b
 artifacts:

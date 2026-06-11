@@ -181,6 +181,7 @@ async def plan_agent(
     artifact_descriptions: dict[str, str] | None = None,
     artifact_language_guidance: dict[str, str] | None = None,
     telemetry_sink: TelemetrySink | None = None,
+    max_attempts: int = 3,
 ) -> AgentResponse:
     """Send the northstar goal to the planner LLM and return follow-up work requests."""
     return await PlannerTaskExecutor(
@@ -191,6 +192,7 @@ async def plan_agent(
         artifact_descriptions=artifact_descriptions,
         artifact_language_guidance=artifact_language_guidance,
         max_retries=max_retries,
+        max_attempts=max_attempts,
         critic_provider=critic_provider,
         referee_provider=referee_provider,
         registry=registry,
