@@ -201,6 +201,7 @@ class AgentResponse(BaseModel):
     follow_up: list[AgentRequest] = Field(default_factory=_empty_agent_requests)
     error: str | None = None
     failure_kind: FailureKind | None = None
+    ran_tests_and_passed: bool = False
 
 
 class FileView(BaseModel, frozen=True):

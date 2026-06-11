@@ -372,6 +372,7 @@ class ToolLoop:
         )
         tracked_delta = DeltaState()
         any_tool_called = False
+        ran_tests_and_passed = False
         retry_count = 0
 
         for _ in range(self.max_tool_iterations):
@@ -409,6 +410,7 @@ class ToolLoop:
                         error="empty delta: no new_files, edits, or dependencies produced",
                         failure_kind=FailureKind.VALIDATION_REJECTED,
                         delta=DeltaState(),
+                        ran_tests_and_passed=ran_tests_and_passed,
                     )
             except ValueError as e:
                 if retry_count >= self.max_retries:
@@ -441,6 +443,13 @@ class ToolLoop:
                     parsed, tracked_delta
                 )
                 any_tool_called = True
+                if (
+                    tool_response.name == "run_tests"
+                    and tool_response.success
+                    and isinstance(tool_response.result, dict)
+                    and cast(dict[str, object], tool_response.result).get("passed") is True
+                ):
+                    ran_tests_and_passed = True
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 continue
@@ -454,6 +463,7 @@ class ToolLoop:
                 follow_up=self.follow_up_builder(parsed)
                 if self.follow_up_builder is not None
                 else [],
+                ran_tests_and_passed=ran_tests_and_passed,
             )
 
         raise RuntimeError(f"agent loop exceeded {self.max_tool_iterations} iterations")

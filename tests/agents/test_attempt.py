@@ -452,6 +452,72 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns
     mock_critic.assert_not_called()
 
 
+async def test_empty_delta_ran_tests_and_passed_returns_already_done() -> None:
+    """Engine returns ALREADY_DONE for empty delta when ran_tests_and_passed=True, ignoring requires_nonempty."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                delta=DeltaState(),
+                error="empty delta",
+                ran_tests_and_passed=True,
+            )
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=None,
+        referee_provider=None,
+        max_attempts=1,
+        requires_nonempty=True,
+    )
+
+    with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.ALREADY_DONE
+    assert result.delta == DeltaState()
+    assert len(prompts) == 1
+    mock_critic.assert_not_called()
+
+
+async def test_empty_delta_ran_tests_not_passed_uses_existing_behavior() -> None:
+    """Engine falls through to normal retry/FAILED behavior when ran_tests_and_passed=False."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                delta=DeltaState(),
+                error="empty delta",
+                ran_tests_and_passed=False,
+            )
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=None,
+        referee_provider=None,
+        max_attempts=1,
+        requires_nonempty=True,
+    )
+
+    with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert len(prompts) == 1
+    mock_critic.assert_not_called()
+
+
 async def test_empty_delta_critic_already_done_accepts() -> None:
     """Engine accepts empty delta when critic confirms the success condition is already met."""
     request = _work_request()

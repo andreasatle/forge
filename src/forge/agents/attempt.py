@@ -195,6 +195,17 @@ class AttemptEngine[T]:
                 and output is not None
                 and self._validator.is_empty(output)
             ):
+                if response.ran_tests_and_passed:
+                    _logger.info(
+                        "attempt %d/%d: empty output but ran_tests_and_passed — ALREADY_DONE",
+                        attempt + 1,
+                        self._max_attempts,
+                    )
+                    return AgentResponse(
+                        request_id=self._request.id,
+                        status=ResponseStatus.ALREADY_DONE,
+                        delta=response.delta,
+                    )
                 if self._critic_provider is None:
                     is_last = attempt == self._max_attempts - 1
                     if not is_last:
