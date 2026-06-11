@@ -22,8 +22,8 @@ class PwcModelConfig:
     """Model configuration for a producer/critic/referee loop."""
 
     producer: str = "ollama/gemma4:e4b"
-    critic: str | None = None
-    referee: str | None = None
+    critic: str | None = "ollama/gemma4:e4b"
+    referee: str | None = "ollama/gemma4:e4b"
 
 
 @dataclass
@@ -111,12 +111,26 @@ def _required_string(value: object, field: str) -> str:
     return value
 
 
+def _required_model(value: object, field: str) -> str:
+    model = _required_string(value, field)
+    if not model:
+        raise ValueError(f"{field} must be a non-empty string")
+    return model
+
+
 def _optional_string(value: object, field: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
         raise ValueError(f"{field} must be a string or null")
     return value
+
+
+def _optional_model(value: object, field: str) -> str | None:
+    model = _optional_string(value, field)
+    if model == "":
+        raise ValueError(f"{field} must be a non-empty string or null")
+    return model
 
 
 def _optional_int(value: object, default: int, field: str) -> int:
@@ -152,33 +166,35 @@ def _load_artifacts(artifacts_data: Sequence[object]) -> list[ArtifactConfig]:
 def _load_pwc_model_config(
     value: object,
     *,
+    field: str,
     default_producer: str = "ollama/gemma4:e4b",
     fallback_critic: str | None = None,
     fallback_referee: str | None = None,
 ) -> PwcModelConfig:
     if isinstance(value, str):
+        producer = _required_model(value, field)
         return PwcModelConfig(
-            producer=value,
-            critic=fallback_critic,
-            referee=fallback_referee,
+            producer=producer,
+            critic=fallback_critic or producer,
+            referee=fallback_referee or producer,
         )
     if value is None:
         return PwcModelConfig(
             producer=default_producer,
-            critic=fallback_critic,
-            referee=fallback_referee,
+            critic=fallback_critic or default_producer,
+            referee=fallback_referee or default_producer,
         )
 
-    model_data = _as_mapping(value, "models.<role>")
+    model_data = _as_mapping(value, field)
+    producer = _required_model(model_data.get("producer"), f"{field}.producer")
     return PwcModelConfig(
-        producer=_optional_string(model_data.get("producer"), "models.<role>.producer")
-        or default_producer,
-        critic=_optional_string(model_data.get("critic"), "models.<role>.critic")
+        producer=producer,
+        critic=_optional_model(model_data.get("critic"), f"{field}.critic")
         if "critic" in model_data
-        else fallback_critic,
-        referee=_optional_string(model_data.get("referee"), "models.<role>.referee")
+        else fallback_critic or producer,
+        referee=_optional_model(model_data.get("referee"), f"{field}.referee")
         if "referee" in model_data
-        else fallback_referee,
+        else fallback_referee or producer,
     )
 
 
@@ -190,23 +206,25 @@ def _load_integrator_model_config(value: object) -> IntegratorModelConfig:
 
     model_data = _as_mapping(value, "models.integrator")
     return IntegratorModelConfig(
-        producer=_optional_string(model_data.get("producer"), "models.integrator.producer")
+        producer=_optional_model(model_data.get("producer"), "models.integrator.producer")
     )
 
 
 def _load_models_config(models_data: object) -> ModelsConfig:
     models = _as_mapping(models_data, "models")
 
-    flat_critic = _optional_string(models.get("critic"), "models.critic")
-    flat_referee = _optional_string(models.get("referee"), "models.referee")
+    flat_critic = _optional_model(models.get("critic"), "models.critic")
+    flat_referee = _optional_model(models.get("referee"), "models.referee")
     return ModelsConfig(
         planner=_load_pwc_model_config(
             models.get("planner"),
+            field="models.planner",
             fallback_critic=flat_critic,
             fallback_referee=flat_referee,
         ),
         worker=_load_pwc_model_config(
             models.get("worker"),
+            field="models.worker",
             fallback_critic=flat_critic,
             fallback_referee=flat_referee,
         ),

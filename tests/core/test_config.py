@@ -156,16 +156,46 @@ def test_max_tokens_parsed_from_yaml(tmp_path: Path) -> None:
 
 
 def test_models_defaults_to_ollama_when_absent(tmp_path: Path) -> None:
-    """load() defaults planner and worker producers when models section is absent."""
+    """load() defaults planner and worker to full PWC when models section is absent."""
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
     assert config.models.planner.producer == "ollama/gemma4:e4b"
-    assert config.models.planner.critic is None
-    assert config.models.planner.referee is None
+    assert config.models.planner.critic == "ollama/gemma4:e4b"
+    assert config.models.planner.referee == "ollama/gemma4:e4b"
     assert config.models.worker.producer == "ollama/gemma4:e4b"
-    assert config.models.worker.critic is None
-    assert config.models.worker.referee is None
+    assert config.models.worker.critic == "ollama/gemma4:e4b"
+    assert config.models.worker.referee == "ollama/gemma4:e4b"
     assert config.models.integrator.producer is None
+
+
+def test_compact_planner_string_expands_to_full_pwc(tmp_path: Path) -> None:
+    """A compact planner string configures planner producer, critic, and referee."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  planner: anthropic/claude-haiku\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.planner.producer == "anthropic/claude-haiku"
+    assert config.models.planner.critic == "anthropic/claude-haiku"
+    assert config.models.planner.referee == "anthropic/claude-haiku"
+
+
+def test_compact_worker_string_expands_to_full_pwc(tmp_path: Path) -> None:
+    """A compact worker string configures worker producer, critic, and referee."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker: anthropic/claude-haiku\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.worker.producer == "anthropic/claude-haiku"
+    assert config.models.worker.critic == "anthropic/claude-haiku"
+    assert config.models.worker.referee == "anthropic/claude-haiku"
 
 
 def test_old_flat_models_section_parsed_correctly(tmp_path: Path) -> None:
@@ -223,17 +253,44 @@ def test_models_config_defaults() -> None:
     """ModelsConfig defaults planner and worker producers when constructed without args."""
     m = ModelsConfig()
     assert m.planner.producer == "ollama/gemma4:e4b"
+    assert m.planner.critic == "ollama/gemma4:e4b"
+    assert m.planner.referee == "ollama/gemma4:e4b"
     assert m.worker.producer == "ollama/gemma4:e4b"
+    assert m.worker.critic == "ollama/gemma4:e4b"
+    assert m.worker.referee == "ollama/gemma4:e4b"
     assert m.integrator.producer is None
 
 
-def test_models_critic_and_referee_default_to_none() -> None:
-    """ModelsConfig defaults nested critic and referee to None when not provided."""
+def test_nested_explicit_null_critic_and_referee_disables_review(tmp_path: Path) -> None:
+    """Nested null critic/referee disables review for that PWC role."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  planner:\n"
+        + "    producer: ollama/planner\n"
+        + "    critic: null\n"
+        + "    referee: null\n"
+        + "  worker:\n"
+        + "    producer: ollama/worker\n"
+        + "    critic: null\n"
+        + "    referee: null\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.planner.critic is None
+    assert config.models.planner.referee is None
+    assert config.models.worker.critic is None
+    assert config.models.worker.referee is None
+
+
+def test_models_critic_and_referee_default_to_full_pwc() -> None:
+    """ModelsConfig defaults nested critic and referee to the default producer."""
     m = ModelsConfig()
-    assert m.planner.critic is None
-    assert m.planner.referee is None
-    assert m.worker.critic is None
-    assert m.worker.referee is None
+    assert m.planner.critic == m.planner.producer
+    assert m.planner.referee == m.planner.producer
+    assert m.worker.critic == m.worker.producer
+    assert m.worker.referee == m.worker.producer
 
 
 def test_old_flat_critic_and_referee_map_to_planner_and_worker(tmp_path: Path) -> None:
@@ -251,14 +308,49 @@ def test_old_flat_critic_and_referee_map_to_planner_and_worker(tmp_path: Path) -
     assert config.models.worker.referee == "ollama/gemma4:e4b"
 
 
-def test_models_critic_and_referee_absent_defaults_to_none(tmp_path: Path) -> None:
-    """load() sets nested critic and referee to None when omitted from the models section."""
+def test_old_flat_global_critic_and_referee_override_compact_expansion(tmp_path: Path) -> None:
+    """Old flat global critic/referee override compact planner and worker strings."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  planner: ollama/planner\n"
+        + "  worker: ollama/worker\n"
+        + "  critic: ollama/critic\n"
+        + "  referee: ollama/referee\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.planner.producer == "ollama/planner"
+    assert config.models.planner.critic == "ollama/critic"
+    assert config.models.planner.referee == "ollama/referee"
+    assert config.models.worker.producer == "ollama/worker"
+    assert config.models.worker.critic == "ollama/critic"
+    assert config.models.worker.referee == "ollama/referee"
+
+
+def test_models_critic_and_referee_absent_defaults_to_full_pwc(tmp_path: Path) -> None:
+    """load() defaults critic/referee to producer when omitted from the models section."""
     p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
     config = ForgeConfig.load(p)
-    assert config.models.planner.critic is None
-    assert config.models.planner.referee is None
-    assert config.models.worker.critic is None
-    assert config.models.worker.referee is None
+    assert config.models.planner.critic == config.models.planner.producer
+    assert config.models.planner.referee == config.models.planner.producer
+    assert config.models.worker.critic == config.models.worker.producer
+    assert config.models.worker.referee == config.models.worker.producer
+
+
+def test_integrator_producer_null_remains_accepted(tmp_path: Path) -> None:
+    """Integrator producer can be explicitly null."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  integrator:\n"
+        + "    producer: null\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert config.models.integrator.producer is None
 
 
 def test_max_tool_iterations_defaults_to_25(tmp_path: Path) -> None:
