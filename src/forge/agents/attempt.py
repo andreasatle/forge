@@ -196,15 +196,39 @@ class AttemptEngine[T]:
                 and self._validator.is_empty(output)
             ):
                 if self._critic_provider is None:
+                    is_last = attempt == self._max_attempts - 1
+                    if not is_last:
+                        _logger.info(
+                            "attempt %d/%d: empty output, no critic — injecting correction, retrying",
+                            attempt + 1,
+                            self._max_attempts,
+                        )
+                        feedback = (
+                            f"Your previous attempt produced no {self._validator.work_noun()}. "
+                            f"You must produce concrete output to satisfy the success condition."
+                        )
+                        continue
+                    if not self._validator.requires_nonempty():
+                        _logger.info(
+                            "attempt %d/%d: empty output, no critic, last attempt — ALREADY_DONE",
+                            attempt + 1,
+                            self._max_attempts,
+                        )
+                        return AgentResponse(
+                            request_id=self._request.id,
+                            status=ResponseStatus.ALREADY_DONE,
+                            delta=response.delta,
+                        )
                     _logger.info(
-                        "attempt %d/%d: empty output, no critic — ALREADY_DONE",
+                        "attempt %d/%d: empty output, no critic, last attempt, requires nonempty — FAILED",
                         attempt + 1,
                         self._max_attempts,
                     )
                     return AgentResponse(
                         request_id=self._request.id,
-                        status=ResponseStatus.ALREADY_DONE,
-                        delta=response.delta,
+                        status=ResponseStatus.FAILED,
+                        error=f"worker produced no {self._validator.work_noun()} after {self._max_attempts} attempts",
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
                     )
                 try:
                     finding = await critic_agent(

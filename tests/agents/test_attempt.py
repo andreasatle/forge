@@ -55,13 +55,17 @@ def _state_view() -> StateView:
     return StateView(artifact_name="codebase", language=None, files=[], dependencies=[])
 
 
-def _adapter_spec(name: str = "coding", work_noun: str = "implementation") -> AdapterSpec:
+def _adapter_spec(
+    name: str = "coding",
+    work_noun: str = "implementation",
+    requires_nonempty: bool = True,
+) -> AdapterSpec:
     return AdapterSpec(
         name=name,
         description="test",
         tools=[],
         prompt_template="",
-        requires_nonempty_output=True,
+        requires_nonempty_output=requires_nonempty,
         work_noun=work_noun,
     )
 
@@ -96,6 +100,7 @@ def _engine(
     referee_provider: MagicMock | None = None,
     max_attempts: int = 3,
     work_noun: str = "implementation",
+    requires_nonempty: bool = True,
 ) -> AttemptEngine[DeltaState]:
     req = request or _work_request()
     sv = _state_view()
@@ -110,7 +115,9 @@ def _engine(
     return AttemptEngine[DeltaState](
         request=req,
         state_view=sv,
-        validator=DeltaStateValidator(_adapter_spec(work_noun=work_noun), sv),
+        validator=DeltaStateValidator(
+            _adapter_spec(work_noun=work_noun, requires_nonempty=requires_nonempty), sv
+        ),
         run_fn=run_fn,
         registry=_registry_with(),
         critic_provider=critic_provider,
@@ -347,10 +354,44 @@ async def test_run_agent_failure_raises_run_agent_failed() -> None:
         assert e.response is failed_response
 
 
-async def test_empty_delta_no_critic_returns_already_done() -> None:
-    """Engine returns ALREADY_DONE for an empty delta when no critic is configured."""
+async def test_empty_delta_no_critic_first_attempt_retries_not_already_done() -> None:
+    """Engine retries with correction feedback on a non-final empty delta when no critic is configured."""
     request = _work_request()
-    run_fn, _ = _make_run_fn(
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                delta=DeltaState(),
+                error="empty delta",
+            ),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=None,
+        referee_provider=None,
+        max_attempts=2,
+    )
+
+    result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert result.delta == delta
+    assert len(prompts) == 2
+    assert "produced no implementation" in prompts[1]
+
+
+async def test_empty_delta_no_critic_last_attempt_requires_nonempty_false_returns_already_done() -> (
+    None
+):
+    """Engine returns ALREADY_DONE on the last attempt with empty delta when requires_nonempty is False."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
                 request_id=request.id,
@@ -361,14 +402,53 @@ async def test_empty_delta_no_critic_returns_already_done() -> None:
             )
         ]
     )
-    engine = _engine(request=request, run_fn=run_fn, critic_provider=None, referee_provider=None)
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=None,
+        referee_provider=None,
+        max_attempts=1,
+        requires_nonempty=False,
+    )
 
     with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.ALREADY_DONE
     assert result.delta == DeltaState()
-    assert len(_) == 1
+    assert len(prompts) == 1
+    mock_critic.assert_not_called()
+
+
+async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns_failed() -> None:
+    """Engine returns FAILED on the last attempt with empty delta when requires_nonempty is True."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                delta=DeltaState(),
+                error="empty delta",
+            )
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=None,
+        referee_provider=None,
+        max_attempts=1,
+        requires_nonempty=True,
+    )
+
+    with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert len(prompts) == 1
     mock_critic.assert_not_called()
 
 
