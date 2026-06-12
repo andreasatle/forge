@@ -871,6 +871,10 @@ async def test_integration_revision_exhaustion_marks_failed() -> None:
     assert mock_integrate.call_count == 4  # 1 initial + 3 retries
 
 
+def _decompose(request: AgentRequest) -> AgentResponse:
+    return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
+
+
 async def test_dependents_not_cancelled_on_integration_revision_requeue() -> None:
     """Dependents are not cancelled when a node is requeued due to an integration revision."""
     work_a = _work_request()
@@ -899,3 +903,113 @@ async def test_dependents_not_cancelled_on_integration_revision_requeue() -> Non
 
     assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
     assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
+
+
+# --- DECOMPOSE disposition ---
+
+
+async def test_decompose_status_creates_new_plan_node() -> None:
+    """A work node returning DECOMPOSE causes a new PLAN node to be added to the DAG."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return _decompose(request)
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=PlanResponse(tasks=[]),
+        )
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    decompose_plan_nodes = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN
+        and isinstance(n.request.spec, PlanSpec)
+        and n.request.spec.northstar == "do work"
+        and n.request.source == RequestSource.USER
+    ]
+    assert len(decompose_plan_nodes) == 1
+
+
+async def test_decompose_work_node_is_cancelled_not_failed() -> None:
+    """A work node returning DECOMPOSE is marked CANCELLED, not FAILED."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return _decompose(request)
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=PlanResponse(tasks=[]),
+        )
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert final.dag[work.id].node_state == NodeState.CANCELLED
+    assert final.dag[work.id].node_state != NodeState.FAILED
+
+
+async def test_decompose_transfers_dependents_to_new_plan_node() -> None:
+    """Nodes depending on a DECOMPOSE work node are repointed to the new PLAN node."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            return _decompose(request)
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=PlanResponse(tasks=[]),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert final.dag[work_a.id].node_state == NodeState.CANCELLED
+    # work_b ran successfully — its dep was transferred to the new plan node
+    assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
+    # work_b no longer depends on the cancelled work_a
+    work_b_final = final.dag[work_b.id]
+    assert work_a.id not in work_b_final.request.dependencies
+    # new plan node exists and is INTEGRATED
+    decompose_plan_nodes = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN
+        and isinstance(n.request.spec, PlanSpec)
+        and n.request.spec.northstar == "do work"
+    ]
+    assert len(decompose_plan_nodes) == 1
+    plan_node = decompose_plan_nodes[0]
+    assert plan_node.node_state == NodeState.INTEGRATED
+    assert plan_node.request.id in work_b_final.request.dependencies
+
+
+async def test_decompose_does_not_fire_on_node_failed() -> None:
+    """on_node_failed is not called for a work node that returns DECOMPOSE."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    failed_nodes: list[DAGNode] = []
+    callbacks = SchedulerCallbacks(on_node_failed=failed_nodes.append)
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return _decompose(request)
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=PlanResponse(tasks=[]),
+        )
+
+    await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
+
+    assert not any(n.request.id == work.id for n in failed_nodes)

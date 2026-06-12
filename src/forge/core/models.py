@@ -514,11 +514,12 @@ class DAGNode(BaseModel):
 
     def with_response(self, response: AgentResponse) -> "DAGNode":
         """Return a copy of this node with the response set and state derived from its status."""
-        node_state = (
-            NodeState.INTEGRATED
-            if response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE)
-            else NodeState.FAILED
-        )
+        if response.status == ResponseStatus.DECOMPOSE:
+            node_state = NodeState.CANCELLED
+        elif response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE):
+            node_state = NodeState.INTEGRATED
+        else:
+            node_state = NodeState.FAILED
         return self.model_copy(update={"node_state": node_state, "response": response})
 
 

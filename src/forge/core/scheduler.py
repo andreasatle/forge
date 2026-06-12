@@ -17,6 +17,7 @@ from forge.core.models import (
     FailureKind,
     NodeState,
     PlanResponse,
+    PlanSpec,
     RequestId,
     RequestSource,
     ResponseStatus,
@@ -255,11 +256,43 @@ class Scheduler:
                             if follow_ups:
                                 state = state.add_nodes(follow_ups)
                             self._fire_node(self._callbacks.on_node_completed, updated)
+                    elif response.status == ResponseStatus.DECOMPOSE and isinstance(
+                        node.request.spec, WorkSpec
+                    ):
+                        spec = node.request.spec
+                        new_plan_request = AgentRequest(
+                            agent_type=AgentType.PLAN,
+                            source=RequestSource.USER,
+                            spec=PlanSpec(
+                                northstar=spec.objective,
+                                contract=spec.contract,
+                            ),
+                        )
+                        state = state.add_nodes([DAGNode(request=new_plan_request)])
+                        state = self._transfer_dependents(
+                            state, node.request.id, new_plan_request.id
+                        )
                     else:
                         self._emit_node_failed(updated)
                         self._fire_node(self._callbacks.on_node_failed, updated)
                         state = self._cancel_dependents(state, node.request.id)
 
+        return state
+
+    def _transfer_dependents(
+        self,
+        state: SchedulerState,
+        from_id: RequestId,
+        to_id: RequestId,
+    ) -> SchedulerState:
+        """Repoint all PENDING nodes depending on from_id to depend on to_id instead."""
+        for node in list(state.dag.values()):
+            if node.node_state == NodeState.PENDING and from_id in node.request.dependencies:
+                new_deps = (node.request.dependencies - {from_id}) | {to_id}
+                updated_request = node.request.model_copy(
+                    update={"dependencies": frozenset(new_deps)}
+                )
+                state = state.update_node(node.model_copy(update={"request": updated_request}))
         return state
 
     def _cancel_dependents(self, state: SchedulerState, failed_id: RequestId) -> SchedulerState:
