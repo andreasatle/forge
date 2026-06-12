@@ -1,4 +1,4 @@
-"""CLI entry point for the forge command — start and reset subcommands."""
+"""CLI entry point for the forge command."""
 
 import argparse
 import asyncio
@@ -24,6 +24,13 @@ from forge.core.runner import (
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.state_service import StateService
 from forge.core.telemetry import JsonlTelemetrySink, TelemetrySink
+from forge.core.trace_viewer import (
+    TraceViewerError,
+    render_latest_trace,
+    render_run_trace,
+    render_trace_list,
+    resolve_run_dir,
+)
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.factory import make_provider
@@ -33,19 +40,64 @@ _LANGUAGES_DIR = Path(__file__).parent.parent.parent / "languages"
 
 
 def main() -> None:
-    """Parse CLI arguments and dispatch to start or reset."""
+    """Parse CLI arguments and dispatch to commands."""
     parser = argparse.ArgumentParser(prog="forge")
-    parser.add_argument("command", choices=["start", "reset"])
-    parser.add_argument("config", type=Path)
+    parser.add_argument("command", choices=["start", "reset", "trace"])
+    parser.add_argument("target", nargs="?")
     parser.add_argument("--verbose", action="store_true", default=False)
+    parser.add_argument("--workspace", type=Path)
+    parser.add_argument("--node")
     args = parser.parse_args()
 
-    config = ForgeConfig.load(args.config)
+    if args.command == "trace":
+        _trace(args.target, workspace=args.workspace, node=args.node)
+        return
+
+    if args.target is None:
+        parser.error(f"{args.command} requires a config path")
+    if args.workspace is not None or args.node is not None:
+        parser.error("--workspace and --node are only valid for trace")
+
+    config = ForgeConfig.load(Path(args.target))
 
     if args.command == "reset":
         _reset(config)
     else:
         asyncio.run(_start(config, verbose=args.verbose))
+
+
+def _trace(target: str | None, *, workspace: Path | None, node: str | None) -> None:
+    if target is None:
+        raise SystemExit("trace requires one of: list, latest, <run_id>")
+
+    trace_workspace = workspace or _default_trace_workspace()
+    try:
+        if target == "list":
+            if node is not None:
+                raise TraceViewerError("--node is only valid with a run id")
+            output = render_trace_list(trace_workspace)
+        elif target == "latest":
+            if node is not None:
+                raise TraceViewerError("--node is only valid with a run id")
+            output = render_latest_trace(trace_workspace)
+        else:
+            output = render_run_trace(
+                resolve_run_dir(trace_workspace, target),
+                node_prefix=node,
+            )
+    except TraceViewerError as e:
+        raise SystemExit(str(e)) from e
+    print(output)
+
+
+def _default_trace_workspace() -> Path:
+    config_path = Path("forge.yaml")
+    if config_path.is_file():
+        try:
+            return ForgeConfig.load(config_path).workspace
+        except Exception:
+            pass
+    return Path("workspaces")
 
 
 def _reset(config: ForgeConfig) -> None:
