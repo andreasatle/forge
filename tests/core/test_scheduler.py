@@ -1013,3 +1013,101 @@ async def test_decompose_does_not_fire_on_node_failed() -> None:
     await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
 
     assert not any(n.request.id == work.id for n in failed_nodes)
+
+
+async def test_decompose_end_to_end_plan_produces_two_subtasks() -> None:
+    """Full path: DECOMPOSE → PLAN produces 2 subtasks, all complete, dependent completes."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            return _decompose(request)
+        if request.agent_type == AgentType.PLAN:
+            spec = request.spec
+            if isinstance(spec, PlanSpec) and spec.northstar == "do work":
+                return AgentResponse(
+                    request_id=request.id,
+                    status=ResponseStatus.COMPLETED,
+                    output=PlanResponse(
+                        tasks=[
+                            TaskSpec(
+                                objective="do thing A",
+                                success_condition="thing A done",
+                                adapter="coding",
+                                artifact="codebase",
+                            ),
+                            TaskSpec(
+                                objective="do thing B",
+                                success_condition="thing B done",
+                                adapter="coding",
+                                artifact="codebase",
+                            ),
+                        ]
+                    ),
+                )
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=PlanResponse(tasks=[]),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert final.dag[work_a.id].node_state == NodeState.CANCELLED
+
+    decompose_plan_nodes = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN
+        and isinstance(n.request.spec, PlanSpec)
+        and n.request.spec.northstar == "do work"
+    ]
+    assert len(decompose_plan_nodes) == 1
+    assert decompose_plan_nodes[0].node_state == NodeState.INTEGRATED
+
+    subtask_nodes = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.WORK and n.request.id not in {work_a.id, work_b.id}
+    ]
+    assert len(subtask_nodes) == 2
+    subtask_objectives = {
+        n.request.spec.objective for n in subtask_nodes if isinstance(n.request.spec, WorkSpec)
+    }
+    assert subtask_objectives == {"do thing A", "do thing B"}
+    assert all(n.node_state == NodeState.INTEGRATED for n in subtask_nodes)
+
+    assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
+
+
+async def test_decompose_emits_node_decomposed_telemetry() -> None:
+    """Scheduler emits a node.decomposed telemetry event when a work node is decomposed."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return _decompose(request)
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=PlanResponse(tasks=[]),
+        )
+
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        state, _plan_request()
+    )
+
+    decompose_events = [e for e in sink.events if e.event_type == "node.decomposed"]
+    assert len(decompose_events) == 1
+    event = decompose_events[0]
+    assert event.run_id == sink.run_id
+    assert event.node_id == work.id
+    assert event.role == "scheduler"
+    assert event.phase == "scheduler"
+    assert event.status == "decompose"
+    assert "plan_node_id" in event.data

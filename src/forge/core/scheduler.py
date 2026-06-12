@@ -62,6 +62,25 @@ class Scheduler:
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
 
+    def _emit_node_decomposed(self, node: DAGNode, plan_request: AgentRequest) -> None:
+        if self._run_id is None:
+            return
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=node.request.id,
+                request_id=node.request.id,
+                agent_type=node.request.agent_type.value,
+                role="scheduler",
+                phase="scheduler",
+                event_type="node.decomposed",
+                status="decompose",
+                summary="work node decomposed into plan node",
+                data={"plan_node_id": str(plan_request.id)},
+            ),
+        )
+
     def _emit_node_failed(self, node: DAGNode) -> None:
         if self._run_id is None:
             return
@@ -285,6 +304,7 @@ class Scheduler:
                         state = self._transfer_dependents(
                             state, node.request.id, new_plan_request.id
                         )
+                        self._emit_node_decomposed(updated, new_plan_request)
                     else:
                         self._emit_node_failed(updated)
                         self._fire_node(self._callbacks.on_node_failed, updated)

@@ -14,7 +14,6 @@ from forge.core.models import (
     PlanSpec,
     RequestSource,
     ResponseStatus,
-    WorkSpec,
     render_agent_contract,
 )
 
