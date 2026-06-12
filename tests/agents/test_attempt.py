@@ -1226,6 +1226,85 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
     assert mock_referee.call_args.kwargs["review_context"].output_noun == "plan"
 
 
+async def test_decompose_disposition_returns_decompose_status_immediately() -> None:
+    """Engine returns ResponseStatus.DECOMPOSE immediately when referee disposition is DECOMPOSE."""
+    request = _work_request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    run_fn, _ = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+    )
+    sink = _MemoryTelemetrySink()
+    engine = AttemptEngine[DeltaState](
+        request=request,
+        state_view=_state_view(),
+        validator=DeltaStateValidator(_adapter_spec(), _state_view()),
+        run_fn=run_fn,
+        registry=_registry_with(),
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=3,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE, rationale="too broad"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.DECOMPOSE,
+            rationale="task has unrelated concerns that cannot converge",
+            override=True,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.DECOMPOSE
+    assert result.delta is None
+    assert result.follow_up == []
+    decompose_events = [e for e in sink.events if e.event_type == "pwc.decompose.requested"]
+    assert len(decompose_events) == 1
+    assert decompose_events[0].status == "decompose"
+    assert "cannot converge" in (decompose_events[0].summary or "")
+
+
+async def test_decompose_disposition_does_not_retry() -> None:
+    """Engine makes exactly one producer call when referee returns DECOMPOSE — no retry."""
+    request = _work_request()
+    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    run_fn, prompts = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=3,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE, rationale="scope too wide"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.DECOMPOSE,
+            rationale="break into separate tasks",
+            override=True,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.DECOMPOSE
+    assert len(prompts) == 1
+    mock_critic.assert_called_once()
+    mock_referee.assert_called_once()
+
+
 async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
     """AttemptEngine retries plans with the same structured RevisionRequest mechanism."""
     request = _plan_request()

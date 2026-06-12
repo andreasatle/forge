@@ -48,6 +48,7 @@ class ResponseStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     ALREADY_DONE = "already_done"
+    DECOMPOSE = "decompose"
 
 
 class FailureKind(Enum):

@@ -723,6 +723,25 @@ class AttemptEngine[T]:
                     decision.rationale,
                     self._validator.work_noun(),
                 )
+            if decision.disposition == CriticDisposition.DECOMPOSE:
+                _logger.info(
+                    "attempt %d/%d: referee requested decomposition",
+                    attempt_number,
+                    self._max_attempts,
+                )
+                self._emit(
+                    attempt_number=attempt_number,
+                    role="referee",
+                    phase="referee",
+                    event_type="pwc.decompose.requested",
+                    status="decompose",
+                    summary=_preview(decision.rationale),
+                    data={"referee_decision": _model_data(decision)},
+                )
+                return AgentResponse(
+                    request_id=self._request.id,
+                    status=ResponseStatus.DECOMPOSE,
+                )
 
             revision_items = (
                 decision.revision_items
