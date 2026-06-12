@@ -464,9 +464,20 @@ def test_agent_response_legacy_delta_dict_populates_output():
 # --- CriticDisposition ---
 
 
-def test_critic_disposition_has_exactly_four_values():
-    """CriticDisposition has exactly ACCEPT, REVISE, REJECT, and ALREADY_DONE."""
-    assert {d.name for d in CriticDisposition} == {"ACCEPT", "REVISE", "REJECT", "ALREADY_DONE"}
+def test_critic_disposition_has_exactly_five_values():
+    """CriticDisposition has exactly ACCEPT, REVISE, REJECT, ALREADY_DONE, and DECOMPOSE."""
+    assert {d.name for d in CriticDisposition} == {
+        "ACCEPT",
+        "REVISE",
+        "REJECT",
+        "ALREADY_DONE",
+        "DECOMPOSE",
+    }
+
+
+def test_critic_disposition_decompose_value():
+    """CriticDisposition.DECOMPOSE has the string value 'decompose'."""
+    assert CriticDisposition.DECOMPOSE.value == "decompose"
 
 
 # --- CriticFinding ---

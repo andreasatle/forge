@@ -28,8 +28,16 @@ prompt_template: |
 
   Empty output rule: {empty_output_guidance}
 
+  Choose "decompose" when:
+  - The task has multiple unrelated concerns that have not converged after multiple revision rounds
+  - The critic keeps requesting changes to unrelated areas simultaneously (e.g. tests AND dependencies AND file structure)
+  - The success condition requires work that belongs in separate, focused tasks
+  - The task scope is too broad for a single focused implementation
+  "decompose" means: this task must be broken into smaller focused tasks by the planner — do not attempt further revisions.
+  Prefer "decompose" over endless "revise" cycles when convergence is clearly not happening.
+
   Rules:
-  - Use lowercase disposition values: "accept", "revise", or "reject"
+  - Use lowercase disposition values: "accept", "revise", "reject", or "decompose"
   - Set override to true if your disposition differs from the critic's ({critic_disposition})
   - Give an independent rationale even if you agree with the critic
   - For "revise", populate revision_items with concrete required changes

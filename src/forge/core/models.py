@@ -72,6 +72,7 @@ class CriticDisposition(Enum):
     REVISE = "revise"
     REJECT = "reject"
     ALREADY_DONE = "already_done"
+    DECOMPOSE = "decompose"
 
 
 class RevisionItem(BaseModel, frozen=True):
