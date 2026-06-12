@@ -9,8 +9,10 @@ from forge.core.trace_viewer import (
     TraceViewerError,
     render_latest_trace,
     render_run_trace,
+    render_run_trace_html,
     render_trace_list,
     resolve_run_dir,
+    write_run_trace_html,
 )
 
 RUN_1 = "11111111-1111-4111-8111-111111111111"
@@ -157,6 +159,96 @@ def test_malformed_events_are_reported_without_crashing(tmp_path: Path) -> None:
     assert "malformed_events_skipped: 1" in text
 
 
+def test_html_report_file_is_written_for_fixture_run(tmp_path: Path) -> None:
+    """HTML report writes index.html next to run telemetry."""
+    workspace = tmp_path / "ws"
+    run_dir = _write_run(
+        workspace,
+        RUN_1,
+        events=[_event(RUN_1, NODE_1, "work", "producer.response.parsed", attempt=1)],
+    )
+
+    output_path = write_run_trace_html(run_dir)
+
+    assert output_path == run_dir / "index.html"
+    assert output_path.exists()
+    assert "<!doctype html>" in output_path.read_text(encoding="utf-8")
+
+
+def test_html_contains_run_header_and_node_links(tmp_path: Path) -> None:
+    """HTML report includes header fields and overview links to node details."""
+    workspace = tmp_path / "ws"
+    run_dir = _write_run(
+        workspace,
+        RUN_1,
+        created_at="2026-02-03T04:05:06+00:00",
+        northstar="clickable report",
+        events=[_event(RUN_1, NODE_1, "plan", "producer.response.parsed", attempt=1)],
+    )
+
+    html = render_run_trace_html(run_dir)
+
+    assert "Forge Telemetry Trace" in html
+    assert RUN_1 in html
+    assert "2026-02-03T04:05:06+00:00" in html
+    assert "clickable report" in html
+    assert f'href="#node-{NODE_1}"' in html
+    assert f'id="node-{NODE_1}"' in html
+
+
+def test_html_includes_attempt_grouping_and_revision_items(tmp_path: Path) -> None:
+    """HTML report groups node timelines into attempts and renders revisions."""
+    workspace = tmp_path / "ws"
+    run_dir = _write_run(
+        workspace,
+        RUN_1,
+        events=[
+            _event(RUN_1, NODE_1, "work", "producer.response.parsed", attempt=1),
+            _revision_event(RUN_1, NODE_1, attempt=1),
+            _event(RUN_1, NODE_1, "work", "producer.response.parsed", attempt=2),
+        ],
+    )
+
+    html = render_run_trace_html(run_dir)
+
+    assert "Attempt 1" in html
+    assert "Attempt 2" in html
+    assert "Revision appended with 1 item(s)." in html
+    assert "AC1" in html
+    assert "Add tests." in html
+    assert "Revision item details" in html
+
+
+def test_html_escapes_user_and_model_text_safely(tmp_path: Path) -> None:
+    """HTML report escapes run metadata, rationale, and revision text."""
+    workspace = tmp_path / "ws"
+    run_dir = _write_run(
+        workspace,
+        RUN_1,
+        northstar="<script>alert('x')</script>",
+        events=[_unsafe_revision_event(RUN_1, NODE_1)],
+    )
+
+    html = render_run_trace_html(run_dir)
+
+    assert "<script>alert" not in html
+    assert "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;" in html
+    assert "<b>change</b>" not in html
+    assert "&lt;b&gt;change&lt;/b&gt;" in html
+
+
+def test_html_empty_event_file_renders_useful_message(tmp_path: Path) -> None:
+    """HTML report handles empty telemetry event files."""
+    workspace = tmp_path / "ws"
+    run_dir = _write_run(workspace, RUN_1, events=[])
+
+    html = render_run_trace_html(run_dir)
+
+    assert "event count" in html
+    assert "No node telemetry events found." in html
+    assert "No event details available." in html
+
+
 def _write_run(
     workspace: Path,
     run_id: str,
@@ -237,6 +329,25 @@ def _revision_event(run_id: str, node_id: str, *, attempt: int) -> dict[str, obj
                     "criterion_id": "AC1",
                     "required_change": "Add tests.",
                     "rationale": "Coverage required.",
+                }
+            ],
+        }
+    }
+    return event
+
+
+def _unsafe_revision_event(run_id: str, node_id: str) -> dict[str, object]:
+    event = _revision_event(run_id, node_id, attempt=1)
+    event["summary"] = "<img src=x onerror=alert(1)>"
+    event["data"] = {
+        "revision_request": {
+            "rationale": "<script>alert('rationale')</script>",
+            "prior_attempts": 1,
+            "items": [
+                {
+                    "criterion_id": "AC<script>",
+                    "required_change": "<b>change</b>",
+                    "rationale": "<i>why</i>",
                 }
             ],
         }
