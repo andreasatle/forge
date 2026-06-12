@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 from forge.agents.integrator import integrate
 from forge.agents.plan_follow_up import PlanFollowUpBuilder
 from forge.core.models import (
+    AgentContract,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -265,7 +266,19 @@ class Scheduler:
                             source=RequestSource.USER,
                             spec=PlanSpec(
                                 northstar=spec.objective,
-                                contract=spec.contract,
+                                contract=AgentContract(
+                                    objective=spec.contract.objective,
+                                    success_condition=spec.contract.success_condition,
+                                    acceptance_criteria=spec.contract.acceptance_criteria,
+                                    constraints=[
+                                        "Each subtask must have exactly one concern",
+                                        "Subtasks must be non-overlapping",
+                                    ],
+                                    non_goals=[
+                                        "Do not combine setup, implementation, and testing"
+                                        " in a single task"
+                                    ],
+                                ),
                             ),
                         )
                         state = state.add_nodes([DAGNode(request=new_plan_request)])

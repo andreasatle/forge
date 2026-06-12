@@ -14,6 +14,7 @@ from forge.core.models import (
     PlanSpec,
     RequestSource,
     ResponseStatus,
+    WorkSpec,
     render_agent_contract,
 )
 
@@ -381,6 +382,61 @@ async def test_planner_prompt_requires_testable_success_conditions() -> None:
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
     assert "verifiable by running tests" in user_prompt
+
+
+async def test_planner_prompt_includes_decomposition_context_when_contract_has_constraints() -> (
+    None
+):
+    """Planner prompt includes decomposition context when contract has constraints or non_goals."""
+    request = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(
+            northstar="implement a data pipeline module",
+            contract=AgentContract(
+                objective="implement a data pipeline module",
+                success_condition="all tests pass",
+                constraints=[
+                    "Each subtask must have exactly one concern",
+                    "Subtasks must be non-overlapping",
+                ],
+                non_goals=["Do not combine setup, implementation, and testing in a single task"],
+            ),
+        ),
+    )
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "This task was too broad for a single implementation." in user_prompt
+    assert "Decompose it into focused, non-overlapping subtasks" in user_prompt
+    assert "each subtask has exactly one concern" in user_prompt
+
+
+async def test_planner_prompt_omits_decomposition_context_without_constraints() -> None:
+    """Planner prompt does not include decomposition context for plans without constraints."""
+    request = _make_request()
+    provider = _mock_provider()
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "This task was too broad for a single implementation." not in user_prompt
 
 
 async def test_planner_prompt_omits_python_packaging_policy() -> None:

@@ -47,7 +47,7 @@ Rules:
   — phrase it as an observable test outcome, not as a description of the implementation
 - Task objectives, success conditions, acceptance criteria, constraints, and non-goals
   must not contradict artifact-specific language guidance
-
+{decomposition_context}
 Goal: {northstar}
 
 {contract_block}
@@ -101,11 +101,19 @@ class PlannerTaskExecutor:
             )
 
         artifact_details = self._render_artifact_details()
+        decomposition_context = ""
+        if spec.contract.constraints or spec.contract.non_goals:
+            decomposition_context = (
+                "\nThis task was too broad for a single implementation.\n"
+                "Decompose it into focused, non-overlapping subtasks where\n"
+                "each subtask has exactly one concern."
+            )
         prompt = PLAN_PROMPT.format(
             northstar=spec.northstar,
             artifact_names=", ".join(self.artifact_names),
             artifact_details=artifact_details,
             contract_block=render_agent_contract(request),
+            decomposition_context=decomposition_context,
         )
 
         def correction_fn(error: Exception, bad_response: str) -> str:
