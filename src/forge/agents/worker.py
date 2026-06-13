@@ -1,7 +1,7 @@
 """Worker agent that executes a task using an adapter and tool registry."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.attempt import AttemptEngine, DeltaStateValidator, RunAgentFailed
+from forge.agents.attempt import AttemptEngine, RunAgentFailed, WorkOutputValidator
 from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
@@ -9,6 +9,7 @@ from forge.core.models import (
     ResponseStatus,
     RevisionRequest,
     StateView,
+    WorkOutput,
     WorkSpec,
     render_agent_contract,
 )
@@ -114,10 +115,11 @@ class WorkTaskExecutor:
             tools.register(tool)
 
         if "{delta_example}" in adapter.prompt_template:
+            base_version_key = state_view.version_sha or state_view.version
             if plugin:
-                delta_example = plugin.delta_example.format(base_version=state_view.version)
+                delta_example = plugin.delta_example.format(base_version=base_version_key)
             else:
-                delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=state_view.version)
+                delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=base_version_key)
         else:
             delta_example = ""
 
@@ -166,12 +168,13 @@ class WorkTaskExecutor:
                 provider,
                 prompt,
                 tools=tools,
+                final_response_type=WorkOutput,
                 adapter_spec=adapter,
                 max_retries=max_retries,
                 max_tool_iterations=max_tool_iterations,
             )
 
-        validator = DeltaStateValidator(adapter, state_view)
+        validator = WorkOutputValidator(adapter, state_view)
         engine = AttemptEngine(
             request=contract_request,
             state_view=state_view,

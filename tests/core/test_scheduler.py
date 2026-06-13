@@ -1,7 +1,7 @@
 """Tests for Scheduler DAG execution, concurrency, callbacks, and termination."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from forge.core.models import (
@@ -9,18 +9,17 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
-    DeltaState,
     FailureKind,
-    FileWrite,
+    FileContent,
     NodeState,
     PlanResponse,
     PlanSpec,
     RequestId,
     RequestSource,
     ResponseStatus,
-    RevisionRequest,
     SchedulerState,
     TaskSpec,
+    WorkOutput,
     WorkSpec,
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
@@ -68,7 +67,7 @@ def _ok(request: AgentRequest, *, follow_up: list[AgentRequest] | None = None) -
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        delta=DeltaState(new_files=[FileWrite(path="src/out.py", content="x = 1")]),
+        output=WorkOutput(files=[FileContent(path="src/out.py", content="x = 1")]),
         follow_up=follow_up or [],
     )
 
@@ -81,7 +80,6 @@ def _already_done(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.ALREADY_DONE,
-        delta=DeltaState(),
     )
 
 
@@ -90,7 +88,9 @@ def _base_state(max_concurrency: int = 1) -> SchedulerState:
 
 
 def _mock_ss() -> MagicMock:
-    return MagicMock(spec=StateService)
+    ss = MagicMock(spec=StateService)
+    ss.apply_work_output = AsyncMock()
+    return ss
 
 
 # --- Tests ---
@@ -388,7 +388,7 @@ async def test_final_state_reflects_all_node_updates() -> None:
 
 
 async def test_integrate_called_inline_after_work_completes() -> None:
-    """Scheduler calls integrate inline when a WORK node completes successfully."""
+    """Scheduler calls apply_work_output inline when a WORK node completes successfully."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -396,14 +396,10 @@ async def test_integrate_called_inline_after_work_completes() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id, status=ResponseStatus.COMPLETED
-        )
-        await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
+    await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
-    mock_integrate.assert_called_once()
-    assert mock_integrate.call_args.kwargs["state_service"] is ss
+    ss.apply_work_output.assert_called_once()
+    assert ss.apply_work_output.call_args.args[0].files[0].path == "src/out.py"
 
 
 async def test_transitive_cancellation_propagates_through_chain() -> None:
@@ -443,21 +439,18 @@ async def test_terminates_when_no_pending_or_running_nodes() -> None:
 
 
 async def test_integration_failure_marks_node_failed() -> None:
-    """Node is marked FAILED when integrate returns FAILED status."""
+    """Node is marked FAILED when apply_work_output raises RuntimeError."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("integration failed"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id, status=ResponseStatus.FAILED
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     response = final.dag[work.id].response
@@ -466,32 +459,27 @@ async def test_integration_failure_marks_node_failed() -> None:
 
 
 async def test_integration_failure_preserves_integration_response() -> None:
-    """Integration failures replace the completed producer response on the failed node."""
+    """Integration failures from RuntimeError are captured with INTEGRATION_FAILED kind."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(
+        side_effect=RuntimeError("tests failed after delta: assertion failed")
+    )
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    integration_response = AgentResponse(
-        request_id=work.id,
-        status=ResponseStatus.FAILED,
-        failure_kind=FailureKind.TEST_FAILED,
-        error="integration tests failed: assertion failed",
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
     )
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = integration_response
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
 
     response = final.dag[work.id].response
     assert final.dag[work.id].node_state == NodeState.FAILED
     assert response is not None
     assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.TEST_FAILED
-    assert response.error == "integration tests failed: assertion failed"
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
+    assert "tests failed after delta" in (response.error or "")
 
 
 async def test_integration_failure_cancels_transitive_dependents() -> None:
@@ -503,17 +491,14 @@ async def test_integration_failure_cancels_transitive_dependents() -> None:
         [DAGNode(request=work_a), DAGNode(request=work_b), DAGNode(request=work_c)]
     )
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("integration failed"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work_a.id, status=ResponseStatus.FAILED
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
@@ -543,7 +528,7 @@ async def test_validation_failed_work_does_not_apply_delta() -> None:
 
 
 async def test_integration_success_marks_node_integrated() -> None:
-    """Node is marked INTEGRATED only when integration succeeds."""
+    """Node is marked INTEGRATED when apply_work_output succeeds."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -551,96 +536,73 @@ async def test_integration_success_marks_node_integrated() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id, status=ResponseStatus.COMPLETED
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
 
 async def test_stale_delta_requeues_not_failed() -> None:
-    """A stale delta re-queues the node as PENDING; it eventually succeeds on retry."""
+    """apply_work_output raising RuntimeError marks node FAILED immediately — no stale retry."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("stale base_version: ..."))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.side_effect = [
-            AgentResponse(
-                request_id=work.id,
-                status=ResponseStatus.FAILED,
-                failure_kind=FailureKind.STALE_DELTA,
-            ),
-            AgentResponse(request_id=work.id, status=ResponseStatus.COMPLETED),
-        ]
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
-    assert final.dag[work.id].node_state == NodeState.INTEGRATED
-    assert mock_integrate.call_count == 2
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_stale_delta_fails_after_3_retries() -> None:
-    """Node is marked FAILED after 3 consecutive stale delta retries are exhausted."""
+    """apply_work_output raising RuntimeError marks node FAILED with INTEGRATION_FAILED."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("stale base_version: ..."))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    stale = AgentResponse(
-        request_id=work.id,
-        status=ResponseStatus.FAILED,
-        failure_kind=FailureKind.STALE_DELTA,
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
     )
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = stale
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     response = final.dag[work.id].response
     assert response is not None
     assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.STALE_DELTA
-    assert mock_integrate.call_count == 4  # 1 initial + 3 retries
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_non_stale_integration_failure_marks_failed_immediately() -> None:
-    """Non-stale integration failure marks the node FAILED without any retry."""
+    """Integration failure via RuntimeError marks the node FAILED immediately."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("integration error"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id,
-            status=ResponseStatus.FAILED,
-            failure_kind=FailureKind.TOOL_ERROR,
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
-    mock_integrate.assert_called_once()
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_already_done_node_skips_integration() -> None:
-    """Scheduler does not call integrate() when a WORK node returns ALREADY_DONE status."""
+    """Scheduler does not call apply_work_output when a WORK node returns ALREADY_DONE status."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -648,17 +610,16 @@ async def test_already_done_node_skips_integration() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
-    mock_integrate.assert_not_called()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_already_done_state_version_unchanged() -> None:
-    """State version does not increment for ALREADY_DONE — integrate() is never invoked."""
+    """apply_work_output is not called for ALREADY_DONE — integration is bypassed."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -666,10 +627,9 @@ async def test_already_done_state_version_unchanged() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
+    await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
-    mock_integrate.assert_not_called()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_already_done_fires_on_node_completed() -> None:
@@ -688,45 +648,43 @@ async def test_already_done_fires_on_node_completed() -> None:
 
 
 async def test_work_node_none_delta_marked_failed() -> None:
-    """WORK node completing with delta=None is marked FAILED before integrate is called."""
+    """WORK node completing without WorkOutput in output is marked FAILED before apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
 
     async def runner(request: AgentRequest) -> AgentResponse:
-        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=None)
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
-    mock_integrate.assert_not_called()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_work_node_empty_delta_marked_failed() -> None:
-    """WORK node completing with an empty DeltaState is marked FAILED before integrate is called."""
+    """WORK node completing with empty WorkOutput is marked FAILED before apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return AgentResponse(
-            request_id=request.id, status=ResponseStatus.COMPLETED, delta=DeltaState()
+            request_id=request.id, status=ResponseStatus.COMPLETED, output=WorkOutput()
         )
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
-    mock_integrate.assert_not_called()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_work_node_already_done_empty_delta_skips_guard() -> None:
-    """ALREADY_DONE response with empty delta is not caught by the empty-delta guard."""
+    """ALREADY_DONE response with no WorkOutput is not caught by the empty-output guard."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -734,17 +692,16 @@ async def test_work_node_already_done_empty_delta_skips_guard() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
-    mock_integrate.assert_not_called()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_work_node_non_empty_delta_integrates_normally() -> None:
-    """WORK node with a non-empty delta passes the guard and reaches integrate()."""
+    """WORK node with non-empty WorkOutput passes the guard and reaches apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -753,122 +710,94 @@ async def test_work_node_non_empty_delta_integrates_normally() -> None:
         return AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="src/main.py", content="x = 1")]),
+            output=WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")]),
         )
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id, status=ResponseStatus.COMPLETED
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
-    mock_integrate.assert_called_once()
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_work_node_integrates_typed_delta_output() -> None:
-    """Scheduler integrates DeltaState from response.output."""
+    """Scheduler integrates WorkOutput from response.output and passes it to apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
-    delta = DeltaState(new_files=[FileWrite(path="src/main.py", content="x = 1")])
+    work_output = WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")])
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=delta,
+            output=work_output,
         )
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id, status=ResponseStatus.COMPLETED
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
-    mock_integrate.assert_called_once()
-    assert mock_integrate.call_args.kwargs["delta"] == delta
+    ss.apply_work_output.assert_called_once()
+    assert ss.apply_work_output.call_args.args[0] == work_output
 
 
 async def test_integration_failure_with_revision_requeues_node() -> None:
-    """Node is requeued as PENDING and eventually INTEGRATED when integration fails with a revision."""
+    """Integration failure via RuntimeError marks the node FAILED immediately."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
-    revision = RevisionRequest(rationale="tests failed", items=[], prior_attempts=0)
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("tests failed after delta: error"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.side_effect = [
-            AgentResponse(
-                request_id=work.id,
-                status=ResponseStatus.FAILED,
-                failure_kind=FailureKind.TEST_FAILED,
-                revision=revision,
-            ),
-            AgentResponse(request_id=work.id, status=ResponseStatus.COMPLETED),
-        ]
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
-    assert final.dag[work.id].node_state == NodeState.INTEGRATED
-    assert mock_integrate.call_count == 2
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_integration_failure_without_revision_marks_failed() -> None:
-    """Node is marked FAILED immediately when integration fails with no revision."""
+    """Integration failure via RuntimeError marks the node FAILED."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("integration error"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id,
-            status=ResponseStatus.FAILED,
-            failure_kind=FailureKind.TEST_FAILED,
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
-    mock_integrate.assert_called_once()
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_integration_revision_exhaustion_marks_failed() -> None:
-    """Node is marked FAILED after 3 integration revision retries are exhausted."""
+    """Integration failure via RuntimeError marks the node FAILED with INTEGRATION_FAILED kind."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
-    revision = RevisionRequest(rationale="tests failed", items=[], prior_attempts=0)
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("tests failed after delta: error"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.return_value = AgentResponse(
-            request_id=work.id,
-            status=ResponseStatus.FAILED,
-            failure_kind=FailureKind.TEST_FAILED,
-            revision=revision,
-        )
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
-    assert mock_integrate.call_count == 4  # 1 initial + 3 retries
+    response = final.dag[work.id].response
+    assert response is not None
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
 
 
 def _decompose(request: AgentRequest) -> AgentResponse:
@@ -876,33 +805,22 @@ def _decompose(request: AgentRequest) -> AgentResponse:
 
 
 async def test_dependents_not_cancelled_on_integration_revision_requeue() -> None:
-    """Dependents are not cancelled when a node is requeued due to an integration revision."""
+    """Integration failure cancels dependents (no revision requeue at scheduler level)."""
     work_a = _work_request()
     work_b = _work_request(deps=frozenset({work_a.id}))
     state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
     ss = _mock_ss()
-    revision = RevisionRequest(rationale="tests failed", items=[], prior_attempts=0)
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("integration failed"))
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    with patch("forge.core.scheduler.integrate", new_callable=AsyncMock) as mock_integrate:
-        mock_integrate.side_effect = [
-            AgentResponse(
-                request_id=work_a.id,
-                status=ResponseStatus.FAILED,
-                failure_kind=FailureKind.TEST_FAILED,
-                revision=revision,
-            ),
-            AgentResponse(request_id=work_a.id, status=ResponseStatus.COMPLETED),
-            AgentResponse(request_id=work_b.id, status=ResponseStatus.COMPLETED),
-        ]
-        final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-            state, _plan_request()
-        )
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
 
-    assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
-    assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED
 
 
 # --- DECOMPOSE disposition ---

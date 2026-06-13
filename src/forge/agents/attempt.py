@@ -25,6 +25,7 @@ from forge.core.models import (
     RevisionItem,
     RevisionRequest,
     StateView,
+    WorkOutput,
 )
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 from forge.llm.providers import LLMProvider
@@ -125,6 +126,70 @@ class DeltaStateValidator:
                 '  Each new_files item must be {"path": "...", "content": "..."}',
                 "- edits must be an array of JSON objects.",
                 '  Each edits item must be {"path": "...", "old": "...", "new": "..."}',
+                '- Do not use string entries like "path:...".',
+            ]
+        )
+
+
+class WorkOutputValidator:
+    """OutputValidator for WorkOutput — validates full-file-content output from work agents."""
+
+    def __init__(self, adapter_spec: AdapterSpec, state_view: StateView) -> None:
+        self._adapter = adapter_spec
+        self._state_view = state_view
+
+    def extract_from_response(self, response: AgentResponse) -> WorkOutput | None:
+        """Return typed WorkOutput output from the response."""
+        return response.output if isinstance(response.output, WorkOutput) else None
+
+    def is_empty(self, output: WorkOutput) -> bool:
+        """Return True when the WorkOutput has no files or dependencies."""
+        return not output.files and not output.dependencies
+
+    def render_for_critic(self, output: WorkOutput) -> str:
+        """Render WorkOutput files and existing artifact state for the critic."""
+        lines: list[str] = []
+        if output.files:
+            lines.append("Files proposed:")
+            for fc in output.files:
+                lines += [f"\nFile: {fc.path}", "```", fc.content, "```"]
+        else:
+            lines.append("No files were proposed.")
+        if self._state_view.files:
+            if lines:
+                lines.append("")
+            lines.append("Existing artifact files:")
+            for fv in self._state_view.files:
+                lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
+        return "\n".join(lines)
+
+    def work_noun(self) -> str:
+        """Return the adapter's work noun."""
+        return self._adapter.work_noun
+
+    def requires_nonempty(self) -> bool:
+        """Return the adapter's requires_nonempty_output flag."""
+        return self._adapter.requires_nonempty_output
+
+    def review_context(self) -> ReviewContext:
+        """Return worker-output review language."""
+        return ReviewContext(
+            output_noun=self._adapter.work_noun,
+            review_focus="whether the proposed files satisfy the task",
+            empty_output_guidance=(
+                "If no files were proposed, reject unless the "
+                "success condition is already demonstrably met."
+            ),
+        )
+
+    def final_output_reminder(self) -> str:
+        """Return a compact WorkOutput format reminder."""
+        return "\n".join(
+            [
+                "FINAL OUTPUT FORMAT REMINDER",
+                "Return valid JSON only matching WorkOutput.",
+                "- files must be an array of JSON objects.",
+                '  Each files item must be {"path": "...", "content": "..."}',
                 '- Do not use string entries like "path:...".',
             ]
         )

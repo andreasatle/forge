@@ -13,8 +13,7 @@ prompt_template: |
   Language-specific output conventions:
   {delta_example}
 
-  IMPORTANT — your final JSON response MUST be a non-empty DeltaState:
-  - new_files must contain the complete content of every file you create
-  - edits must contain every change to existing files
-  - An empty DeltaState is always wrong
+  IMPORTANT — your final JSON response MUST be a non-empty WorkOutput:
+  - files must contain the complete content of every file you create or modify
+  - An empty WorkOutput is always wrong
   - Do not summarise what you would do — write the actual file contents

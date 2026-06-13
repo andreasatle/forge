@@ -9,10 +9,10 @@ prompt_template: |
   Complete the following task: {objective}
   Success condition: {success_condition}
 
-  Produce your output as markdown files in new_files.
+  Produce your output as markdown files.
   Example: README.md, USAGE.md, API.md etc.
   Write complete, detailed content — do not truncate.
 
-  Your final JSON response MUST be a non-empty DeltaState:
-  - new_files must contain every document you produce
+  Your final JSON response MUST be a non-empty WorkOutput:
+  - files must contain every document you produce
   - Write complete file contents — do not truncate or summarise

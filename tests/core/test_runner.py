@@ -95,6 +95,7 @@ def _mock_ss() -> MagicMock:
     ss = MagicMock(spec=StateService)
     ss.run_tests.return_value = RunResult(passed=True)
     ss.current_version = 0
+    ss.apply_work_output = AsyncMock()
     return ss
 
 
@@ -567,10 +568,10 @@ async def test_make_work_handler_passes_none_providers_when_omitted(tmp_path: Pa
 
 
 async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: Path) -> None:
-    """Scheduler calls state_service.apply_delta when a work node completes successfully."""
+    """Scheduler calls state_service.apply_work_output when a work node completes successfully."""
     provider = _mock_provider()
     provider.chat = AsyncMock(
-        return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+        return_value='{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
     )
 
     ss = _mock_ss()
@@ -587,7 +588,7 @@ async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: P
 
     await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
-    ss.apply_delta.assert_called_once()
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_validation_failed_work_response_does_not_call_apply_delta(tmp_path: Path) -> None:

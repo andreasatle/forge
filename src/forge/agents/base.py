@@ -24,6 +24,7 @@ from forge.core.models import (
     StateView,
     ToolCallRequest,
     ToolCallResponse,
+    WorkOutput,
 )
 from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
 from forge.tools.registry import ToolRegistry
@@ -245,6 +246,21 @@ class PromptBuilder:
                     "- Never put old/new strings in new_files.",
                     "- edits.old must never be empty — if you need to add content to an existing file, use the actual existing text as old. If the file does not exist yet, use new_files instead of edits.",
                     "IMPORTANT: your response must include base_version set to the current state version shown above.",
+                ]
+            elif self.final_response_type is WorkOutput:
+                lines += [
+                    "",
+                    "Rules for your final response:",
+                    "  - Provide complete file content for every file you create or modify.",
+                    "  - The framework computes the diff via git.",
+                    "  - Do not return an empty change set if you created or modified files.",
+                    "",
+                    "Format rules:",
+                    "- files: provide complete file content for every file you create or modify.",
+                    '  each entry: {"path": "...", "content": "full file content"}',
+                    "- The framework computes the diff via git — do not compute diffs yourself.",
+                    "- dependencies: list any new runtime packages required.",
+                    "IMPORTANT: your response must include base_version set to the current commit SHA shown above.",
                 ]
         return "\n".join(lines)
 
@@ -563,6 +579,8 @@ class ToolLoop:
             if delta is not None:
                 output = delta
             elif isinstance(parsed, PlanResponse):
+                output = parsed
+            elif isinstance(parsed, WorkOutput):
                 output = parsed
             return AgentResponse(
                 request_id=self.request.id,

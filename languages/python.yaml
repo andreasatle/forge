@@ -39,17 +39,16 @@ prompt_supplement: |
 
   Package rules:
   - Declare all required runtime packages in the dependencies field of your
-    DeltaState response — this is the ONLY way to add packages.
+    WorkOutput response — this is the ONLY way to add packages.
   - Never attempt to install packages via tools, shell commands, or
     any other mechanism.
 delta_example: |
-  Example of a valid DeltaState response:
+  Example of a valid WorkOutput response:
   {{
-    "new_files": [
+    "files": [
       {{"path": "src/scraper.py", "content": "import requests\nfrom bs4 import BeautifulSoup\n"}},
       {{"path": "tests/test_scraper.py", "content": "from scraper import WebScraper\n\ndef test_import():\n    assert WebScraper\n"}}
     ],
     "dependencies": ["requests"],
-    "errors": [],
-    "base_version": {base_version}
+    "base_version": "{base_version}"
   }}

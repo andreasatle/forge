@@ -17,12 +17,14 @@ from forge.core.models import (
     CriticFinding,
     DeltaState,
     FailureKind,
+    FileContent,
     FileView,
     FileWrite,
     RefereeDecision,
     RequestSource,
     ResponseStatus,
     StateView,
+    WorkOutput,
     WorkSpec,
     render_agent_contract,
 )
@@ -640,8 +642,8 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path: Path) -> None:
         )
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "non-empty DeltaState" in user_prompt
-    assert "empty DeltaState is always wrong" in user_prompt
+    assert "non-empty WorkOutput" in user_prompt
+    assert "empty WorkOutput is always wrong" in user_prompt
 
 
 async def test_language_not_appended_when_no_plugin(tmp_path: Path) -> None:
@@ -770,7 +772,7 @@ async def test_producer_critic_and_referee_receive_same_plugin_guidance(
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="module.toy", content="ok")]),
+            output=WorkOutput(files=[FileContent(path="module.toy", content="ok")]),
         )
         mock_critic.return_value = CriticFinding(
             disposition=CriticDisposition.ACCEPT,
@@ -1132,3 +1134,25 @@ async def test_worker_prompt_includes_base_commit_sha_instruction(tmp_path: Path
     assert "Base commit: deadbeef1234abcd" in user_prompt
     assert "You MUST set base_version to deadbeef1234abcd in your response." in user_prompt
     assert "You MUST set base_version to 3 in your response." not in user_prompt
+
+
+async def test_worker_uses_work_output_as_final_response_type(tmp_path: Path) -> None:
+    """WorkTaskExecutor passes final_response_type=WorkOutput to run_agent."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
+
+    kwargs = mock_run_agent.call_args.kwargs
+    assert kwargs.get("final_response_type") is WorkOutput
