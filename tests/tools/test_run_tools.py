@@ -8,13 +8,10 @@ import pytest
 from forge.core.workspace import Workspace
 from forge.tools.run_tools import (
     _parse_test_output,
-    make_add_dependency_tool,
     make_run_tests_tool,
     run_tests,
 )
 from forge.tools.schemas import (
-    AddDependencyRequest,
-    AddDependencyResponse,
     RunTestsRequest,
     RunTestsResponse,
 )
@@ -113,54 +110,6 @@ async def test_run_tests_tool_marks_timeout_as_failed(workspace: Workspace) -> N
     assert isinstance(result, RunTestsResponse)
     assert result.passed is False
     assert "timed out" in result.failures
-
-
-async def test_make_add_dependency_tool_returns_tool_with_correct_name(
-    workspace: Workspace,
-) -> None:
-    """make_add_dependency_tool returns a Tool named 'add_dependency'."""
-    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
-    assert tool.name == "add_dependency"
-
-
-async def test_add_dependency_tool_substitutes_package_in_command(workspace: Workspace) -> None:
-    """The add_dependency tool runs the command with the package name substituted."""
-    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
-
-    result = await tool.fn(AddDependencyRequest(package="requests"))
-
-    assert isinstance(result, AddDependencyResponse)
-    assert "requests" in result.output
-
-
-async def test_add_dependency_tool_returns_command_output(workspace: Workspace) -> None:
-    """The add_dependency tool returns combined stdout+stderr output in the response."""
-    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo installed_{package}")
-
-    result = await tool.fn(AddDependencyRequest(package="numpy"))
-
-    assert isinstance(result, AddDependencyResponse)
-    assert "installed_numpy" in result.output
-
-
-async def test_add_dependency_tool_sets_success_true_on_normal_output(workspace: Workspace) -> None:
-    """The add_dependency tool sets success=True when the command completes without timing out."""
-    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
-
-    result = await tool.fn(AddDependencyRequest(package="requests"))
-
-    assert isinstance(result, AddDependencyResponse)
-    assert result.success is True
-
-
-async def test_add_dependency_tool_sets_package_field(workspace: Workspace) -> None:
-    """The add_dependency tool response includes the package name that was installed."""
-    tool = make_add_dependency_tool(workspace, _ARTIFACT, "echo {package}")
-
-    result = await tool.fn(AddDependencyRequest(package="numpy"))
-
-    assert isinstance(result, AddDependencyResponse)
-    assert result.package == "numpy"
 
 
 # --- _parse_test_output ---

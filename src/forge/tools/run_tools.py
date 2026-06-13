@@ -5,8 +5,6 @@ import asyncio
 from forge.core.workspace import Workspace
 from forge.tools.registry import Tool
 from forge.tools.schemas import (
-    AddDependencyRequest,
-    AddDependencyResponse,
     RunTestsRequest,
     RunTestsResponse,
 )
@@ -61,43 +59,5 @@ def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: 
         description="Run the test suite by calling this tool directly. Do NOT try to read a file called 'run_tests' — call this tool instead. Returns test output.",
         request_type=RunTestsRequest,
         response_type=RunTestsResponse,
-        fn=fn,  # type: ignore[arg-type]
-    )
-
-
-async def add_dependency(
-    workspace: Workspace, artifact_name: str, add_dependency_command: str, package_name: str
-) -> str:
-    """Run add_dependency_command with package_name substituted in the artifact directory and return combined stdout+stderr."""
-    cwd = workspace.artifact_dir(artifact_name)
-    cmd = add_dependency_command.format(package=package_name)
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT_SECONDS)
-        return (stdout + stderr).decode(errors="replace")
-    except TimeoutError:
-        return f"add_dependency timed out after {_TIMEOUT_SECONDS} seconds"
-
-
-def make_add_dependency_tool(
-    workspace: Workspace, artifact_name: str, add_dependency_command: str
-) -> Tool:
-    """Return a Tool that installs a package using add_dependency_command."""
-
-    async def fn(req: AddDependencyRequest) -> AddDependencyResponse:  # type: ignore[misc]
-        output = await add_dependency(workspace, artifact_name, add_dependency_command, req.package)
-        success = "timed out" not in output
-        return AddDependencyResponse(package=req.package, success=success, output=output)
-
-    return Tool(
-        name="add_dependency",
-        description=f"Install a package using: {add_dependency_command}. Pass the package name as the argument.",
-        request_type=AddDependencyRequest,
-        response_type=AddDependencyResponse,
         fn=fn,  # type: ignore[arg-type]
     )

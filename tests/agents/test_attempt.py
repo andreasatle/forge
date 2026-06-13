@@ -441,7 +441,7 @@ async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> No
 
 
 async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
-    """Accumulated revision history grows by deltas, not repeated full contract text."""
+    """Accumulated revision history grows incrementally, not by repeated full contract text."""
     plugin_guidance = "Language plugin guidance:\n" + "\n".join(
         f"LONG_BINDING_RULE_{index}: keep this language invariant" for index in range(120)
     )

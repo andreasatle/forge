@@ -19,41 +19,6 @@ class ReadFileResponse(BaseModel):
     content: str
 
 
-class WriteFileRequest(BaseModel):
-    """Request to write content to a file, creating it if it does not exist."""
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    content: str
-
-
-class WriteFileResponse(BaseModel):
-    """Response confirming the path that was written."""
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-
-
-class ReplaceInFileRequest(BaseModel):
-    """Request to replace a unique substring in a file with new text."""
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-    old: str
-    new: str
-
-
-class ReplaceInFileResponse(BaseModel):
-    """Response confirming the path where the replacement was applied."""
-
-    model_config = ConfigDict(frozen=True)
-
-    path: str
-
-
 class ListFilesRequest(BaseModel):
     """Request to list all files under a given directory."""
 
@@ -85,21 +50,3 @@ class RunTestsResponse(BaseModel):
     failures: list[str]
     summary: str
     output: str = ""
-
-
-class AddDependencyRequest(BaseModel):
-    """Request to add a package as a project dependency."""
-
-    model_config = ConfigDict(frozen=True)
-
-    package: str
-
-
-class AddDependencyResponse(BaseModel):
-    """Response confirming whether the dependency was successfully added."""
-
-    model_config = ConfigDict(frozen=True)
-
-    package: str
-    success: bool
-    output: str

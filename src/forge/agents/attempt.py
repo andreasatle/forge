@@ -45,7 +45,7 @@ _REPEATED_PLUGIN_GUIDANCE_MARKER = (
 
 @runtime_checkable
 class OutputValidator(Protocol[T]):
-    """Protocol for validating and rendering agent output for the PWC loop."""
+    """Protocol for validating and rendering output in the producer/review retry loop."""
 
     def extract_from_response(self, response: AgentResponse) -> T | None:
         """Extract typed output from an AgentResponse, or None if unavailable."""
@@ -409,7 +409,7 @@ def _model_data(model: BaseModel) -> dict[str, object]:
 
 
 class AttemptEngine[T]:
-    """Generic PWC (Plan-Work-Critique) retry loop for work and plan agents."""
+    """Generic producer/critic/referee retry loop for work and plan agents."""
 
     def __init__(
         self,

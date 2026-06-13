@@ -7,10 +7,10 @@ The DAG is the queue.
 
 ## Architecture
 The core loop:
-1. Scheduler finds READY nodes → dispatches up to `max_concurrency`
-2. Agents return `AgentResponse` (with optional `follow_up` nodes)
-3. Follow-ups are added to the DAG as PENDING nodes
-4. On idle → global planner re-evaluates northstar → emits more work or terminates
+1. Scheduler computes ready PENDING nodes → dispatches up to `max_concurrency`
+2. Planner agents return `PlanResponse`; the scheduler derives work nodes from accepted plans
+3. Worker agents return `WorkOutput`; the scheduler applies accepted output through `StateService.apply_work_output`
+4. The run terminates when no PENDING or RUNNING nodes remain
 
 **Boundaries — never cross these:**
 - Scheduler does not import from agents

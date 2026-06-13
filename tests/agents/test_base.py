@@ -35,12 +35,6 @@ from forge.core.models import (
 )
 from forge.llm.providers import ProviderEmptyOutputError
 from forge.tools.registry import Tool, ToolRegistry
-from forge.tools.schemas import (
-    ReplaceInFileRequest,
-    ReplaceInFileResponse,
-    WriteFileRequest,
-    WriteFileResponse,
-)
 
 _NONEMPTY_WORK_OUTPUT = (
     '{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": []}'
@@ -62,6 +56,18 @@ class _DoThingResponse(BaseModel):
     """Minimal response carrying a result string used in agent base unit tests."""
 
     result: str
+
+
+class _NeedsContentRequest(BaseModel):
+    """Synthetic request with one required field for validation tests."""
+
+    content: str
+
+
+class _NeedsContentResponse(BaseModel):
+    """Synthetic response for validation tests."""
+
+    accepted: bool
 
 
 class _ExtendedResponse(BaseModel):
@@ -112,15 +118,15 @@ def _make_registry() -> tuple[ToolRegistry, AsyncMock]:
     return registry, mock_fn
 
 
-def _make_write_file_tool() -> Tool:
-    async def fn(req: WriteFileRequest) -> WriteFileResponse:
-        return WriteFileResponse(path=req.path)
+def _make_needs_content_tool() -> Tool:
+    async def fn(req: _NeedsContentRequest) -> _NeedsContentResponse:
+        return _NeedsContentResponse(accepted=bool(req.content))
 
     return Tool(
-        name="write_file",
-        description="write a file",
-        request_type=WriteFileRequest,
-        response_type=WriteFileResponse,
+        name="needs_content",
+        description="requires content",
+        request_type=_NeedsContentRequest,
+        response_type=_NeedsContentResponse,
         fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
     )
 
@@ -214,11 +220,11 @@ async def test_tracked_tool_executor_rejects_unknown_tool():
 async def test_tracked_tool_executor_validates_tool_arguments():
     """TrackedToolExecutor returns a failed response for invalid arguments."""
     registry = ToolRegistry()
-    registry.register(_make_write_file_tool())
+    registry.register(_make_needs_content_tool())
     request = ToolCallRequest(
         kind="tool_call",
-        name="write_file",
-        arguments={"path": "src/hello.py"},
+        name="needs_content",
+        arguments={},
     )
 
     response = await TrackedToolExecutor(registry).execute(request)
@@ -231,28 +237,28 @@ async def test_tracked_tool_executor_returns_failed_response_when_tool_raises():
     """TrackedToolExecutor returns a failed ToolCallResponse when a tool raises."""
     registry = ToolRegistry()
 
-    async def failing_fn(req: ReplaceInFileRequest) -> ReplaceInFileResponse:
-        raise ValueError("old string not found in file")
+    async def failing_fn(req: _DoThingRequest) -> _DoThingResponse:
+        raise ValueError("tool failed")
 
     registry.register(
         Tool(
-            name="replace_in_file",
-            description="replace in a file",
-            request_type=ReplaceInFileRequest,
-            response_type=ReplaceInFileResponse,
+            name="failing_tool",
+            description="fails on purpose",
+            request_type=_DoThingRequest,
+            response_type=_DoThingResponse,
             fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], failing_fn),
         )
     )
     request = ToolCallRequest(
         kind="tool_call",
-        name="replace_in_file",
-        arguments={"path": "src/main.py", "old": "missing", "new": "x = 2"},
+        name="failing_tool",
+        arguments={},
     )
 
     response = await TrackedToolExecutor(registry).execute(request)
 
     assert response.success is False
-    assert "not found" in (response.error or "")
+    assert "tool failed" in (response.error or "")
 
 
 # --- run_agent ---
@@ -439,7 +445,7 @@ def test_classify_failure_maps_unknown_exception_to_unknown():
 
 def test_classify_failure_maps_tool_error_to_tool_error():
     """_classify_failure maps ToolError to TOOL_ERROR, not INVALID_JSON."""
-    assert _classify_failure(ToolError("replace_in_file failed")) == FailureKind.TOOL_ERROR
+    assert _classify_failure(ToolError("tool failed")) == FailureKind.TOOL_ERROR
 
 
 async def test_run_agent_sets_failure_kind_invalid_json_on_retry_exhaustion():

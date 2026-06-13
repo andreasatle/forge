@@ -91,7 +91,7 @@ class PlannerTaskExecutor:
         self.telemetry_sink = telemetry_sink
 
     async def run(self, request: AgentRequest) -> AgentResponse:
-        """Send the northstar goal to the planner LLM and return follow-up work requests."""
+        """Send the northstar goal to the planner LLM and return a PlanResponse."""
         spec = request.spec
         if not isinstance(spec, PlanSpec):
             return AgentResponse(
@@ -191,7 +191,7 @@ async def plan_agent(
     telemetry_sink: TelemetrySink | None = None,
     max_attempts: int = 3,
 ) -> AgentResponse:
-    """Send the northstar goal to the planner LLM and return follow-up work requests."""
+    """Send the northstar goal to the planner LLM and return a PlanResponse."""
     return await PlannerTaskExecutor(
         provider=provider,
         artifact_names=artifact_names,

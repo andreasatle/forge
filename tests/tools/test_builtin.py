@@ -1,4 +1,4 @@
-"""Tests for builtin registry builders — read vs write tool sets."""
+"""Tests for builtin registry builders — read-only worker tools."""
 
 from pathlib import Path
 

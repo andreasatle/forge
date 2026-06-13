@@ -647,7 +647,7 @@ async def test_already_done_fires_on_node_completed() -> None:
     assert any(n.request.id == work.id for n in completed)
 
 
-async def test_work_node_none_delta_marked_failed() -> None:
+async def test_work_node_missing_work_output_marked_failed() -> None:
     """WORK node completing without WorkOutput in output is marked FAILED before apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -664,7 +664,7 @@ async def test_work_node_none_delta_marked_failed() -> None:
     ss.apply_work_output.assert_not_called()
 
 
-async def test_work_node_empty_delta_marked_failed() -> None:
+async def test_work_node_empty_work_output_marked_failed() -> None:
     """WORK node completing with empty WorkOutput is marked FAILED before apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -683,7 +683,7 @@ async def test_work_node_empty_delta_marked_failed() -> None:
     ss.apply_work_output.assert_not_called()
 
 
-async def test_work_node_already_done_empty_delta_skips_guard() -> None:
+async def test_work_node_already_done_empty_work_output_skips_guard() -> None:
     """ALREADY_DONE response with no WorkOutput is not caught by the empty-output guard."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -700,7 +700,7 @@ async def test_work_node_already_done_empty_delta_skips_guard() -> None:
     ss.apply_work_output.assert_not_called()
 
 
-async def test_work_node_non_empty_delta_integrates_normally() -> None:
+async def test_work_node_non_empty_work_output_integrates_normally() -> None:
     """WORK node with non-empty WorkOutput passes the guard and reaches apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -721,7 +721,7 @@ async def test_work_node_non_empty_delta_integrates_normally() -> None:
     ss.apply_work_output.assert_called_once()
 
 
-async def test_work_node_integrates_typed_delta_output() -> None:
+async def test_work_node_integrates_typed_work_output() -> None:
     """Scheduler integrates WorkOutput from response.output and passes it to apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
