@@ -1101,3 +1101,34 @@ async def test_worker_prompt_includes_explicit_base_version_instruction(tmp_path
     version_line_idx = user_prompt.index("State version: 42")
     must_line_idx = user_prompt.index("You MUST set base_version to 42 in your response.")
     assert must_line_idx > version_line_idx
+
+
+async def test_worker_prompt_includes_base_commit_sha_instruction(tmp_path: Path) -> None:
+    """worker.py emits 'Base commit: <sha>' and 'You MUST set base_version to <sha>' when version_sha is set."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    state_view = StateView(
+        artifact_name="codebase",
+        language=None,
+        files=[],
+        dependencies=[],
+        version=3,
+        version_sha="deadbeef1234abcd",
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider, state_view)
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "State version: 3" in user_prompt
+    assert "Base commit: deadbeef1234abcd" in user_prompt
+    assert "You MUST set base_version to deadbeef1234abcd in your response." in user_prompt
+    assert "You MUST set base_version to 3 in your response." not in user_prompt

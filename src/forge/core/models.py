@@ -410,6 +410,7 @@ class StateView(BaseModel, frozen=True):
     dependencies: list[str]
     test_summary: str | None = None
     version: int = 0
+    version_sha: str = ""
 
 
 def _empty_ints() -> list[int]:

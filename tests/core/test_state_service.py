@@ -582,3 +582,64 @@ async def test_apply_work_output_removes_worktree_after_fail(tmp_path: Path) -> 
                         await ss.apply_work_output(output, "node5")
 
     assert remove_calls == [("app", "node5")]
+
+
+# --- apply_work_output staleness check ---
+
+
+async def test_apply_work_output_rejects_stale_base_version(tmp_path: Path) -> None:
+    """apply_work_output raises RuntimeError when output.base_version does not match HEAD SHA."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    output = WorkOutput(base_version="old-sha-abc")
+
+    with patch.object(ws, "get_current_sha", return_value="current-sha-xyz"):
+        with pytest.raises(RuntimeError, match="stale"):
+            await ss.apply_work_output(output, "node-stale")
+
+
+async def test_apply_work_output_accepts_correct_base_version(tmp_path: Path) -> None:
+    """apply_work_output proceeds when output.base_version matches HEAD SHA."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node-ok"
+    worktree_path.mkdir()
+    output = WorkOutput(base_version="matching-sha")
+
+    with patch.object(ws, "get_current_sha", return_value="matching-sha"):
+        with patch.object(ws, "create_worktree", return_value=worktree_path):
+            with patch.object(ws, "remove_worktree"):
+                with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                    with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                        await ss.apply_work_output(output, "node-ok")
+
+    assert ss.current_version == 1
+
+
+async def test_apply_work_output_accepts_empty_base_version(tmp_path: Path) -> None:
+    """apply_work_output skips the staleness check when output.base_version is empty."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node-empty"
+    worktree_path.mkdir()
+    output = WorkOutput()  # base_version defaults to ""
+
+    mock_get_sha = MagicMock()
+    with patch.object(ws, "get_current_sha", mock_get_sha):
+        with patch.object(ws, "create_worktree", return_value=worktree_path):
+            with patch.object(ws, "remove_worktree"):
+                with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                    with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                        await ss.apply_work_output(output, "node-empty")
+
+    mock_get_sha.assert_not_called()
+    assert ss.current_version == 1

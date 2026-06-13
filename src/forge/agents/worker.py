@@ -133,7 +133,13 @@ class WorkTaskExecutor:
             base_prompt += f"\n\nLanguage: {spec.language}"
 
         base_prompt += f"\n\nState version: {state_view.version}"
-        base_prompt += f"\nYou MUST set base_version to {state_view.version} in your response."
+        if state_view.version_sha:
+            base_prompt += f"\nBase commit: {state_view.version_sha}"
+            base_prompt += (
+                f"\nYou MUST set base_version to {state_view.version_sha} in your response."
+            )
+        else:
+            base_prompt += f"\nYou MUST set base_version to {state_view.version} in your response."
         if state_view.files:
             sections = "\n\n".join(
                 f"File: {fv.path}\n```\n{fv.content}\n```" for fv in state_view.files

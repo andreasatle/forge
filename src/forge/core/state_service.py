@@ -72,6 +72,10 @@ class StateService:
                 version=self._version,
             )
 
+        version_sha = ""
+        if self._plugin:
+            version_sha = self._workspace.get_current_sha(self._artifact_name)
+
         file_views: list[FileView] = []
         for f in sorted(artifact_dir.rglob("*")):
             if not f.is_file() or _is_noise(f, artifact_dir):
@@ -88,6 +92,7 @@ class StateService:
             files=file_views,
             dependencies=[],
             version=self._version,
+            version_sha=version_sha,
         )
 
     def apply_delta(self, delta: DeltaState) -> None:
@@ -168,6 +173,14 @@ class StateService:
     async def apply_work_output(self, output: WorkOutput, node_id: str) -> None:
         """Apply WorkOutput via git worktree — write files, merge to main, run tests,
         commit on pass or rollback on fail."""
+        if output.base_version != "":
+            current_sha = self._workspace.get_current_sha(self._artifact_name)
+            if output.base_version != current_sha:
+                raise RuntimeError(
+                    f"stale base_version: output based on {output.base_version!r} "
+                    f"but HEAD is {current_sha!r}"
+                )
+
         worktree_path = self._workspace.create_worktree(self._artifact_name, node_id)
         try:
             for file in output.files:
