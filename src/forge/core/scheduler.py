@@ -42,22 +42,201 @@ class SchedulerCallbacks:
     on_idle: Callable[[SchedulerState], None] | None = None
 
 
-class Scheduler:
-    """Async scheduler that drives a DAG of agent requests to completion."""
+class SchedulerConsequenceHandler:
+    """Owns consequences of terminal node responses."""
 
     def __init__(
         self,
-        runner: AgentRunner,
         state_services: dict[str, StateService] | None = None,
         callbacks: SchedulerCallbacks | None = None,
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
     ) -> None:
-        self._runner = runner
         self._state_services = state_services
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
+
+    async def apply(
+        self,
+        state: SchedulerState,
+        node: DAGNode,
+        response: AgentResponse,
+    ) -> SchedulerState:
+        """Apply the effects of a terminal response for a DAG node."""
+        current = state.dag[node.request.id]
+        plan_expansion = self._build_plan_expansion(node, response)
+        updated = current.with_response(response)
+        state = state.update_node(updated)
+
+        if updated.node_state == NodeState.INTEGRATED:
+            return await self._handle_integrated(state, current, updated, plan_expansion)
+
+        if response.status == ResponseStatus.DECOMPOSE and isinstance(node.request.spec, WorkSpec):
+            return self._handle_decompose(state, updated)
+
+        return self._handle_failed(state, updated)
+
+    def _build_plan_expansion(
+        self,
+        node: DAGNode,
+        response: AgentResponse,
+    ) -> list[DAGNode]:
+        if (
+            node.request.agent_type == AgentType.PLAN
+            and response.status == ResponseStatus.COMPLETED
+            and isinstance(response.output, PlanResponse)
+        ):
+            return [
+                DAGNode(request=request)
+                for request in PlanExpansionBuilder(node.request).build(response.output)
+            ]
+        return []
+
+    async def _handle_integrated(
+        self,
+        state: SchedulerState,
+        current: DAGNode,
+        updated: DAGNode,
+        plan_expansion: list[DAGNode],
+    ) -> SchedulerState:
+        integration_failed = False
+        response = updated.response
+        if response is None:
+            return self._handle_failed(state, updated)
+
+        if (
+            updated.request.agent_type == AgentType.WORK
+            and self._state_services is not None
+            and response.status != ResponseStatus.ALREADY_DONE
+        ):
+            updated, integration_failed = await self._integrate_work_node(current, updated)
+
+        if integration_failed:
+            failed_node = updated.with_state(NodeState.FAILED)
+            state = state.update_node(failed_node)
+            return self._handle_failed(state, failed_node)
+
+        if plan_expansion:
+            state = state.add_nodes(plan_expansion)
+        self._fire_node(self._callbacks.on_node_completed, updated)
+        return state
+
+    async def _integrate_work_node(
+        self,
+        current: DAGNode,
+        updated: DAGNode,
+    ) -> tuple[DAGNode, bool]:
+        response = updated.response
+        if response is None:
+            return updated, False
+
+        spec = updated.request.spec
+        if not isinstance(spec, WorkSpec):
+            return updated, False
+
+        ss = self._state_services.get(spec.artifact) if self._state_services is not None else None
+        if ss is None:
+            return updated, False
+
+        work_output = response.output if isinstance(response.output, WorkOutput) else None
+        if work_output is None or (not work_output.files and not work_output.dependencies):
+            return (
+                current.with_response(
+                    AgentResponse(
+                        request_id=updated.request.id,
+                        status=ResponseStatus.FAILED,
+                        error=(
+                            "completed with empty work output — no files or dependencies produced"
+                        ),
+                    )
+                ),
+                True,
+            )
+
+        try:
+            await ss.apply_work_output(work_output, str(updated.request.id))
+        except RuntimeError as e:
+            return (
+                current.with_response(
+                    AgentResponse(
+                        request_id=updated.request.id,
+                        status=ResponseStatus.FAILED,
+                        failure_kind=FailureKind.INTEGRATION_FAILED,
+                        error=f"integration failed: {e}",
+                    )
+                ),
+                True,
+            )
+
+        return updated, False
+
+    def _handle_decompose(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
+        spec = updated.request.spec
+        if not isinstance(spec, WorkSpec):
+            return self._handle_failed(state, updated)
+
+        new_plan_request = AgentRequest(
+            agent_type=AgentType.PLAN,
+            source=RequestSource.USER,
+            spec=PlanSpec(
+                northstar=spec.objective,
+                contract=AgentContract(
+                    objective=spec.contract.objective,
+                    success_condition=spec.contract.success_condition,
+                    acceptance_criteria=spec.contract.acceptance_criteria,
+                    constraints=[
+                        "Each subtask must have exactly one concern",
+                        "Subtasks must be non-overlapping",
+                    ],
+                    non_goals=[
+                        "Do not combine setup, implementation, and testing in a single task"
+                    ],
+                ),
+            ),
+        )
+        state = state.add_nodes([DAGNode(request=new_plan_request)])
+        state = self._transfer_dependents(state, updated.request.id, new_plan_request.id)
+        self._emit_node_decomposed(updated, new_plan_request)
+        return state
+
+    def _handle_failed(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
+        self._emit_node_failed(updated)
+        self._fire_node(self._callbacks.on_node_failed, updated)
+        return self._cancel_dependents(state, updated.request.id)
+
+    def _transfer_dependents(
+        self,
+        state: SchedulerState,
+        from_id: RequestId,
+        to_id: RequestId,
+    ) -> SchedulerState:
+        """Repoint all PENDING nodes depending on from_id to depend on to_id instead."""
+        for node in list(state.dag.values()):
+            if node.node_state == NodeState.PENDING and from_id in node.request.dependencies:
+                new_deps = (node.request.dependencies - {from_id}) | {to_id}
+                updated_request = node.request.model_copy(
+                    update={"dependencies": frozenset(new_deps)}
+                )
+                state = state.update_node(node.model_copy(update={"request": updated_request}))
+        return state
+
+    def _cancel_dependents(self, state: SchedulerState, failed_id: RequestId) -> SchedulerState:
+        failed_ids: set[RequestId] = {failed_id}
+        while True:
+            to_cancel = [
+                node
+                for nid, node in state.dag.items()
+                if node.node_state == NodeState.PENDING
+                and node.request.dependencies & failed_ids
+                and nid not in failed_ids
+            ]
+            if not to_cancel:
+                break
+            for node in to_cancel:
+                state = state.update_node(node.with_state(NodeState.CANCELLED))
+                failed_ids.add(node.request.id)
+        return state
 
     def _emit_node_decomposed(self, node: DAGNode, plan_request: AgentRequest) -> None:
         if self._run_id is None:
@@ -109,6 +288,35 @@ class Scheduler:
             ),
         )
 
+    def _fire_node(self, callback: Callable[[DAGNode], None] | None, node: DAGNode) -> None:
+        if callback is None:
+            return
+        try:
+            callback(node)
+        except Exception:
+            logger.exception("Scheduler callback raised an exception")
+
+
+class Scheduler:
+    """Async scheduler that drives a DAG of agent requests to completion."""
+
+    def __init__(
+        self,
+        runner: AgentRunner,
+        state_services: dict[str, StateService] | None = None,
+        callbacks: SchedulerCallbacks | None = None,
+        telemetry_sink: TelemetrySink | None = None,
+        run_id: UUID | None = None,
+    ) -> None:
+        self._runner = runner
+        self._callbacks = callbacks or SchedulerCallbacks()
+        self._consequences = SchedulerConsequenceHandler(
+            state_services=state_services,
+            callbacks=self._callbacks,
+            telemetry_sink=telemetry_sink,
+            run_id=run_id,
+        )
+
     async def run(
         self,
         state: SchedulerState,
@@ -145,8 +353,6 @@ class Scheduler:
             raw = await asyncio.gather(*coros, return_exceptions=True)
 
             for node, result in zip(to_dispatch, raw):
-                current = state.dag[node.request.id]
-
                 if isinstance(result, BaseException):
                     error_response = AgentResponse(
                         request_id=node.request.id,
@@ -154,147 +360,10 @@ class Scheduler:
                         failure_kind=FailureKind.INTERNAL_ERROR,
                         error=str(result),
                     )
-                    failed = current.with_response(error_response)
-                    state = state.update_node(failed)
-                    self._emit_node_failed(failed)
-                    self._fire_node(self._callbacks.on_node_failed, failed)
-                    state = self._cancel_dependents(state, node.request.id)
+                    state = await self._consequences.apply(state, node, error_response)
                 else:
-                    response: AgentResponse = result
-                    plan_expansion: list[DAGNode] = []
-                    if (
-                        node.request.agent_type == AgentType.PLAN
-                        and response.status == ResponseStatus.COMPLETED
-                        and isinstance(response.output, PlanResponse)
-                    ):
-                        plan_expansion = [
-                            DAGNode(request=request)
-                            for request in PlanExpansionBuilder(node.request).build(response.output)
-                        ]
-                    updated = current.with_response(response)
-                    state = state.update_node(updated)
+                    state = await self._consequences.apply(state, node, result)
 
-                    if updated.node_state == NodeState.INTEGRATED:
-                        integration_failed = False
-                        if (
-                            node.request.agent_type == AgentType.WORK
-                            and self._state_services is not None
-                            and response.status != ResponseStatus.ALREADY_DONE
-                        ):
-                            spec = node.request.spec
-                            if isinstance(spec, WorkSpec):
-                                ss = self._state_services.get(spec.artifact)
-                                if ss is not None:
-                                    work_output = (
-                                        response.output
-                                        if isinstance(response.output, WorkOutput)
-                                        else None
-                                    )
-                                    if work_output is None or (
-                                        not work_output.files and not work_output.dependencies
-                                    ):
-                                        updated = current.with_response(
-                                            AgentResponse(
-                                                request_id=node.request.id,
-                                                status=ResponseStatus.FAILED,
-                                                error="completed with empty work output — no files or dependencies produced",
-                                            )
-                                        )
-                                        integration_failed = True
-                                    else:
-                                        try:
-                                            await ss.apply_work_output(
-                                                work_output, str(node.request.id)
-                                            )
-                                        except RuntimeError as e:
-                                            updated = current.with_response(
-                                                AgentResponse(
-                                                    request_id=node.request.id,
-                                                    status=ResponseStatus.FAILED,
-                                                    failure_kind=FailureKind.INTEGRATION_FAILED,
-                                                    error=f"integration failed: {e}",
-                                                )
-                                            )
-                                            state = state.update_node(updated)
-                                            integration_failed = True
-
-                        if integration_failed:
-                            failed_node = updated.with_state(NodeState.FAILED)
-                            state = state.update_node(failed_node)
-                            self._emit_node_failed(failed_node)
-                            self._fire_node(self._callbacks.on_node_failed, failed_node)
-                            state = self._cancel_dependents(state, node.request.id)
-                        else:
-                            if plan_expansion:
-                                state = state.add_nodes(plan_expansion)
-                            self._fire_node(self._callbacks.on_node_completed, updated)
-                    elif response.status == ResponseStatus.DECOMPOSE and isinstance(
-                        node.request.spec, WorkSpec
-                    ):
-                        spec = node.request.spec
-                        new_plan_request = AgentRequest(
-                            agent_type=AgentType.PLAN,
-                            source=RequestSource.USER,
-                            spec=PlanSpec(
-                                northstar=spec.objective,
-                                contract=AgentContract(
-                                    objective=spec.contract.objective,
-                                    success_condition=spec.contract.success_condition,
-                                    acceptance_criteria=spec.contract.acceptance_criteria,
-                                    constraints=[
-                                        "Each subtask must have exactly one concern",
-                                        "Subtasks must be non-overlapping",
-                                    ],
-                                    non_goals=[
-                                        "Do not combine setup, implementation, and testing"
-                                        " in a single task"
-                                    ],
-                                ),
-                            ),
-                        )
-                        state = state.add_nodes([DAGNode(request=new_plan_request)])
-                        state = self._transfer_dependents(
-                            state, node.request.id, new_plan_request.id
-                        )
-                        self._emit_node_decomposed(updated, new_plan_request)
-                    else:
-                        self._emit_node_failed(updated)
-                        self._fire_node(self._callbacks.on_node_failed, updated)
-                        state = self._cancel_dependents(state, node.request.id)
-
-        return state
-
-    def _transfer_dependents(
-        self,
-        state: SchedulerState,
-        from_id: RequestId,
-        to_id: RequestId,
-    ) -> SchedulerState:
-        """Repoint all PENDING nodes depending on from_id to depend on to_id instead."""
-        for node in list(state.dag.values()):
-            if node.node_state == NodeState.PENDING and from_id in node.request.dependencies:
-                new_deps = (node.request.dependencies - {from_id}) | {to_id}
-                updated_request = node.request.model_copy(
-                    update={"dependencies": frozenset(new_deps)}
-                )
-                state = state.update_node(node.model_copy(update={"request": updated_request}))
-        return state
-
-    def _cancel_dependents(self, state: SchedulerState, failed_id: RequestId) -> SchedulerState:
-        failed_ids: set[RequestId] = {failed_id}
-        while True:
-            to_cancel = [
-                node
-                for nid, node in state.dag.items()
-                if node.node_state == NodeState.PENDING
-                and node.request.dependencies & failed_ids
-                and nid not in failed_ids
-            ]
-            if not to_cancel:
-                break
-            for node in to_cancel:
-                state = state.update_node(node.with_state(NodeState.CANCELLED))
-                failed_ids.add(node.request.id)
         return state
 
     def _fire_node(self, callback: Callable[[DAGNode], None] | None, node: DAGNode) -> None:
