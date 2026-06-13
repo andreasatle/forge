@@ -1,4 +1,4 @@
-"""AttemptEngine — generic attempt/validation/retry loop for work and plan tasks."""
+"""AttemptEngine and AttemptLifecycle for work and plan PWC execution."""
 
 import logging
 from collections.abc import Awaitable, Callable
@@ -226,8 +226,8 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
     )
 
 
-class AttemptEngine[T]:
-    """Generic producer/critic/referee retry loop for work and plan agents."""
+class AttemptLifecycle[T]:
+    """Owner of producer/critic/referee execution for work and plan agents."""
 
     def __init__(
         self,
@@ -488,3 +488,39 @@ class AttemptEngine[T]:
             "maximum validation attempts exhausted without an accept disposition",
             self._validator.work_noun(),
         )
+
+
+class AttemptEngine[T]:
+    """Compatibility entry point that delegates PWC execution to AttemptLifecycle."""
+
+    def __init__(
+        self,
+        request: AgentRequest,
+        state_view: StateView,
+        validator: OutputValidator[T],
+        run_fn: Callable[[str], Awaitable[AgentResponse]],
+        registry: AdapterRegistry | None = None,
+        critic_provider: LLMProvider | None = None,
+        referee_provider: LLMProvider | None = None,
+        max_attempts: int = 3,
+        telemetry_sink: TelemetrySink | None = None,
+        run_id: UUID | None = None,
+        initial_revision: RevisionRequest | None = None,
+    ) -> None:
+        self._lifecycle = AttemptLifecycle(
+            request=request,
+            state_view=state_view,
+            validator=validator,
+            run_fn=run_fn,
+            registry=registry,
+            critic_provider=critic_provider,
+            referee_provider=referee_provider,
+            max_attempts=max_attempts,
+            telemetry_sink=telemetry_sink,
+            run_id=run_id,
+            initial_revision=initial_revision,
+        )
+
+    async def run(self, prompt: str) -> AgentResponse:
+        """Run attempts with validation/retry; return AgentResponse."""
+        return await self._lifecycle.run(prompt)
