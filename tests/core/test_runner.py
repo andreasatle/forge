@@ -15,11 +15,13 @@ from forge.core.models import (
     DAGNode,
     FailureKind,
     NodeState,
+    PlanResponse,
     PlanSpec,
     RequestSource,
     ResponseStatus,
     RunResult,
     SchedulerState,
+    TaskSpec,
     WorkSpec,
 )
 from forge.core.runner import (
@@ -108,46 +110,37 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
 
 
 async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
-    """Return a hardcoded A→B→C dependency chain for use in integration tests."""
+    """Return a hardcoded A→B→C plan for use in integration tests."""
     if request.source == RequestSource.PLANNER:
-        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
 
-    a = AgentRequest(
-        agent_type=AgentType.WORK,
-        source=RequestSource.PLANNER,
-        spec=WorkSpec(
-            objective="task A",
-            success_condition="A done",
-            adapter="coding",
-            artifact="codebase",
-        ),
-    )
-    b = AgentRequest(
-        agent_type=AgentType.WORK,
-        source=RequestSource.PLANNER,
-        spec=WorkSpec(
-            objective="task B",
-            success_condition="B done",
-            adapter="coding",
-            artifact="codebase",
-        ),
-        dependencies=frozenset({a.id}),
-    )
-    c = AgentRequest(
-        agent_type=AgentType.WORK,
-        source=RequestSource.PLANNER,
-        spec=WorkSpec(
-            objective="task C",
-            success_condition="C done",
-            adapter="coding",
-            artifact="codebase",
-        ),
-        dependencies=frozenset({b.id}),
-    )
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        follow_up=[c, b, a],
+        output=PlanResponse(
+            tasks=[
+                TaskSpec(
+                    objective="task A",
+                    success_condition="A done",
+                    adapter="coding",
+                    artifact="codebase",
+                ),
+                TaskSpec(
+                    objective="task B",
+                    success_condition="B done",
+                    adapter="coding",
+                    artifact="codebase",
+                    depends_on=[0],
+                ),
+                TaskSpec(
+                    objective="task C",
+                    success_condition="C done",
+                    adapter="coding",
+                    artifact="codebase",
+                    depends_on=[1],
+                ),
+            ]
+        ),
     )
 
 
@@ -290,7 +283,7 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
 
 
 async def test_make_plan_handler_planner_source_returns_completed() -> None:
-    """make_plan_handler returns empty follow-up for PLANNER-source requests without calling the LLM."""
+    """make_plan_handler returns completed for PLANNER-source requests without calling the LLM."""
     handler = make_plan_handler(
         _mock_registry(),
         artifact_names=["codebase"],
@@ -305,40 +298,26 @@ async def test_make_plan_handler_planner_source_returns_completed() -> None:
     response = await handler(request)
 
     assert response.status == ResponseStatus.COMPLETED
-    assert response.follow_up == []
 
 
-async def test_scripted_plan_handler_user_source_emits_three_follow_ups() -> None:
-    """scripted_plan_handler returns exactly three follow-up requests for a USER source."""
+async def test_scripted_plan_handler_user_source_emits_three_plan_tasks() -> None:
+    """scripted_plan_handler returns exactly three PlanResponse tasks for a USER source."""
     response = await scripted_plan_handler(_plan_request())
 
-    assert len(response.follow_up) == 3
+    assert isinstance(response.output, PlanResponse)
+    assert len(response.output.tasks) == 3
 
 
-async def test_scripted_plan_handler_follow_ups_form_valid_chain() -> None:
-    """scripted_plan_handler follow-ups form a linear A→B→C dependency chain."""
+async def test_scripted_plan_handler_plan_tasks_form_valid_chain() -> None:
+    """scripted_plan_handler tasks form a linear A→B→C dependency chain."""
     response = await scripted_plan_handler(_plan_request())
 
-    by_id = {r.id: r for r in response.follow_up}
-    work_nodes = [r for r in response.follow_up if r.agent_type == AgentType.WORK]
-    no_deps = [r for r in work_nodes if not r.dependencies]
-    one_dep = [r for r in work_nodes if len(r.dependencies) == 1]
-    two_deps_or_more = [r for r in work_nodes if len(r.dependencies) > 1]
-
-    assert len(no_deps) == 1, "exactly one root node (A)"
-    assert len(one_dep) == 2, "B depends on A, C depends on B"
-    assert len(two_deps_or_more) == 0
-
-    a = no_deps[0]
-    b = next(r for r in one_dep if a.id in r.dependencies)
-    c = next(r for r in one_dep if b.id in r.dependencies)
-
-    assert b.id in by_id
-    assert c.id in by_id
+    assert isinstance(response.output, PlanResponse)
+    assert [task.depends_on for task in response.output.tasks] == [[], [0], [1]]
 
 
-async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> None:
-    """scripted_plan_handler returns an empty follow-up list for a PLANNER source request."""
+async def test_scripted_plan_handler_planner_source_emits_no_plan_output() -> None:
+    """scripted_plan_handler returns no plan output for a PLANNER source request."""
     planner_request = AgentRequest(
         agent_type=AgentType.PLAN,
         source=RequestSource.PLANNER,
@@ -346,7 +325,7 @@ async def test_scripted_plan_handler_planner_source_emits_empty_follow_up() -> N
     )
     response = await scripted_plan_handler(planner_request)
 
-    assert response.follow_up == []
+    assert response.output is None
 
 
 @pytest.mark.slow
@@ -380,7 +359,7 @@ async def test_scheduler_dispatches_global_planner_with_user_source() -> None:
 
     async def capturing_plan_handler(request: AgentRequest) -> AgentResponse:
         captured_sources.append(request.source)
-        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, follow_up=[])
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
 
     runner = Runner()
     runner.register(AgentType.PLAN, capturing_plan_handler)

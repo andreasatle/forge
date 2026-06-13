@@ -393,10 +393,6 @@ class PlanResponse(BaseModel, frozen=True):
 ProducerOutput = PlanResponse | WorkOutput
 
 
-def _empty_agent_requests() -> list[AgentRequest]:
-    return []
-
-
 class AgentDiagnostic(BaseModel, frozen=True):
     """Bounded diagnostic context captured from a failed agent attempt."""
 
@@ -419,7 +415,6 @@ class AgentResponse(BaseModel):
     request_id: RequestId
     status: ResponseStatus
     output: ProducerOutput | None = None
-    follow_up: list[AgentRequest] = Field(default_factory=_empty_agent_requests)
     error: str | None = None
     failure_kind: FailureKind | None = None
     ran_tests_and_passed: bool = False

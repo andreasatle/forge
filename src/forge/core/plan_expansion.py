@@ -1,4 +1,4 @@
-"""Planner follow-up conversion from PlanResponse to work AgentRequests."""
+"""Scheduler-owned conversion from PlanResponse to work AgentRequests."""
 
 from forge.core.models import (
     AgentContract,
@@ -10,14 +10,14 @@ from forge.core.models import (
 )
 
 
-class PlanFollowUpBuilder:
-    """Build work follow-up requests from a planner response."""
+class PlanExpansionBuilder:
+    """Build scheduler work requests from an accepted planner response."""
 
     def __init__(self, request: AgentRequest) -> None:
         self.request = request
 
     def build(self, plan_response: PlanResponse) -> list[AgentRequest]:
-        """Convert a PlanResponse into work follow-up nodes with remapped dependencies."""
+        """Convert a PlanResponse into work requests with remapped dependencies."""
         if not plan_response.tasks:
             return []
 

@@ -6,7 +6,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from forge.agents.plan_follow_up import PlanFollowUpBuilder
 from forge.core.models import (
     AgentContract,
     AgentRequest,
@@ -24,6 +23,7 @@ from forge.core.models import (
     WorkOutput,
     WorkSpec,
 )
+from forge.core.plan_expansion import PlanExpansionBuilder
 from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
@@ -155,18 +155,16 @@ class Scheduler:
                     state = self._cancel_dependents(state, node.request.id)
                 else:
                     response: AgentResponse = result
+                    plan_expansion: list[DAGNode] = []
                     if (
                         node.request.agent_type == AgentType.PLAN
                         and response.status == ResponseStatus.COMPLETED
                         and isinstance(response.output, PlanResponse)
                     ):
-                        response = response.model_copy(
-                            update={
-                                "follow_up": PlanFollowUpBuilder(node.request).build(
-                                    response.output
-                                )
-                            }
-                        )
+                        plan_expansion = [
+                            DAGNode(request=request)
+                            for request in PlanExpansionBuilder(node.request).build(response.output)
+                        ]
                     updated = current.with_response(response)
                     state = state.update_node(updated)
 
@@ -221,9 +219,8 @@ class Scheduler:
                             self._fire_node(self._callbacks.on_node_failed, failed_node)
                             state = self._cancel_dependents(state, node.request.id)
                         else:
-                            follow_ups = [DAGNode(request=r) for r in response.follow_up]
-                            if follow_ups:
-                                state = state.add_nodes(follow_ups)
+                            if plan_expansion:
+                                state = state.add_nodes(plan_expansion)
                             self._fire_node(self._callbacks.on_node_completed, updated)
                     elif response.status == ResponseStatus.DECOMPOSE and isinstance(
                         node.request.spec, WorkSpec

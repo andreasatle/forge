@@ -322,7 +322,6 @@ class ToolLoop:
         max_tool_iterations: int = 25,
         correction_prompt_fn: Callable[[Exception, str], str] | None = None,
         adapter_spec: AdapterSpec | None = None,
-        follow_up_builder: Callable[[BaseModel], list[AgentRequest]] | None = None,
     ) -> None:
         self.request = request
         self.provider = provider
@@ -333,7 +332,6 @@ class ToolLoop:
         self.max_tool_iterations = max_tool_iterations
         self.correction_prompt_fn = correction_prompt_fn
         self.adapter_spec = adapter_spec
-        self.follow_up_builder = follow_up_builder
         self.prompt_builder = PromptBuilder(
             tools,
             final_response_type,
@@ -439,9 +437,6 @@ class ToolLoop:
                 request_id=self.request.id,
                 status=ResponseStatus.COMPLETED,
                 output=output,
-                follow_up=self.follow_up_builder(parsed)
-                if self.follow_up_builder is not None
-                else [],
                 ran_tests_and_passed=ran_tests_and_passed,
             )
 
@@ -459,7 +454,6 @@ async def run_agent[S: BaseModel](
     max_tool_iterations: int = 25,
     correction_prompt_fn: Callable[[Exception, str], str] | None = None,
     adapter_spec: AdapterSpec | None = None,
-    follow_up_builder: Callable[[BaseModel], list[AgentRequest]] | None = None,
 ) -> AgentResponse:
     """Universal agent engine — plain chat loop with structured JSON parsing."""
     try:
@@ -476,7 +470,6 @@ async def run_agent[S: BaseModel](
             max_tool_iterations=max_tool_iterations,
             correction_prompt_fn=correction_prompt_fn,
             adapter_spec=adapter_spec,
-            follow_up_builder=follow_up_builder,
         ).run()
 
     except Exception as e:

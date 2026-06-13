@@ -63,12 +63,11 @@ def _work_request(*, deps: frozenset[RequestId] = frozenset()) -> AgentRequest:
     )
 
 
-def _ok(request: AgentRequest, *, follow_up: list[AgentRequest] | None = None) -> AgentResponse:
+def _ok(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
         output=WorkOutput(files=[FileContent(path="src/out.py", content="x = 1")]),
-        follow_up=follow_up or [],
     )
 
 
@@ -109,24 +108,7 @@ async def test_single_work_node_completes() -> None:
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
 
-async def test_follow_up_requests_added_and_executed() -> None:
-    """Follow-up requests emitted by an agent are added to the DAG and executed."""
-    work_a = _work_request()
-    work_b = _work_request()
-
-    async def runner(request: AgentRequest) -> AgentResponse:
-        if request.id == work_a.id:
-            return _ok(request, follow_up=[work_b])
-        return _ok(request)
-
-    state = _base_state().add_nodes([DAGNode(request=work_a)])
-    final = await Scheduler(runner=runner).run(state, _plan_request())
-
-    assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
-    assert final.dag[work_b.id].node_state == NodeState.INTEGRATED
-
-
-async def test_scheduler_derives_follow_up_from_accepted_plan_output() -> None:
+async def test_scheduler_derives_work_nodes_from_accepted_plan_output() -> None:
     """Accepted PlanResponse output is converted to WORK nodes by the scheduler."""
     planner = _plan_request()
     plan = PlanResponse(
@@ -176,7 +158,7 @@ async def test_scheduler_derives_follow_up_from_accepted_plan_output() -> None:
     assert work_b.request.dependencies == frozenset({work_a.request.id})
 
 
-async def test_scheduler_does_not_derive_follow_up_from_failed_plan_output() -> None:
+async def test_scheduler_does_not_derive_work_nodes_from_failed_plan_output() -> None:
     """Rejected planner responses do not create work nodes even when output is present."""
     planner = _plan_request()
     plan = PlanResponse(

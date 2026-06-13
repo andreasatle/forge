@@ -1199,24 +1199,11 @@ async def test_plan_response_validator_render_for_critic_includes_tasks() -> Non
 
 
 async def test_plan_response_validator_extracts_only_typed_output() -> None:
-    """PlanResponseValidator never reconstructs a plan from follow_up requests."""
+    """PlanResponseValidator returns None when response has no PlanResponse output."""
     request = _plan_request()
-    follow_ups = [
-        AgentRequest(
-            agent_type=AgentType.WORK,
-            source=RequestSource.PLANNER,
-            spec=WorkSpec(
-                objective="derived work",
-                success_condition="tests pass",
-                adapter="coding",
-                artifact="codebase",
-            ),
-        )
-    ]
     response = AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        follow_up=follow_ups,
     )
 
     assert PlanResponseValidator().extract_from_response(response) is None
@@ -1307,7 +1294,6 @@ async def test_decompose_disposition_returns_decompose_status_immediately() -> N
 
     assert result.status == ResponseStatus.DECOMPOSE
     assert result.output is None
-    assert result.follow_up == []
     decompose_events = [e for e in sink.events if e.event_type == "pwc.decompose.requested"]
     assert len(decompose_events) == 1
     assert decompose_events[0].status == "decompose"

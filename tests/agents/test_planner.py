@@ -63,7 +63,6 @@ async def test_planner_task_executor_returns_typed_plan_output() -> None:
 
     assert response.status == ResponseStatus.COMPLETED
     assert isinstance(response.output, PlanResponse)
-    assert response.follow_up == []
     assert len(response.output.tasks) == 1
     task = response.output.tasks[0]
     assert task.objective == "Fetch pages"
@@ -332,7 +331,7 @@ async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
     assert "Respond with ONLY a JSON object" not in user_prompt
 
 
-async def test_planner_output_contains_tasks_not_follow_up_nodes() -> None:
+async def test_planner_output_contains_tasks_not_scheduler_nodes() -> None:
     """plan_agent returns PlanResponse tasks, not scheduler AgentRequests."""
     request = _make_request()
     provider = _mock_provider(
@@ -348,7 +347,6 @@ async def test_planner_output_contains_tasks_not_follow_up_nodes() -> None:
     assert isinstance(response.output, PlanResponse)
     assert len(response.output.tasks) == 1
     assert response.output.tasks[0].objective == "A"
-    assert response.follow_up == []
 
 
 async def test_planner_preserves_task_dependency_indices() -> None:
@@ -368,7 +366,6 @@ async def test_planner_preserves_task_dependency_indices() -> None:
     assert isinstance(response.output, PlanResponse)
     task_b = next(task for task in response.output.tasks if task.objective == "B")
     assert task_b.depends_on == [0]
-    assert response.follow_up == []
 
 
 async def test_planner_prompt_requires_testable_success_conditions() -> None:
