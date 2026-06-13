@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from forge.core.config import ArtifactConfig, ForgeConfig, ModelsConfig
+from forge.core.config import (
+    ArtifactConfig,
+    ForgeConfig,
+    ForgeConfigLoader,
+    ModelsConfig,
+    load_config,
+)
 
 
 def _write_yaml(tmp_path: Path, content: str) -> Path:
@@ -404,3 +410,110 @@ def test_max_tool_iterations_parsed_from_yaml(tmp_path: Path) -> None:
     )
     config = ForgeConfig.load(p)
     assert config.max_tool_iterations == 50
+
+
+# ForgeConfigLoader direct tests
+
+
+_MINIMAL_DATA: dict[str, object] = {
+    "northstar": "do the thing",
+    "workspace": "./ws",
+    "artifacts": [{"name": "codebase", "type": "coding", "language": "python"}],
+}
+
+
+def test_loader_load_data_returns_forge_config() -> None:
+    """ForgeConfigLoader.load_data parses a minimal valid mapping."""
+    config = ForgeConfigLoader().load_data(_MINIMAL_DATA)
+    assert config.northstar == "do the thing"
+    assert config.workspace.is_absolute()
+    assert len(config.artifacts) == 1
+
+
+def test_loader_load_data_raises_on_missing_northstar() -> None:
+    """ForgeConfigLoader.load_data raises when northstar is absent."""
+    data: dict[str, object] = {
+        "workspace": "./ws",
+        "artifacts": [{"name": "codebase", "type": "coding", "language": "python"}],
+    }
+    with pytest.raises(ValueError, match="northstar"):
+        ForgeConfigLoader().load_data(data)
+
+
+def test_loader_load_data_raises_on_missing_workspace() -> None:
+    """ForgeConfigLoader.load_data raises when workspace is absent."""
+    data: dict[str, object] = {
+        "northstar": "goal",
+        "artifacts": [{"name": "codebase", "type": "coding", "language": "python"}],
+    }
+    with pytest.raises(ValueError, match="workspace"):
+        ForgeConfigLoader().load_data(data)
+
+
+def test_loader_load_artifacts_parses_single_artifact() -> None:
+    """ForgeConfigLoader.load_artifacts converts raw list to ArtifactConfig instances."""
+    raw = [{"name": "codebase", "type": "coding", "language": "python"}]
+    artifacts = ForgeConfigLoader().load_artifacts(raw)
+    assert len(artifacts) == 1
+    assert artifacts[0].name == "codebase"
+    assert artifacts[0].language == "python"
+
+
+def test_loader_load_artifacts_raises_on_empty_list() -> None:
+    """ForgeConfigLoader.load_artifacts raises when the list is empty."""
+    with pytest.raises(ValueError, match="artifacts"):
+        ForgeConfigLoader().load_artifacts([])
+
+
+def test_loader_load_artifacts_raises_on_non_list() -> None:
+    """ForgeConfigLoader.load_artifacts raises when raw is not a list."""
+    with pytest.raises(ValueError, match="artifacts"):
+        ForgeConfigLoader().load_artifacts("not-a-list")
+
+
+def test_loader_load_models_config_returns_models_config() -> None:
+    """ForgeConfigLoader.load_models_config parses nested planner/worker mapping."""
+    raw: dict[str, object] = {
+        "planner": {"producer": "claude/sonnet", "critic": "claude/haiku"},
+        "worker": {"producer": "openai/gpt-4o"},
+    }
+    models = ForgeConfigLoader().load_models_config(raw)
+    assert models.planner.producer == "claude/sonnet"
+    assert models.planner.critic == "claude/haiku"
+    assert models.worker.producer == "openai/gpt-4o"
+
+
+def test_loader_load_models_config_defaults_when_empty() -> None:
+    """ForgeConfigLoader.load_models_config returns defaults for an empty mapping."""
+    models = ForgeConfigLoader().load_models_config({})
+    assert models.planner.producer == "ollama/gemma4:e4b"
+    assert models.worker.producer == "ollama/gemma4:e4b"
+
+
+def test_loader_load_path_delegates_to_load_data(tmp_path: Path) -> None:
+    """ForgeConfigLoader.load_path reads YAML from disk and produces a ForgeConfig."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfigLoader().load_path(p)
+    assert config.northstar == "goal"
+    assert config.workspace.is_absolute()
+
+
+def test_load_config_wrapper_delegates_correctly(tmp_path: Path) -> None:
+    """load_config() is a thin wrapper that returns the same result as ForgeConfig.load()."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    assert load_config(p).northstar == ForgeConfig.load(p).northstar
+    assert load_config(p).workspace == ForgeConfig.load(p).workspace
+
+
+def test_loader_invalid_int_scalar_raises() -> None:
+    """ForgeConfigLoader.load_data raises when concurrency is not an integer."""
+    data: dict[str, object] = {**_MINIMAL_DATA, "concurrency": "fast"}
+    with pytest.raises(ValueError, match="concurrency"):
+        ForgeConfigLoader().load_data(data)
+
+
+def test_loader_invalid_bool_scalar_raises() -> None:
+    """ForgeConfigLoader.load_data raises when verbose is not a boolean."""
+    data: dict[str, object] = {**_MINIMAL_DATA, "verbose": "yes"}
+    with pytest.raises(ValueError, match="verbose"):
+        ForgeConfigLoader().load_data(data)

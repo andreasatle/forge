@@ -53,22 +53,30 @@ class ForgeConfig:
     @staticmethod
     def load(path: Path) -> "ForgeConfig":
         """Parse the YAML file at path and return a validated ForgeConfig."""
+        return ForgeConfigLoader().load_path(path)
+
+
+class ForgeConfigLoader:
+    """Owns the boundary from untyped YAML to typed ForgeConfig."""
+
+    def load_path(self, path: Path) -> ForgeConfig:
+        """Read YAML from disk and return a validated ForgeConfig."""
         raw: object = yaml.safe_load(path.read_text())
-        data = _as_mapping(raw, "ForgeConfig")
+        return self.load_data(_as_mapping(raw, "ForgeConfig"))
+
+    def load_data(self, data: Mapping[str, object]) -> ForgeConfig:
+        """Parse a raw mapping to a validated ForgeConfig."""
         if "northstar" not in data:
             raise ValueError("ForgeConfig: missing required field 'northstar'")
         if "workspace" not in data:
             raise ValueError("ForgeConfig: missing required field 'workspace'")
-        artifact_data = _required_sequence(data.get("artifacts"), "artifacts")
-        if not artifact_data:
-            raise ValueError("artifacts is required — declare at least one artifact in forge.yaml")
-        artifacts = _load_artifacts(artifact_data)
+        artifacts = self.load_artifacts(data.get("artifacts"))
         for artifact in artifacts:
             if artifact.type == "coding" and not artifact.language:
                 raise ValueError(
                     f"artifact '{artifact.name}' has type 'coding' but no language declared"
                 )
-        models = _load_models_config(data.get("models", {}))
+        models = self.load_models_config(data.get("models", {}))
         return ForgeConfig(
             northstar=_required_string(data.get("northstar"), "northstar"),
             workspace=Path(_required_string(data.get("workspace"), "workspace")).resolve(),
@@ -82,6 +90,88 @@ class ForgeConfig:
                 data.get("max_tool_iterations"), 25, "max_tool_iterations"
             ),
         )
+
+    def load_artifacts(self, raw: object) -> list[ArtifactConfig]:
+        """Parse raw artifact data to list[ArtifactConfig]."""
+        artifacts_data = _required_sequence(raw, "artifacts")
+        if not artifacts_data:
+            raise ValueError("artifacts is required — declare at least one artifact in forge.yaml")
+        artifacts: list[ArtifactConfig] = []
+        for index, item in enumerate(artifacts_data):
+            artifact = _as_mapping(item, f"artifacts[{index}]")
+            artifacts.append(
+                ArtifactConfig(
+                    name=_required_string(artifact.get("name"), f"artifacts[{index}].name"),
+                    type=_required_string(artifact.get("type"), f"artifacts[{index}].type"),
+                    language=_optional_string(
+                        artifact.get("language"), f"artifacts[{index}].language"
+                    ),
+                    description=_optional_string(
+                        artifact.get("description"), f"artifacts[{index}].description"
+                    ),
+                )
+            )
+        return artifacts
+
+    def load_models_config(self, raw: object) -> ModelsConfig:
+        """Parse raw models mapping to ModelsConfig."""
+        models = _as_mapping(raw, "models")
+        flat_critic = _optional_model(models.get("critic"), "models.critic")
+        flat_referee = _optional_model(models.get("referee"), "models.referee")
+        return ModelsConfig(
+            planner=self._load_pwc_model_config(
+                models.get("planner"),
+                field="models.planner",
+                fallback_critic=flat_critic,
+                fallback_referee=flat_referee,
+            ),
+            worker=self._load_pwc_model_config(
+                models.get("worker"),
+                field="models.worker",
+                fallback_critic=flat_critic,
+                fallback_referee=flat_referee,
+            ),
+        )
+
+    def _load_pwc_model_config(
+        self,
+        value: object,
+        *,
+        field: str,
+        default_producer: str = "ollama/gemma4:e4b",
+        fallback_critic: str | None = None,
+        fallback_referee: str | None = None,
+    ) -> PwcModelConfig:
+        if isinstance(value, str):
+            producer = _required_model(value, field)
+            return PwcModelConfig(
+                producer=producer,
+                critic=fallback_critic or producer,
+                referee=fallback_referee or producer,
+            )
+        if value is None:
+            return PwcModelConfig(
+                producer=default_producer,
+                critic=fallback_critic or default_producer,
+                referee=fallback_referee or default_producer,
+            )
+        model_data = _as_mapping(value, field)
+        producer = _required_model(model_data.get("producer"), f"{field}.producer")
+        return PwcModelConfig(
+            producer=producer,
+            critic=_optional_model(model_data.get("critic"), f"{field}.critic")
+            if "critic" in model_data
+            else fallback_critic or producer,
+            referee=_optional_model(model_data.get("referee"), f"{field}.referee")
+            if "referee" in model_data
+            else fallback_referee or producer,
+            max_attempts=_optional_int(model_data.get("max_attempts"), 3, f"{field}.max_attempts"),
+        )
+
+
+def load_config(path: Path) -> ForgeConfig:
+    """Load a ForgeConfig from a YAML file at path."""
+    return ForgeConfigLoader().load_path(path)
 
 
 def _as_mapping(value: object, field: str) -> dict[str, object]:
@@ -141,77 +231,3 @@ def _optional_bool(value: object, default: bool, field: str) -> bool:
     if not isinstance(value, bool):
         raise ValueError(f"{field} must be a boolean")
     return value
-
-
-def _load_artifacts(artifacts_data: Sequence[object]) -> list[ArtifactConfig]:
-    artifacts: list[ArtifactConfig] = []
-    for index, item in enumerate(artifacts_data):
-        artifact = _as_mapping(item, f"artifacts[{index}]")
-        artifacts.append(
-            ArtifactConfig(
-                name=_required_string(artifact.get("name"), f"artifacts[{index}].name"),
-                type=_required_string(artifact.get("type"), f"artifacts[{index}].type"),
-                language=_optional_string(artifact.get("language"), f"artifacts[{index}].language"),
-                description=_optional_string(
-                    artifact.get("description"), f"artifacts[{index}].description"
-                ),
-            )
-        )
-    return artifacts
-
-
-def _load_pwc_model_config(
-    value: object,
-    *,
-    field: str,
-    default_producer: str = "ollama/gemma4:e4b",
-    fallback_critic: str | None = None,
-    fallback_referee: str | None = None,
-) -> PwcModelConfig:
-    if isinstance(value, str):
-        producer = _required_model(value, field)
-        return PwcModelConfig(
-            producer=producer,
-            critic=fallback_critic or producer,
-            referee=fallback_referee or producer,
-        )
-    if value is None:
-        return PwcModelConfig(
-            producer=default_producer,
-            critic=fallback_critic or default_producer,
-            referee=fallback_referee or default_producer,
-        )
-
-    model_data = _as_mapping(value, field)
-    producer = _required_model(model_data.get("producer"), f"{field}.producer")
-    return PwcModelConfig(
-        producer=producer,
-        critic=_optional_model(model_data.get("critic"), f"{field}.critic")
-        if "critic" in model_data
-        else fallback_critic or producer,
-        referee=_optional_model(model_data.get("referee"), f"{field}.referee")
-        if "referee" in model_data
-        else fallback_referee or producer,
-        max_attempts=_optional_int(model_data.get("max_attempts"), 3, f"{field}.max_attempts"),
-    )
-
-
-def _load_models_config(models_data: object) -> ModelsConfig:
-    models = _as_mapping(models_data, "models")
-
-    flat_critic = _optional_model(models.get("critic"), "models.critic")
-    flat_referee = _optional_model(models.get("referee"), "models.referee")
-    return ModelsConfig(
-        planner=_load_pwc_model_config(
-            models.get("planner"),
-            field="models.planner",
-            fallback_critic=flat_critic,
-            fallback_referee=flat_referee,
-        ),
-        worker=_load_pwc_model_config(
-            models.get("worker"),
-            field="models.worker",
-            fallback_critic=flat_critic,
-            fallback_referee=flat_referee,
-        ),
-    )
