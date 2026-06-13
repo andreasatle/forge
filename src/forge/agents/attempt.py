@@ -9,7 +9,6 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
-from forge.agents.base import render_files
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.core.models import (
@@ -76,59 +75,6 @@ class OutputValidator(Protocol[T]):
     def final_output_reminder(self) -> str:
         """Return a compact output-format reminder for retry prompts."""
         ...
-
-
-class DeltaStateValidator:
-    """OutputValidator for DeltaState — validates file/edit output from work agents."""
-
-    def __init__(self, adapter_spec: AdapterSpec, state_view: StateView) -> None:
-        self._adapter = adapter_spec
-        self._state_view = state_view
-
-    def extract_from_response(self, response: AgentResponse) -> DeltaState | None:
-        """Return typed DeltaState output from the response."""
-        return response.output if isinstance(response.output, DeltaState) else None
-
-    def is_empty(self, output: DeltaState) -> bool:
-        """Return True when the delta has no files, edits, or dependencies."""
-        return not output.new_files and not output.edits and not output.dependencies
-
-    def render_for_critic(self, output: DeltaState) -> str:
-        """Render delta files and existing artifact state for the critic."""
-        return render_files(output, self._state_view)
-
-    def work_noun(self) -> str:
-        """Return the adapter's work noun."""
-        return self._adapter.work_noun
-
-    def requires_nonempty(self) -> bool:
-        """Return the adapter's requires_nonempty_output flag."""
-        return self._adapter.requires_nonempty_output
-
-    def review_context(self) -> ReviewContext:
-        """Return worker-output review language."""
-        return ReviewContext(
-            output_noun=self._adapter.work_noun,
-            review_focus="whether the proposed file, edit, and dependency delta satisfies the task",
-            empty_output_guidance=(
-                "If no files, edits, or dependencies were produced, reject unless the "
-                "success condition is already demonstrably met."
-            ),
-        )
-
-    def final_output_reminder(self) -> str:
-        """Return a compact DeltaState output-format reminder."""
-        return "\n".join(
-            [
-                "FINAL OUTPUT FORMAT REMINDER",
-                "Return valid JSON only matching DeltaState.",
-                "- new_files must be an array of JSON objects.",
-                '  Each new_files item must be {"path": "...", "content": "..."}',
-                "- edits must be an array of JSON objects.",
-                '  Each edits item must be {"path": "...", "old": "...", "new": "..."}',
-                '- Do not use string entries like "path:...".',
-            ]
-        )
 
 
 class WorkOutputValidator:
