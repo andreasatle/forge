@@ -20,7 +20,7 @@ from forge.llm.providers import LLMProvider
 from forge.tools.builtin import build_read_registry
 from forge.tools.registry import ToolRegistry
 
-_FALLBACK_DELTA_EXAMPLE = (
+_FALLBACK_WORK_OUTPUT_EXAMPLE = (
     "No language-specific file layout conventions are configured for this artifact."
 )
 _LANGUAGE_GUIDANCE_CONSTRAINT_PREFIX = "Language plugin guidance:"
@@ -114,20 +114,24 @@ class WorkTaskExecutor:
         for tool in tool_list:
             tools.register(tool)
 
-        if "{delta_example}" in adapter.prompt_template:
+        if "{work_output_example}" in adapter.prompt_template:
             base_version_key = state_view.version_sha or state_view.version
             if plugin:
-                delta_example = plugin.delta_example.format(base_version=base_version_key)
+                work_output_example = plugin.work_output_example.format(
+                    base_version=base_version_key
+                )
             else:
-                delta_example = _FALLBACK_DELTA_EXAMPLE.format(base_version=base_version_key)
+                work_output_example = _FALLBACK_WORK_OUTPUT_EXAMPLE.format(
+                    base_version=base_version_key
+                )
         else:
-            delta_example = ""
+            work_output_example = ""
 
         base_prompt = adapter.prompt_template.format(
             objective=spec.objective,
             success_condition=spec.success_condition,
             base_version=state_view.version,
-            delta_example=delta_example,
+            work_output_example=work_output_example,
         )
         contract_block = render_agent_contract(contract_request)
         base_prompt += f"\n\n{contract_block}\n\nProduce output satisfying this contract."

@@ -518,7 +518,7 @@ async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
     assert len(prompts[2]) - len(prompts[1]) < len(contract_block)
 
 
-async def test_rejected_validation_returns_failed_without_delta() -> None:
+async def test_rejected_validation_returns_failed_without_output() -> None:
     """Engine fails immediately when validation rejects a worker output."""
     request = _work_request()
     work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
@@ -543,12 +543,12 @@ async def test_rejected_validation_returns_failed_without_delta() -> None:
 
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.VALIDATION_REJECTED
-    assert result.delta is None
+    assert result.output is None
     assert "reject" in (result.error or "")
     assert len(_) == 1
 
 
-async def test_repeated_revise_until_max_attempts_returns_failed_without_delta() -> None:
+async def test_repeated_revise_until_max_attempts_returns_failed_without_output() -> None:
     """Engine fails when all validation attempts are exhausted without acceptance."""
     request = _work_request()
     last_work_output = WorkOutput(files=[FileContent(path="main.py", content="final")])
@@ -581,7 +581,7 @@ async def test_repeated_revise_until_max_attempts_returns_failed_without_delta()
 
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.VALIDATION_REJECTED
-    assert result.delta is None
+    assert result.output is None
     assert "maximum validation attempts exhausted" in (result.error or "")
     assert len(prompts) == 2
 
@@ -701,7 +701,7 @@ async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
     assert result.output == work_output
 
 
-async def test_critic_parse_failure_returns_failed_without_delta() -> None:
+async def test_critic_parse_failure_returns_failed_without_output() -> None:
     """Engine fails when critic validation cannot be parsed."""
     request = _work_request()
     work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
@@ -721,13 +721,13 @@ async def test_critic_parse_failure_returns_failed_without_delta() -> None:
 
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.INVALID_JSON
-    assert result.delta is None
+    assert result.output is None
     assert "could not be parsed" in (result.error or "")
     assert len(_) == 1
     mock_referee.assert_not_called()
 
 
-async def test_referee_parse_failure_returns_failed_without_delta() -> None:
+async def test_referee_parse_failure_returns_failed_without_output() -> None:
     """Engine fails when referee validation cannot be parsed."""
     request = _work_request()
     work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
@@ -750,7 +750,7 @@ async def test_referee_parse_failure_returns_failed_without_delta() -> None:
 
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.INVALID_JSON
-    assert result.delta is None
+    assert result.output is None
     assert "could not be parsed" in (result.error or "")
     assert len(_) == 1
     mock_referee.assert_called_once()
@@ -793,7 +793,7 @@ async def test_run_agent_failure_raises_run_agent_failed() -> None:
         assert e.response is failed_response
 
 
-async def test_empty_delta_no_critic_first_attempt_retries_not_already_done() -> None:
+async def test_empty_work_output_no_critic_first_attempt_retries_not_already_done() -> None:
     """Engine retries with correction feedback on a non-final empty output when no critic is configured."""
     request = _work_request()
     work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
@@ -827,7 +827,7 @@ async def test_empty_delta_no_critic_first_attempt_retries_not_already_done() ->
     assert "produced no implementation" in prompts[1]
 
 
-async def test_empty_delta_no_critic_last_attempt_requires_nonempty_false_returns_already_done() -> (
+async def test_empty_work_output_no_critic_last_attempt_requires_nonempty_false_returns_already_done() -> (
     None
 ):
     """Engine returns ALREADY_DONE on the last attempt with empty output when requires_nonempty is False."""
@@ -861,7 +861,9 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_false_return
     mock_critic.assert_not_called()
 
 
-async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns_failed() -> None:
+async def test_empty_work_output_no_critic_last_attempt_requires_nonempty_true_returns_failed() -> (
+    None
+):
     """Engine returns FAILED on the last attempt with empty output when requires_nonempty is True."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
@@ -893,7 +895,7 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns
     mock_critic.assert_not_called()
 
 
-async def test_empty_delta_ran_tests_and_passed_returns_already_done() -> None:
+async def test_empty_work_output_ran_tests_and_passed_returns_already_done() -> None:
     """Engine returns ALREADY_DONE for empty output when ran_tests_and_passed=True, ignoring requires_nonempty."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
@@ -926,7 +928,7 @@ async def test_empty_delta_ran_tests_and_passed_returns_already_done() -> None:
     mock_critic.assert_not_called()
 
 
-async def test_empty_delta_ran_tests_not_passed_uses_existing_behavior() -> None:
+async def test_empty_work_output_ran_tests_not_passed_uses_existing_behavior() -> None:
     """Engine falls through to normal retry/FAILED behavior when ran_tests_and_passed=False."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
@@ -959,7 +961,7 @@ async def test_empty_delta_ran_tests_not_passed_uses_existing_behavior() -> None
     mock_critic.assert_not_called()
 
 
-async def test_empty_delta_critic_already_done_accepts() -> None:
+async def test_empty_work_output_critic_already_done_accepts() -> None:
     """Engine accepts empty output when critic confirms the success condition is already met."""
     request = _work_request()
     run_fn, _ = _make_run_fn(
@@ -989,7 +991,7 @@ async def test_empty_delta_critic_already_done_accepts() -> None:
     mock_critic.assert_called_once()
 
 
-async def test_empty_delta_critic_parse_failure_returns_failed_without_delta() -> None:
+async def test_empty_work_output_critic_parse_failure_returns_failed_without_output() -> None:
     """Engine does not treat an unparsable empty-output critic result as ALREADY_DONE."""
     request = _work_request()
     run_fn, _ = _make_run_fn(
@@ -1013,13 +1015,13 @@ async def test_empty_delta_critic_parse_failure_returns_failed_without_delta() -
 
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.INVALID_JSON
-    assert result.delta is None
+    assert result.output is None
     assert "could not be parsed" in (result.error or "")
     assert len(_) == 1
     mock_critic.assert_called_once()
 
 
-async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
+async def test_empty_work_output_critic_revise_triggers_retry_with_feedback() -> None:
     """Engine retries with feedback when critic returns REVISE on an empty output attempt."""
     request = _work_request()
     work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
@@ -1304,7 +1306,7 @@ async def test_decompose_disposition_returns_decompose_status_immediately() -> N
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.DECOMPOSE
-    assert result.delta is None
+    assert result.output is None
     assert result.follow_up == []
     decompose_events = [e for e in sink.events if e.event_type == "pwc.decompose.requested"]
     assert len(decompose_events) == 1

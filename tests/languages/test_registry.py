@@ -25,7 +25,7 @@ def _write_plugin(dir: Path, name: str) -> None:
                 "add_dependency_command": "pm add {package}",
                 "project_structure": ["src/", "tests/"],
                 "prompt_supplement": f"Use {name} conventions.",
-                "delta_example": "",
+                "work_output_example": "",
             }
         )
     )
@@ -110,7 +110,7 @@ def test_add_dependency_command_loaded_correctly_from_yaml(tmp_path: Path) -> No
                 "add_dependency_command": "custom install {package}",
                 "project_structure": ["src/"],
                 "prompt_supplement": "Use custom conventions.",
-                "delta_example": "",
+                "work_output_example": "",
             }
         )
     )
@@ -161,10 +161,10 @@ def test_python_supplement_contains_packaging_guidance() -> None:
     assert "setup.py" in supplement
 
 
-def test_language_delta_examples_are_str_format_safe() -> None:
-    """delta_example must be safe to call str.format(base_version=N) on — all literal braces escaped."""
+def test_language_work_output_examples_are_str_format_safe() -> None:
+    """work_output_example must be safe to call str.format(base_version=N) on — all literal braces escaped."""
     for path in LANGUAGES_DIR.glob("*.yaml"):
         data = yaml.safe_load(path.read_text())
-        example = data["delta_example"]
+        example = data["work_output_example"]
         if example:
             example.format(base_version=0)

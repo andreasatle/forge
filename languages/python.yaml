@@ -42,7 +42,7 @@ prompt_supplement: |
     WorkOutput response — this is the ONLY way to add packages.
   - Never attempt to install packages via tools, shell commands, or
     any other mechanism.
-delta_example: |
+work_output_example: |
   Example of a valid WorkOutput response:
   {{
     "files": [

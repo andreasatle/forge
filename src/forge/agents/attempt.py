@@ -16,7 +16,6 @@ from forge.core.models import (
     AgentResponse,
     CriticDisposition,
     CriticFinding,
-    DeltaState,
     FailureKind,
     PlanResponse,
     ResponseStatus,
@@ -363,15 +362,13 @@ def _preview(text: str | None, limit: int = 500) -> str | None:
     return f"{stripped[: limit - 15].rstrip()} ...[truncated]"
 
 
-def _delta_summary(delta: DeltaState) -> dict[str, object]:
+def _work_output_summary(output: WorkOutput) -> dict[str, object]:
     return {
-        "new_files_count": len(delta.new_files),
-        "edit_count": len(delta.edits),
-        "dependency_count": len(delta.dependencies),
-        "new_file_paths": [file.path for file in delta.new_files],
-        "edit_paths": [edit.path for edit in delta.edits],
-        "dependencies": list(delta.dependencies),
-        "base_version": delta.base_version,
+        "file_count": len(output.files),
+        "dependency_count": len(output.dependencies),
+        "file_paths": [file.path for file in output.files],
+        "dependencies": list(output.dependencies),
+        "base_version": output.base_version,
     }
 
 
@@ -400,8 +397,8 @@ def _producer_response_summary(response: AgentResponse) -> dict[str, object]:
         "output_type": output_type,
         "ran_tests_and_passed": response.ran_tests_and_passed,
     }
-    if isinstance(response.output, DeltaState):
-        data["delta"] = _delta_summary(response.output)
+    if isinstance(response.output, WorkOutput):
+        data["work_output"] = _work_output_summary(response.output)
     elif isinstance(response.output, PlanResponse):
         data["plan"] = _plan_summary(response.output)
     return data
@@ -529,7 +526,6 @@ class AttemptEngine[T]:
                         request_id=self._request.id,
                         status=ResponseStatus.ALREADY_DONE,
                         output=response.output,
-                        delta=response.delta,
                     )
                 if self._critic_provider is None:
                     is_last = attempt == self._max_attempts - 1
@@ -575,7 +571,6 @@ class AttemptEngine[T]:
                             request_id=self._request.id,
                             status=ResponseStatus.ALREADY_DONE,
                             output=response.output,
-                            delta=response.delta,
                         )
                     _logger.info(
                         "attempt %d/%d: empty output, no critic, last attempt, requires nonempty — FAILED",
@@ -627,7 +622,6 @@ class AttemptEngine[T]:
                         request_id=self._request.id,
                         status=ResponseStatus.ALREADY_DONE,
                         output=response.output,
-                        delta=response.delta,
                     )
                 if finding.disposition == CriticDisposition.REJECT:
                     _logger.info(

@@ -24,7 +24,7 @@ def _make_plugin(name: str = "python") -> LanguagePlugin:
         add_dependency_command="pm add {package}",
         project_structure=["src/", "tests/"],
         prompt_supplement="test",
-        delta_example="",
+        work_output_example="",
     )
 
 

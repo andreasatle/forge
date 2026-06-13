@@ -8,6 +8,6 @@ prompt_template: |
   Audit the following: {objective}
   Success condition: {success_condition}
 
-  Read the relevant files, then respond with a DeltaState.
-  - If you find issues, report them as markdown files in new_files.
-  - If there are no issues, you may return an empty DeltaState.
+  Read the relevant files, then respond with a WorkOutput.
+  - If you find issues, report them as markdown files in files.
+  - If there are no issues, you may return an empty WorkOutput.

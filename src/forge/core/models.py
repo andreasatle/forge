@@ -59,7 +59,7 @@ class FailureKind(Enum):
     TIMEOUT = "timeout"
     MAX_ITERATIONS = "max_iterations"
     TOOL_ERROR = "tool_error"
-    STALE_DELTA = "stale_delta"
+    STALE_WORK_OUTPUT = "stale_work_output"
     INTEGRATION_FAILED = "integration_failed"
     TEST_FAILED = "test_failed"
     VALIDATION_REJECTED = "validation_rejected"
@@ -314,56 +314,6 @@ def render_agent_contract(request: AgentRequest) -> str:
     return "\n".join(lines)
 
 
-class Edit(BaseModel, frozen=True):
-    """A surgical edit to an existing file — old must be unique in the file."""
-
-    path: str
-    old: str
-    new: str
-
-
-class FileWrite(BaseModel, frozen=True):
-    """A new file to be written to the artifact directory."""
-
-    path: str
-    content: str
-
-
-def _empty_edits() -> list[Edit]:
-    return []
-
-
-def _empty_file_writes() -> list[FileWrite]:
-    return []
-
-
-def _empty_worker_ids() -> list[RequestId]:
-    return []
-
-
-class IntegrationError(BaseModel, frozen=True):
-    """An error encountered during integration — conflict, apply failure, test failure, etc."""
-
-    kind: str
-    description: str
-    path: str | None = None
-    worker_ids: list[RequestId] = Field(default_factory=_empty_worker_ids)
-
-
-def _empty_integration_errors() -> list[IntegrationError]:
-    return []
-
-
-class DeltaState(BaseModel, frozen=True):
-    """Legacy state change produced by older worker paths."""
-
-    new_files: list[FileWrite] = Field(default_factory=_empty_file_writes)
-    edits: list[Edit] = Field(default_factory=_empty_edits)
-    dependencies: list[str] = Field(default_factory=_empty_strings)
-    errors: list[IntegrationError] = Field(default_factory=_empty_integration_errors)
-    base_version: int = 0
-
-
 class FileContent(BaseModel, frozen=True):
     """A file to be written to the artifact directory — full content."""
 
@@ -440,7 +390,7 @@ class PlanResponse(BaseModel, frozen=True):
     tasks: list[TaskSpec]
 
 
-ProducerOutput = PlanResponse | DeltaState | WorkOutput
+ProducerOutput = PlanResponse | WorkOutput
 
 
 def _empty_agent_requests() -> list[AgentRequest]:
@@ -469,37 +419,12 @@ class AgentResponse(BaseModel):
     request_id: RequestId
     status: ResponseStatus
     output: ProducerOutput | None = None
-    delta: DeltaState | None = None
     follow_up: list[AgentRequest] = Field(default_factory=_empty_agent_requests)
     error: str | None = None
     failure_kind: FailureKind | None = None
     ran_tests_and_passed: bool = False
     diagnostics: list[AgentDiagnostic] = Field(default_factory=_empty_agent_diagnostics)
     revision: RevisionRequest | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _sync_legacy_delta(cls, data: object) -> object:
-        """Keep legacy delta construction compatible while output becomes canonical."""
-        if not isinstance(data, dict):
-            return data
-        values: dict[str, object] = dict(cast(dict[str, object], data))
-        output = values.get("output")
-        delta = values.get("delta")
-        if output is None and isinstance(delta, DeltaState):
-            values["output"] = delta
-        elif delta is None and isinstance(output, DeltaState):
-            values["delta"] = output
-        return values
-
-    @model_validator(mode="after")
-    def _sync_parsed_legacy_delta(self) -> "AgentResponse":
-        """Sync parsed legacy delta payloads after Pydantic has built nested models."""
-        if self.output is None and self.delta is not None:
-            object.__setattr__(self, "output", self.delta)
-        elif self.delta is None and isinstance(self.output, DeltaState):
-            object.__setattr__(self, "delta", self.output)
-        return self
 
 
 class ToolCallRequest(BaseModel, frozen=True):

@@ -14,7 +14,7 @@ _REQUIRED_FIELDS = (
     "add_dependency_command",
     "project_structure",
     "prompt_supplement",
-    "delta_example",
+    "work_output_example",
 )
 
 
@@ -30,7 +30,7 @@ class LanguagePlugin:
     add_dependency_command: str
     project_structure: list[str]
     prompt_supplement: str
-    delta_example: str
+    work_output_example: str
 
 
 class LanguageRegistry:
@@ -62,7 +62,7 @@ class LanguageRegistry:
                 add_dependency_command=data["add_dependency_command"],
                 project_structure=data["project_structure"],
                 prompt_supplement=data["prompt_supplement"],
-                delta_example=data["delta_example"],
+                work_output_example=data["work_output_example"],
             )
             self._plugins[plugin.name] = plugin
             print(f"loaded language plugin: {plugin.name}")

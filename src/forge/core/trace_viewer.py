@@ -344,11 +344,11 @@ def _html_event_body(event: TraceEvent) -> str:
         output_type = _str_value(data.get("output_type")) or "none"
         summary = f"status={status} output_type={output_type}"
         plan = _dict_value(data.get("plan"))
-        delta = _dict_value(data.get("delta"))
+        work_output = _dict_value(data.get("work_output"))
         if plan:
             summary += f" plan_tasks={plan.get('task_count', 0)}"
-        if delta:
-            summary += f" delta={_delta_text(delta)}"
+        if work_output:
+            summary += f" work_output={_work_output_text(work_output)}"
         return f'<p class="event-body">{_e(summary)}</p>'
     if event_type == "critic.finding.parsed":
         return _html_disposition(event, "critic_finding")
@@ -484,11 +484,11 @@ def _render_event(event: TraceEvent, *, indent: str, full: bool) -> list[str]:
         output_type = _str_value(data.get("output_type")) or "none"
         parts = [f"{indent}producer parsed: status={status} output_type={output_type}"]
         plan = _dict_value(data.get("plan"))
-        delta = _dict_value(data.get("delta"))
+        work_output = _dict_value(data.get("work_output"))
         if plan:
             parts[0] += f" plan_tasks={plan.get('task_count', 0)}"
-        if delta:
-            parts[0] += f" delta={_delta_text(delta)}"
+        if work_output:
+            parts[0] += f" work_output={_work_output_text(work_output)}"
         error = _str_value(data.get("error"))
         if error:
             parts[0] += f" error={error}"
@@ -720,18 +720,17 @@ def _mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).isoformat()
 
 
-def _delta_text(delta: dict[str, Any]) -> str:
+def _work_output_text(output: dict[str, Any]) -> str:
     pieces: list[str] = []
     for key, label in [
-        ("new_file_paths", "new"),
-        ("edit_paths", "edits"),
+        ("file_paths", "files"),
         ("dependencies", "deps"),
     ]:
-        value = delta.get(key)
+        value = output.get(key)
         values = _list_value(value)
         if values:
             pieces.append(f"{label}={len(values)}")
-    base = _str_value(delta.get("base_version"))
+    base = _str_value(output.get("base_version"))
     if base:
         pieces.append(f"base={base}")
     return ",".join(pieces) if pieces else "none"

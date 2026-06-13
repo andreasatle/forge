@@ -17,7 +17,7 @@ prompt_supplement: |
   The built-in #[cfg(test)] module is sufficient for unit tests — always use it.
   Always write at least one test per public function.
   List required crates in the final dependency output.
-delta_example: |
+work_output_example: |
   Use paths such as src/main.rs and tests/integration_test.rs.
-  Keep runtime crates in Cargo.toml and DeltaState.dependencies.
+  Keep runtime crates in Cargo.toml and WorkOutput.dependencies.
   Keep test-only utilities under dev-dependencies in Cargo.toml.

@@ -288,5 +288,7 @@ async def _start(config: ForgeConfig, *, verbose: bool = False) -> None:
             agent_type = node.request.agent_type.value
             node_state = node.node_state.value
             n_deps = len(node.request.dependencies)
-            delta = node.response.delta if node.response else None
-            print(f"  {short_id}  {agent_type:<10}  {node_state:<10}  deps={n_deps}  delta={delta}")
+            output = node.response.output if node.response else None
+            print(
+                f"  {short_id}  {agent_type:<10}  {node_state:<10}  deps={n_deps}  output={output}"
+            )

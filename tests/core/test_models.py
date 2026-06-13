@@ -1,6 +1,6 @@
 """Tests for core Pydantic models: DAGNode, SchedulerState, and AgentRequest immutability."""
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
@@ -13,12 +13,9 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     DAGNode,
-    DeltaState,
-    Edit,
     FailureKind,
     FileContent,
     FileView,
-    IntegrationError,
     NodeState,
     PlanResponse,
     PlanSpec,
@@ -278,65 +275,6 @@ def test_plan_spec_has_no_goal_field():
     assert not hasattr(PlanSpec, "goal")
 
 
-# --- Edit ---
-
-
-def test_edit_is_frozen():
-    """Edit raises on direct field mutation."""
-    edit = Edit(path="a.py", old="foo", new="bar")
-    with pytest.raises(Exception):
-        edit.path = "b.py"  # type: ignore[misc]
-
-
-# --- IntegrationError ---
-
-
-def test_integration_error_is_frozen():
-    """IntegrationError raises on direct field mutation."""
-    err = IntegrationError(kind="conflict", description="merge conflict")
-    with pytest.raises(Exception):
-        err.kind = "other"  # type: ignore[misc]
-
-
-def test_integration_error_path_defaults_to_none():
-    """IntegrationError.path defaults to None when not provided."""
-    err = IntegrationError(kind="conflict", description="merge conflict")
-    assert err.path is None
-
-
-def test_integration_error_worker_ids_defaults_to_empty_list():
-    """IntegrationError.worker_ids defaults to an empty list."""
-    err = IntegrationError(kind="conflict", description="merge conflict")
-    assert err.worker_ids == []
-
-
-# --- DeltaState ---
-
-
-def test_delta_state_defaults_to_empty_lists():
-    """DeltaState fields all default to empty lists."""
-    delta = DeltaState()
-    assert delta.edits == []
-    assert delta.new_files == []
-    assert delta.dependencies == []
-    assert delta.errors == []
-
-
-def test_delta_state_with_errors_serializes_correctly():
-    """DeltaState with errors round-trips through model_dump and model_validate."""
-
-    wid = uuid4()
-    err = IntegrationError(
-        kind="test_failure", description="tests failed", path="src/a.py", worker_ids=[wid]
-    )
-    delta = DeltaState(errors=[err])
-    data = delta.model_dump()
-    restored = DeltaState.model_validate(data)
-    assert len(restored.errors) == 1
-    assert restored.errors[0].kind == "test_failure"
-    assert restored.errors[0].worker_ids == [wid]
-
-
 # --- StateView ---
 
 
@@ -418,7 +356,7 @@ def test_failure_kind_has_expected_values():
         "timeout",
         "max_iterations",
         "tool_error",
-        "stale_delta",
+        "stale_work_output",
         "integration_failed",
         "test_failed",
         "validation_rejected",
@@ -446,21 +384,6 @@ def test_agent_response_failure_kind_none_when_completed():
     request = _make_request()
     response = AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
     assert response.failure_kind is None
-
-
-def test_agent_response_legacy_delta_dict_populates_output():
-    """Legacy serialized delta payloads populate typed producer output on load."""
-    request = _make_request()
-    response = AgentResponse.model_validate(
-        {
-            "request_id": request.id,
-            "status": "completed",
-            "delta": {"dependencies": ["requests"]},
-        }
-    )
-
-    assert response.delta == DeltaState(dependencies=["requests"])
-    assert response.output == response.delta
 
 
 # --- CriticDisposition ---

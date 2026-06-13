@@ -11,7 +11,7 @@ prompt_template: |
   Success condition: {success_condition}
 
   Language-specific output conventions:
-  {delta_example}
+  {work_output_example}
 
   IMPORTANT — your final JSON response MUST be a non-empty WorkOutput:
   - files must contain the complete content of every file you create or modify

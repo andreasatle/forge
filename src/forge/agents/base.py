@@ -14,14 +14,10 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
-    DeltaState,
-    Edit,
     FailureKind,
-    FileWrite,
     PlanResponse,
     ProducerOutput,
     ResponseStatus,
-    StateView,
     ToolCallRequest,
     ToolCallResponse,
     WorkOutput,
@@ -107,40 +103,6 @@ def _invalid_response_diagnostic(error: Exception, raw: str) -> AgentDiagnostic:
     )
 
 
-def _delta_state_json_repair_prompt(error: Exception, raw: str) -> str:
-    """Render precise, non-contradictory repair instructions for DeltaState JSON."""
-    items = _validation_error_items(error)
-    lines = [
-        "JSON REPAIR REQUIRED",
-        "Your previous response was invalid for the required DeltaState schema.",
-        f"Validation error: {error}",
-    ]
-    if items:
-        lines.append("")
-        lines.append("Invalid schema locations:")
-        for path, bad_value in items[:5]:
-            location = path or "(root)"
-            if bad_value is None:
-                lines.append(f"- {location}")
-            else:
-                lines.append(f"- {location}: bad value excerpt {bad_value}")
-    lines.extend(
-        [
-            "",
-            "Required DeltaState shape:",
-            "- new_files must be an array of JSON objects.",
-            '  Each new_files item must be {"path": "...", "content": "..."}',
-            "- edits must be an array of JSON objects.",
-            '  Each edits item must be {"path": "...", "old": "...", "new": "..."}',
-            '- Do not use string entries like "path:..." or "content:...".',
-            "- Do not use a mapping keyed by filepath; use arrays of objects.",
-            "- Keep the original AgentRequest contract intact.",
-            "- Return valid JSON only, with no markdown or explanation.",
-        ]
-    )
-    return "\n".join(lines)
-
-
 class PromptBuilder:
     """Build the generic system prompt for tool use and final response schemas."""
 
@@ -187,13 +149,10 @@ class PromptBuilder:
         ]
         return "\n".join(lines)
 
-    def build(self, tracked_delta: DeltaState | None = None) -> str:
+    def build(self) -> str:
         """Build the system prompt string, showing tool and schema sections as appropriate."""
-        tracked_delta = tracked_delta or DeltaState()
         has_tools = self.tools is not None and bool(self.tools)
-        show_final = (
-            self.tools is None or not _is_empty_delta(tracked_delta) or self.always_show_final
-        )
+        show_final = self.tools is None or self.always_show_final
         step2 = "2. " if has_tools and show_final else ""
         lines: list[str] = [
             "You must respond with JSON only — no markdown, no explanation.",
@@ -229,25 +188,7 @@ class PromptBuilder:
                 f"{step2}When you have completed your task, respond with JSON matching this generated schema:",
                 self.render_response_schema(self.final_response_type),
             ]
-            if self.final_response_type is DeltaState:
-                lines += [
-                    "",
-                    "Rules for your final response:",
-                    "  - Include complete file contents for newly created files.",
-                    "  - Existing-file edits must identify exact unique text to replace.",
-                    "  - Do not return an empty change set if you created or modified files.",
-                    "",
-                    "Format rules:",
-                    "- new_files: create files that do not exist yet",
-                    '  each entry: {"path": "...", "content": "full file content"}',
-                    "- edits: replace existing text in existing files",
-                    '  each entry: {"path": "...", "old": "exact text to replace", "new": "replacement"}',
-                    "- Never put file content in edits.",
-                    "- Never put old/new strings in new_files.",
-                    "- edits.old must never be empty — if you need to add content to an existing file, use the actual existing text as old. If the file does not exist yet, use new_files instead of edits.",
-                    "IMPORTANT: your response must include base_version set to the current state version shown above.",
-                ]
-            elif self.final_response_type is WorkOutput:
+            if self.final_response_type is WorkOutput:
                 lines += [
                     "",
                     "Rules for your final response:",
@@ -268,10 +209,9 @@ class PromptBuilder:
 def build_system_prompt(
     tools: ToolRegistry | None,
     final_response_type: type[BaseModel],
-    tracked_delta: DeltaState = DeltaState(),
 ) -> str:
     """Build a system prompt for the given tools and response type."""
-    return PromptBuilder(tools, final_response_type).build(tracked_delta)
+    return PromptBuilder(tools, final_response_type).build()
 
 
 class ResponseParser:
@@ -312,7 +252,7 @@ def parse_response(
 
 
 class TrackedToolExecutor:
-    """Execute tool calls and track framework-observed DeltaState changes."""
+    """Execute tool calls and return framework responses."""
 
     def __init__(self, tools: ToolRegistry | None) -> None:
         self.tools = tools
@@ -320,32 +260,25 @@ class TrackedToolExecutor:
     async def execute(
         self,
         request: ToolCallRequest,
-        tracked_delta: DeltaState,
-    ) -> tuple[ToolCallResponse, DeltaState]:
-        """Execute a tool call and return the response plus updated tracked delta."""
+    ) -> ToolCallResponse:
+        """Execute a tool call and return the response."""
         if self.tools is None:
-            return (
-                ToolCallResponse(
-                    kind="tool_response",
-                    name=request.name,
-                    success=False,
-                    result=None,
-                    error="no tools registered",
-                ),
-                tracked_delta,
+            return ToolCallResponse(
+                kind="tool_response",
+                name=request.name,
+                success=False,
+                result=None,
+                error="no tools registered",
             )
         try:
             tool = self.tools.get(request.name)
         except KeyError as e:
-            return (
-                ToolCallResponse(
-                    kind="tool_response",
-                    name=request.name,
-                    success=False,
-                    result=None,
-                    error=str(e),
-                ),
-                tracked_delta,
+            return ToolCallResponse(
+                kind="tool_response",
+                name=request.name,
+                success=False,
+                result=None,
+                error=str(e),
             )
         try:
             request_obj = tool.request_type.model_validate(request.arguments)
@@ -354,93 +287,24 @@ class TrackedToolExecutor:
                 raise ValueError(
                     f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}"
                 )
-            updated = tracked_delta
-            if request.name == "write_file":
-                fw = FileWrite(path=request.arguments["path"], content=request.arguments["content"])
-                new_files = [f for f in updated.new_files if f.path != fw.path] + [fw]
-                updated = updated.model_copy(update={"new_files": new_files})
-            elif request.name == "replace_in_file":
-                edit = Edit(
-                    path=request.arguments["path"],
-                    old=request.arguments["old"],
-                    new=request.arguments["new"],
-                )
-                updated = updated.model_copy(update={"edits": list(updated.edits) + [edit]})
-            elif request.name == "add_dependency":
-                pkg = request.arguments["package"]
-                if pkg not in updated.dependencies:
-                    updated = updated.model_copy(
-                        update={"dependencies": list(updated.dependencies) + [pkg]}
-                    )
-            print(
-                f"[debug] tracked: tool={request.name}"
-                f" delta_files={len(updated.new_files)}"
-                f" delta_edits={len(updated.edits)}"
-                f" delta_deps={len(updated.dependencies)}"
-            )
-            return (
-                ToolCallResponse(
-                    kind="tool_response",
-                    name=request.name,
-                    success=True,
-                    result=result.model_dump(),
-                ),
-                updated,
+            return ToolCallResponse(
+                kind="tool_response",
+                name=request.name,
+                success=True,
+                result=result.model_dump(),
             )
         except Exception as e:
-            return (
-                ToolCallResponse(
-                    kind="tool_response",
-                    name=request.name,
-                    success=False,
-                    result=None,
-                    error=str(e),
-                ),
-                tracked_delta,
+            return ToolCallResponse(
+                kind="tool_response",
+                name=request.name,
+                success=False,
+                result=None,
+                error=str(e),
             )
 
 
-def _merge_delta(tracked: DeltaState, reported: DeltaState) -> DeltaState:
-    """Merge tracked (framework-observed) and reported (LLM-declared) deltas; tracked wins on conflict."""
-    files: dict[str, FileWrite] = {fw.path: fw for fw in reported.new_files}
-    files.update({fw.path: fw for fw in tracked.new_files})
-    edits: dict[str, Edit] = {e.path: e for e in reported.edits}
-    edits.update({e.path: e for e in tracked.edits})
-    seen: set[str] = set()
-    deps: list[str] = []
-    for d in [*tracked.dependencies, *reported.dependencies]:
-        if d not in seen:
-            seen.add(d)
-            deps.append(d)
-    return DeltaState(new_files=list(files.values()), edits=list(edits.values()), dependencies=deps)
-
-
-def _is_empty_delta(delta: DeltaState) -> bool:
-    return not delta.new_files and not delta.edits and not delta.dependencies
-
-
-def render_files(delta: DeltaState, state_view: StateView) -> str:
-    """Render produced files, applied edits, and existing artifact state as a readable block."""
-    lines: list[str] = []
-    if delta.new_files:
-        lines.append("Files produced:")
-        for fw in delta.new_files:
-            lines += [f"\nFile: {fw.path}", "```", fw.content, "```"]
-    if delta.edits:
-        if lines:
-            lines.append("")
-        lines.append("Edits applied:")
-        for edit in delta.edits:
-            lines += [f"\nFile: {edit.path}", "  old:", edit.old, "  new:", edit.new]
-    if not delta.new_files and not delta.edits:
-        lines.append("No files or edits were produced.")
-    if state_view.files:
-        if lines:
-            lines.append("")
-        lines.append("Existing artifact files:")
-        for fv in state_view.files:
-            lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
-    return "\n".join(lines)
+def _is_empty_work_output(output: WorkOutput) -> bool:
+    return not output.files and not output.dependencies
 
 
 class ToolLoop:
@@ -480,7 +344,7 @@ class ToolLoop:
 
     async def run(self) -> AgentResponse:
         """Run the tool loop until a final response is produced or limits are exceeded."""
-        print(f"[debug] system prompt (initial):\n{self.prompt_builder.build(DeltaState())}")
+        print(f"[debug] system prompt (initial):\n{self.prompt_builder.build()}")
         print(f"[debug] user prompt:\n{self.prompt}")
         messages: list[ChatMessage] = [
             {"role": "system", "content": ""},
@@ -490,7 +354,6 @@ class ToolLoop:
         requires_nonempty = (
             self.adapter_spec.requires_nonempty_output if self.adapter_spec is not None else True
         )
-        tracked_delta = DeltaState()
         any_tool_called = False
         ran_tests_and_passed = False
         retry_count = 0
@@ -499,7 +362,7 @@ class ToolLoop:
         for _ in range(self.max_tool_iterations):
             messages[0] = {
                 "role": "system",
-                "content": self.prompt_builder.build(tracked_delta),
+                "content": self.prompt_builder.build(),
             }
             raw = await self.provider.chat(messages)
 
@@ -508,8 +371,8 @@ class ToolLoop:
                 if (
                     self.tools is not None
                     and not any_tool_called
-                    and isinstance(parsed, DeltaState)
-                    and _is_empty_delta(parsed)
+                    and isinstance(parsed, WorkOutput)
+                    and _is_empty_work_output(parsed)
                     and requires_nonempty
                 ):
                     available_tools = ", ".join(tool.name for tool in self.tools) or "(none)"
@@ -520,17 +383,16 @@ class ToolLoop:
                         '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
                     )
                 if (
-                    isinstance(parsed, DeltaState)
-                    and _is_empty_delta(_merge_delta(tracked_delta, parsed))
+                    isinstance(parsed, WorkOutput)
+                    and _is_empty_work_output(parsed)
                     and self.request.agent_type == AgentType.WORK
                     and requires_nonempty
                 ):
                     return AgentResponse(
                         request_id=self.request.id,
                         status=ResponseStatus.FAILED,
-                        error="empty delta: no new_files, edits, or dependencies produced",
+                        error="empty work output: no files or dependencies produced",
                         failure_kind=FailureKind.VALIDATION_REJECTED,
-                        delta=DeltaState(),
                         ran_tests_and_passed=ran_tests_and_passed,
                     )
             except ValueError as e:
@@ -548,20 +410,14 @@ class ToolLoop:
                 correction = (
                     self.correction_prompt_fn(e, raw)
                     if self.correction_prompt_fn
-                    else (
-                        _delta_state_json_repair_prompt(e, raw)
-                        if self.final_response_type is DeltaState
-                        else f"Invalid response: {e}. Respond with valid JSON."
-                    )
+                    else f"Invalid response: {e}. Respond with valid JSON."
                 )
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": correction})
                 continue
 
             if isinstance(parsed, ToolCallRequest):
-                tool_response, tracked_delta = await self.tool_executor.execute(
-                    parsed, tracked_delta
-                )
+                tool_response = await self.tool_executor.execute(parsed)
                 any_tool_called = True
                 if (
                     tool_response.name == "run_tests"
@@ -574,11 +430,8 @@ class ToolLoop:
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 continue
 
-            delta = _merge_delta(tracked_delta, parsed) if isinstance(parsed, DeltaState) else None
             output: ProducerOutput | None = None
-            if delta is not None:
-                output = delta
-            elif isinstance(parsed, PlanResponse):
+            if isinstance(parsed, PlanResponse):
                 output = parsed
             elif isinstance(parsed, WorkOutput):
                 output = parsed
@@ -586,7 +439,6 @@ class ToolLoop:
                 request_id=self.request.id,
                 status=ResponseStatus.COMPLETED,
                 output=output,
-                delta=delta,
                 follow_up=self.follow_up_builder(parsed)
                 if self.follow_up_builder is not None
                 else [],
@@ -602,7 +454,7 @@ async def run_agent[S: BaseModel](
     provider: LLMProvider,
     prompt: str,
     tools: ToolRegistry | None = None,
-    final_response_type: type[BaseModel] = DeltaState,
+    final_response_type: type[BaseModel] = WorkOutput,
     max_retries: int = 3,
     max_tool_iterations: int = 25,
     correction_prompt_fn: Callable[[Exception, str], str] | None = None,

@@ -100,11 +100,10 @@ def _mock_ss() -> MagicMock:
 
 
 async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
-    """Return a completed response with a placeholder plan delta, for testing."""
+    """Return a completed response for testing."""
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        delta=None,
     )
 
 

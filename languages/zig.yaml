@@ -17,7 +17,7 @@ prompt_supplement: |
   Always write at least one test per public function.
   Include test steps in build.zig so `zig build test` runs all tests.
   List required packages in the final dependency output.
-delta_example: |
+work_output_example: |
   Use paths such as src/main.zig and src/module.zig.
   Keep package metadata in build.zig.zon and wire test steps through build.zig.
   Use std.testing for test code.

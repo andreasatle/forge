@@ -101,7 +101,7 @@ def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
             add_dependency_command="uv add {package}",
             project_structure=[],
             prompt_supplement="",
-            delta_example="",
+            work_output_example="",
         )
     )
     return lr
@@ -242,7 +242,7 @@ async def test_work_task_executor_python_language_supplement_appears_in_prompt(
             add_dependency_command="uv add {package}",
             project_structure=[],
             prompt_supplement="UNIQUE_EXECUTOR_SUPPLEMENT",
-            delta_example="",
+            work_output_example="",
         )
     )
     executor = WorkTaskExecutor(
@@ -613,8 +613,8 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path: 
     assert "run_tests" not in _tool_names(tools)
 
 
-async def test_worker_prompt_warns_against_empty_delta(tmp_path: Path) -> None:
-    """coding.yaml warns that empty DeltaState is always wrong."""
+async def test_worker_prompt_warns_against_empty_work_output(tmp_path: Path) -> None:
+    """coding.yaml warns that empty WorkOutput is always wrong."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -711,7 +711,7 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path: Path) -> N
             add_dependency_command="uv add {package}",
             project_structure=[],
             prompt_supplement="UNIQUE_SUPPLEMENT_MARKER",
-            delta_example="",
+            work_output_example="",
         )
     )
 
@@ -756,7 +756,7 @@ async def test_producer_critic_and_referee_receive_same_plugin_guidance(
             add_dependency_command="toy add {package}",
             project_structure=["module.toy"],
             prompt_supplement="TOY_REVIEWER_CONTRACT_GUIDANCE",
-            delta_example='{{"new_files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
+            work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
         )
     )
 
@@ -920,7 +920,7 @@ async def test_non_python_language_plugin_does_not_receive_python_wording(
             add_dependency_command="toy add {package}",
             project_structure=["module.toy"],
             prompt_supplement="TOY_LANGUAGE_SUPPLEMENT",
-            delta_example='{{"new_files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
+            work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
         )
     )
 
@@ -945,7 +945,7 @@ async def test_non_python_language_plugin_does_not_receive_python_wording(
     _assert_no_python_prompt_words(user_prompt)
 
 
-async def test_language_delta_example_appears_in_worker_prompt(tmp_path: Path) -> None:
+async def test_language_work_output_example_appears_in_worker_prompt(tmp_path: Path) -> None:
     """work_agent renders language-specific conventions into the prompt."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
@@ -964,7 +964,7 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path: Path) -
             add_dependency_command="uv add {package}",
             project_structure=[],
             prompt_supplement="",
-            delta_example='{{"path": "DELTA_EXAMPLE_MARKER"}}',
+            work_output_example='{{"path": "WORK_OUTPUT_EXAMPLE_MARKER"}}',
         )
     )
 
@@ -984,8 +984,8 @@ async def test_language_delta_example_appears_in_worker_prompt(tmp_path: Path) -
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "Language-specific output conventions" in user_prompt
-    assert "Example of a valid DeltaState response" not in user_prompt
-    assert "DELTA_EXAMPLE_MARKER" in user_prompt
+    assert "Example of a valid WorkOutput response" not in user_prompt
+    assert "WORK_OUTPUT_EXAMPLE_MARKER" in user_prompt
 
 
 async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path: Path) -> None:
@@ -1049,7 +1049,7 @@ async def test_run_agent_failure_propagates_as_failed_response(tmp_path: Path) -
 
 
 async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: Path) -> None:
-    """work_agent returns AgentResponse(COMPLETED, delta=...) for a successful engine run."""
+    """work_agent returns AgentResponse(COMPLETED, output=...) for a successful engine run."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")

@@ -543,7 +543,7 @@ async def test_integration_success_marks_node_integrated() -> None:
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
 
-async def test_stale_delta_requeues_not_failed() -> None:
+async def test_stale_work_output_requeues_not_failed() -> None:
     """apply_work_output raising RuntimeError marks node FAILED immediately — no stale retry."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -561,7 +561,7 @@ async def test_stale_delta_requeues_not_failed() -> None:
     ss.apply_work_output.assert_called_once()
 
 
-async def test_stale_delta_fails_after_3_retries() -> None:
+async def test_stale_work_output_fails_after_3_retries() -> None:
     """apply_work_output raising RuntimeError marks node FAILED with INTEGRATION_FAILED."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])

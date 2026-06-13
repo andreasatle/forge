@@ -308,8 +308,8 @@ def _event_data(event_type: str, status: str) -> dict[str, object]:
     if event_type == "producer.response.parsed":
         return {
             "status": status,
-            "output_type": "DeltaState",
-            "delta": {"new_file_paths": ["a.py"]},
+            "output_type": "WorkOutput",
+            "work_output": {"file_paths": ["a.py"]},
         }
     if event_type == "referee.decision.parsed":
         return {"referee_decision": {"disposition": status, "rationale": "looks good"}}

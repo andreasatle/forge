@@ -31,14 +31,14 @@ Read docs/AGENT.md first — it is the authoritative bootstrap brief for Forge a
 - **Fix at the right abstraction level** — if a fix applies to a class of problems, implement it at the base level, not in each instance. Example: retry logic belongs in `run_agent`, not in each agent. Tool loops belong in `run_agent`, not in `work_agent`. Before fixing something specific, ask: "where is the right place for this fix to live?"
 
 ## Adapter / Language Plugin Boundary
-- **Adapters** (`adapters/*.yaml`) are language-agnostic — they own output 
-  format rules, DeltaState structure, and tool-use instructions only.
+- **Adapters** (`adapters/*.yaml`) are language-agnostic — they own output
+  format rules, WorkOutput structure, and tool-use instructions only.
   Never put language-specific content (file paths, package managers, 
   test frameworks, project manifest names) in an adapter.
 - **Language plugins** (`languages/*.yaml`) own everything language-specific:
   project structure, package manager commands, test commands, import 
   conventions, manifest format (pyproject.toml, Cargo.toml, build.zig.zon),
-  and the DeltaState example for that language.
+  and the WorkOutput example for that language.
 - When adding guidance, ask: "would this be wrong for a different language?"
   If yes → language plugin. If no → adapter.
   
