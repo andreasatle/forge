@@ -239,14 +239,14 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
 
 
 def _revision_items_from_hints(hints: list[str], rationale: str) -> list[RevisionItem]:
-    """Convert legacy free-form hints into structured revision items."""
+    """Convert free-form hints into structured revision items."""
     return [
         RevisionItem(required_change=hint, rationale=rationale) for hint in hints if hint.strip()
     ]
 
 
 def _revision_items_from_finding(finding: CriticFinding) -> list[RevisionItem]:
-    """Return structured critic revision items, falling back to legacy hints."""
+    """Return structured critic revision items, falling back to free-form hints."""
     if finding.revision_items:
         return finding.revision_items
     return _revision_items_from_hints(finding.hints, finding.rationale)
@@ -792,7 +792,3 @@ class AttemptEngine[T]:
             "maximum validation attempts exhausted without an accept disposition",
             self._validator.work_noun(),
         )
-
-
-# Backwards-compatible alias kept so existing imports don't break immediately.
-TaskAttemptEngine = AttemptEngine

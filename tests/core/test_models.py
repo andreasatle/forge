@@ -198,39 +198,6 @@ def test_work_spec_with_artifact_serializes_correctly():
     assert restored.artifact == "codebase"
 
 
-def test_old_work_spec_shape_backfills_contract() -> None:
-    """Legacy WorkSpec objective/success_condition fields populate the contract."""
-    spec = WorkSpec(
-        objective="write parser",
-        success_condition="parser passes tests",
-        adapter="coding",
-        artifact="codebase",
-    )
-
-    assert spec.contract.objective == "write parser"
-    assert spec.contract.success_condition == "parser passes tests"
-
-
-def test_old_plan_spec_shape_backfills_contract() -> None:
-    """Legacy PlanSpec northstar field populates a bounded planning contract."""
-    spec = PlanSpec(northstar="build a scraper")
-
-    assert spec.contract.objective == "build a scraper"
-    assert spec.contract.success_condition == "A bounded plan is produced for this objective."
-
-
-def test_contract_only_work_spec_shape_backfills_legacy_fields() -> None:
-    """Contract-first WorkSpec input still exposes temporary legacy fields."""
-    spec = WorkSpec(
-        contract=AgentContract(objective="write parser", success_condition="tests pass"),
-        adapter="coding",
-        artifact="codebase",
-    )
-
-    assert spec.objective == "write parser"
-    assert spec.success_condition == "tests pass"
-
-
 def test_render_agent_contract_includes_contract_and_routing_fields() -> None:
     """The canonical contract block includes contract fields plus work routing fields."""
     request = AgentRequest(

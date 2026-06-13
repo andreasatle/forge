@@ -1,7 +1,7 @@
 """Core Pydantic models and enums shared across all forge components."""
 
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -35,7 +35,6 @@ class NodeState(Enum):
     """Lifecycle states a DAG node moves through during a scheduler run."""
 
     PENDING = "pending"
-    READY = "ready"
     RUNNING = "running"
     INTEGRATED = "integrated"
     FAILED = "failed"
@@ -149,16 +148,6 @@ class AgentContract(BaseModel, frozen=True):
     non_goals: list[str] = Field(default_factory=_empty_strings)
 
 
-def _contract_value(data: dict[str, Any], key: str) -> object:
-    contract = data.get("contract")
-    if isinstance(contract, AgentContract):
-        return getattr(contract, key)
-    if isinstance(contract, dict):
-        contract_dict = cast(dict[str, object], contract)
-        return contract_dict.get(key)
-    return None
-
-
 class PlanSpec(BaseModel):
     """Spec for a planning agent request carrying the northstar goal."""
 
@@ -175,28 +164,23 @@ class PlanSpec(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _backfill_contract(cls, data: object) -> object:
+    def _derive_contract(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
-        data = dict(cast(dict[str, Any], data))
-        objective = data.get("northstar") or _contract_value(data, "objective")
-        if objective is not None and "northstar" not in data:
-            data["northstar"] = objective
-        if "contract" not in data and objective is not None:
-            data["contract"] = {
-                "objective": objective,
+        d: dict[str, object] = dict(data)  # type: ignore[arg-type]
+        if "contract" not in d and d.get("northstar"):
+            d["contract"] = {
+                "objective": d["northstar"],
                 "success_condition": "A bounded plan is produced for this objective.",
             }
-        return data
+        return d
 
     @model_validator(mode="after")
     def _require_contract_fields(self) -> "PlanSpec":
         if not self.northstar:
-            raise ValueError("PlanSpec requires northstar or contract.objective")
+            raise ValueError("PlanSpec requires northstar")
         if not self.contract.objective:
             raise ValueError("PlanSpec contract requires objective")
-        if not self.contract.success_condition:
-            raise ValueError("PlanSpec contract requires success_condition")
         return self
 
 
@@ -217,35 +201,25 @@ class WorkSpec(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _backfill_contract(cls, data: object) -> object:
+    def _derive_contract(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
-        data = dict(cast(dict[str, Any], data))
-        objective = data.get("objective") or _contract_value(data, "objective")
-        success_condition = data.get("success_condition") or _contract_value(
-            data, "success_condition"
-        )
-        if objective is not None and "objective" not in data:
-            data["objective"] = objective
-        if success_condition is not None and "success_condition" not in data:
-            data["success_condition"] = success_condition
-        if "contract" not in data and objective is not None and success_condition is not None:
-            data["contract"] = {
-                "objective": objective,
-                "success_condition": success_condition,
+        d: dict[str, object] = dict(data)  # type: ignore[arg-type]
+        if "contract" not in d and d.get("objective") and d.get("success_condition"):
+            d["contract"] = {
+                "objective": d["objective"],
+                "success_condition": d["success_condition"],
             }
-        return data
+        return d
 
     @model_validator(mode="after")
     def _require_contract_fields(self) -> "WorkSpec":
         if not self.objective:
-            raise ValueError("WorkSpec requires objective or contract.objective")
+            raise ValueError("WorkSpec requires objective")
         if not self.success_condition:
-            raise ValueError("WorkSpec requires success_condition or contract.success_condition")
+            raise ValueError("WorkSpec requires success_condition")
         if not self.contract.objective:
             raise ValueError("WorkSpec contract requires objective")
-        if not self.contract.success_condition:
-            raise ValueError("WorkSpec contract requires success_condition")
         return self
 
 
