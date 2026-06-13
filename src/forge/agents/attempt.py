@@ -1,7 +1,6 @@
 """AttemptEngine — generic attempt/validation/retry loop for work and plan tasks."""
 
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, cast, runtime_checkable
 from uuid import UUID
@@ -11,11 +10,11 @@ from pydantic import BaseModel
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
+from forge.agents.revisions import RevisionHistory
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
     CriticDisposition,
-    CriticFinding,
     FailureKind,
     PlanResponse,
     ResponseStatus,
@@ -31,16 +30,6 @@ from forge.llm.providers import LLMProvider
 _logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-_MAX_REVISION_RATIONALE_CHARS = 1200
-_MAX_REVISION_CHANGE_CHARS = 1600
-_MAX_REVISION_ITEM_RATIONALE_CHARS = 900
-_REPEATED_CONTRACT_MARKER = (
-    "[omitted repeated AgentRequest contract; apply the contract block above]"
-)
-_REPEATED_PLUGIN_GUIDANCE_MARKER = (
-    "[omitted repeated language plugin guidance; apply the binding language constraints above]"
-)
 
 
 @runtime_checkable
@@ -238,121 +227,6 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
     )
 
 
-def _revision_items_from_hints(hints: list[str], rationale: str) -> list[RevisionItem]:
-    """Convert free-form hints into structured revision items."""
-    return [
-        RevisionItem(required_change=hint, rationale=rationale) for hint in hints if hint.strip()
-    ]
-
-
-def _revision_items_from_finding(finding: CriticFinding) -> list[RevisionItem]:
-    """Return structured critic revision items, falling back to free-form hints."""
-    if finding.revision_items:
-        return finding.revision_items
-    return _revision_items_from_hints(finding.hints, finding.rationale)
-
-
-def _build_revision_request(
-    *,
-    rationale: str,
-    prior_attempts: int,
-    items: list[RevisionItem],
-) -> RevisionRequest:
-    """Build a non-empty typed RevisionRequest from structured items or rationale."""
-    if not items:
-        items = [RevisionItem(required_change=rationale, rationale=rationale)]
-    return RevisionRequest(
-        disposition="revise",
-        rationale=rationale,
-        items=items,
-        prior_attempts=prior_attempts,
-    )
-
-
-def _strip_repeated_block(text: str, heading: str, marker: str) -> str:
-    """Remove an embedded invariant prompt block from reviewer-supplied retry text."""
-    start = text.find(heading)
-    if start == -1:
-        return text
-    before = text[:start].rstrip()
-    rest = text[start + len(heading) :]
-    match = re.search(r"\n\s*\n", rest)
-    after = rest[match.end() :].lstrip() if match else ""
-    parts = [part for part in (before, marker, after) if part]
-    return "\n".join(parts)
-
-
-def _truncate_revision_text(text: str, limit: int) -> str:
-    """Bound a retry-history field while preserving enough text to act on it."""
-    stripped = text.strip()
-    if len(stripped) <= limit:
-        return stripped
-    return f"{stripped[: limit - 15].rstrip()} ...[truncated]"
-
-
-def _compact_revision_text(text: str | None, limit: int) -> str:
-    """Compact reviewer text before placing it in accumulated producer retry history."""
-    if not text:
-        return ""
-    compact = _strip_repeated_block(
-        text,
-        "AgentRequest contract:",
-        _REPEATED_CONTRACT_MARKER,
-    )
-    compact = _strip_repeated_block(
-        compact,
-        "Language plugin guidance:",
-        _REPEATED_PLUGIN_GUIDANCE_MARKER,
-    )
-    return _truncate_revision_text(compact, limit)
-
-
-def _render_revision_requests(
-    revision_requests: list[RevisionRequest],
-    output_noun: str,
-    final_output_reminder: str,
-) -> str:
-    """Render accumulated RevisionRequests as a prominent producer retry block."""
-    lines = [
-        "REQUIRED REVISION",
-        "You must revise your next output against the same AgentRequest contract above.",
-        "The next output must address every required change listed below.",
-    ]
-    for request_index, revision_request in enumerate(revision_requests, start=1):
-        lines.extend(
-            [
-                "",
-                f"Revision request {request_index} "
-                f"(after {revision_request.prior_attempts} prior attempt(s)):",
-                f"Previous disposition: {revision_request.disposition}",
-                "Rationale: "
-                f"{_compact_revision_text(revision_request.rationale, _MAX_REVISION_RATIONALE_CHARS)}",
-                "Required changes:",
-            ]
-        )
-        for item_index, item in enumerate(revision_request.items, start=1):
-            criterion = f" [{item.criterion_id}]" if item.criterion_id else ""
-            lines.append(
-                f"{item_index}. Required change{criterion}: "
-                f"{_compact_revision_text(item.required_change, _MAX_REVISION_CHANGE_CHARS)}"
-            )
-            if item.rationale:
-                lines.append(
-                    "   Rationale: "
-                    f"{_compact_revision_text(item.rationale, _MAX_REVISION_ITEM_RATIONALE_CHARS)}"
-                )
-    lines.extend(
-        [
-            "",
-            f"Revise your {output_noun} now.",
-            "Do not repeat the previous output unless it has been changed to address every required change.",
-        ]
-    )
-    if final_output_reminder:
-        lines.extend(["", final_output_reminder])
-    return "\n".join(lines)
-
-
 def _preview(text: str | None, limit: int = 500) -> str | None:
     if text is None:
         return None
@@ -469,7 +343,7 @@ class AttemptEngine[T]:
 
     async def run(self, prompt: str) -> AgentResponse:
         """Run attempts with validation/retry; return AgentResponse."""
-        revision_requests: list[RevisionRequest] = (
+        history = RevisionHistory(
             [self._initial_revision] if self._initial_revision is not None else []
         )
 
@@ -486,16 +360,10 @@ class AttemptEngine[T]:
             )
             current_prompt = (
                 prompt
-                if not revision_requests
+                if not history.requests
                 else (
                     f"{prompt}\n\n"
-                    f"{
-                        _render_revision_requests(
-                            revision_requests,
-                            self._validator.work_noun(),
-                            self._validator.final_output_reminder(),
-                        )
-                    }"
+                    f"{history.render(self._validator.work_noun(), self._validator.final_output_reminder())}"
                 )
             )
             response = await self._run_fn(current_prompt)
@@ -535,7 +403,7 @@ class AttemptEngine[T]:
                             attempt_number,
                             self._max_attempts,
                         )
-                        revision_request = _build_revision_request(
+                        revision_request = RevisionRequest(
                             rationale=(
                                 f"Your previous attempt produced no {self._validator.work_noun()}."
                             ),
@@ -550,7 +418,7 @@ class AttemptEngine[T]:
                                 )
                             ],
                         )
-                        revision_requests.append(revision_request)
+                        history = history.append(revision_request)
                         self._emit(
                             attempt_number=attempt_number,
                             role="revision_loop",
@@ -641,12 +509,11 @@ class AttemptEngine[T]:
                     self._max_attempts,
                     finding.disposition.value,
                 )
-                revision_request = _build_revision_request(
+                history = history.append_from_review(
                     rationale=finding.rationale,
                     prior_attempts=attempt_number,
-                    items=_revision_items_from_finding(finding),
+                    critic_finding=finding,
                 )
-                revision_requests.append(revision_request)
                 self._emit(
                     attempt_number=attempt_number,
                     role="revision_loop",
@@ -654,7 +521,7 @@ class AttemptEngine[T]:
                     event_type="pwc.revision.appended",
                     status="revise",
                     summary="revision request appended",
-                    data={"revision_request": _model_data(revision_request)},
+                    data={"revision_request": _model_data(history.requests[-1])},
                 )
                 continue
 
@@ -748,17 +615,12 @@ class AttemptEngine[T]:
                     status=ResponseStatus.DECOMPOSE,
                 )
 
-            revision_items = (
-                decision.revision_items
-                if decision.revision_items
-                else _revision_items_from_finding(finding)
-            )
-            revision_request = _build_revision_request(
+            history = history.append_from_review(
                 rationale=decision.rationale,
                 prior_attempts=attempt_number,
-                items=revision_items,
+                critic_finding=finding,
+                referee_decision=decision,
             )
-            revision_requests.append(revision_request)
             self._emit(
                 attempt_number=attempt_number,
                 role="revision_loop",
@@ -766,7 +628,7 @@ class AttemptEngine[T]:
                 event_type="pwc.revision.appended",
                 status="revise",
                 summary="revision request appended",
-                data={"revision_request": _model_data(revision_request)},
+                data={"revision_request": _model_data(history.requests[-1])},
             )
 
         _logger.warning(
