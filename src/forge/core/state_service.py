@@ -1,11 +1,9 @@
 """StateService: single mutation boundary for artifact state."""
 
-import re
 import subprocess
-import uuid
 from pathlib import Path
 
-from forge.core.models import DeltaState, FileView, RunResult, StateView, WorkOutput
+from forge.core.models import FileView, RunResult, StateView, WorkOutput
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
@@ -95,81 +93,6 @@ class StateService:
             version_sha=version_sha,
         )
 
-    def apply_delta(self, delta: DeltaState) -> None:
-        """Apply a DeltaState to the artifact directory — writes files, applies edits, and tests.
-
-        When a language plugin is configured the artifact has a git repo. This method uses git
-        stash as a transaction: stash before applying, commit on success, pop on test failure.
-        """
-        artifact_dir = self._workspace.artifact_dir(self._artifact_name)
-
-        stashed = False
-        if self._plugin:
-            subprocess.run(["git", "-C", str(artifact_dir), "add", "-A"], check=True)
-            stash_result = subprocess.run(
-                ["git", "-C", str(artifact_dir), "stash"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            stashed = "No local changes to save" not in stash_result.stdout
-
-        for fw in delta.new_files:
-            target = artifact_dir / fw.path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(fw.content, encoding="utf-8")
-
-        for edit in delta.edits:
-            if not edit.old or not edit.old.strip():
-                raise ValueError(
-                    f"Edit for {edit.path} has empty 'old' string — "
-                    "use new_files to create content, not edits"
-                )
-            target = artifact_dir / edit.path
-            if not target.exists():
-                raise FileNotFoundError(f"file not found: {edit.path}")
-            content = target.read_text(encoding="utf-8")
-            count = len(re.findall(re.escape(edit.old), content))
-            if count == 0:
-                raise ValueError(f"old string not found in {edit.path}")
-            if count > 1:
-                raise ValueError(
-                    f"old string not unique in {edit.path} — found {count} occurrences"
-                )
-            target.write_text(content.replace(edit.old, edit.new, 1), encoding="utf-8")
-
-        if self._plugin and delta.dependencies:
-            for dep in delta.dependencies:
-                cmd = self._plugin.add_dependency_command.format(package=dep)
-                subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
-
-        if self._plugin:
-            test_result = self.run_tests()
-            if test_result.passed:
-                if stashed:
-                    subprocess.run(["git", "-C", str(artifact_dir), "stash", "drop"], check=True)
-                subprocess.run(["git", "-C", str(artifact_dir), "add", "-A"], check=True)
-                subprocess.run(
-                    [
-                        "git",
-                        "-C",
-                        str(artifact_dir),
-                        "commit",
-                        "-m",
-                        f"integrated: {uuid.uuid4()}",
-                    ],
-                    check=True,
-                )
-                self._version += 1
-            else:
-                if stashed:
-                    subprocess.run(["git", "-C", str(artifact_dir), "stash", "pop"], check=True)
-                raise RuntimeError(
-                    f"tests failed after delta: {test_result.summary}\n{test_result.output}"
-                )
-        else:
-            self._version += 1
-
     async def apply_work_output(self, output: WorkOutput, node_id: str) -> None:
         """Apply WorkOutput via git worktree — write files, merge to main, run tests,
         commit on pass or rollback on fail."""
@@ -209,7 +132,7 @@ class StateService:
                     cwd=artifact_dir,
                     check=True,
                 )
-                raise RuntimeError(f"tests failed after delta: {result.output}")
+                raise RuntimeError(f"tests failed after work output: {result.output}")
 
             self._version += 1
 

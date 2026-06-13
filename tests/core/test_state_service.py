@@ -1,20 +1,15 @@
-"""Tests for StateService: build_state_view, apply_delta, and run_tests."""
+"""Tests for StateService: build_state_view, apply_work_output, and run_tests."""
 
 # pyright: reportPrivateUsage=false
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from forge.core.models import (
-    DeltaState,
-    Edit,
     FileContent,
     FileView,
-    FileWrite,
     RunResult,
     WorkOutput,
 )
@@ -71,92 +66,6 @@ def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path: Path)
     assert view.dependencies == []
 
 
-def test_apply_delta_writes_new_files(tmp_path: Path) -> None:
-    """apply_delta creates a new file on disk when DeltaState contains a FileWrite."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-
-    StateService(ws, "app").apply_delta(
-        DeltaState(new_files=[FileWrite(path="src/hello.py", content="print('hi')")])
-    )
-
-    assert (ws.artifact_dir("app") / "src" / "hello.py").read_text() == "print('hi')"
-
-
-def test_apply_delta_applies_edits(tmp_path: Path) -> None:
-    """apply_delta performs an in-place string replacement when DeltaState contains an Edit."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
-
-    StateService(ws, "app").apply_delta(
-        DeltaState(edits=[Edit(path="a.py", old="x = 1", new="x = 2")])
-    )
-
-    assert (ws.artifact_dir("app") / "a.py").read_text() == "x = 2\n"
-
-
-def test_apply_delta_raises_on_non_unique_old_string(tmp_path: Path) -> None:
-    """apply_delta raises ValueError when the old string appears more than once in the target file."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "a.py").write_text("x = 1\nx = 1\n")
-
-    with pytest.raises(ValueError, match="not unique"):
-        StateService(ws, "app").apply_delta(
-            DeltaState(edits=[Edit(path="a.py", old="x = 1", new="x = 2")])
-        )
-
-
-def test_apply_delta_raises_on_old_string_not_found(tmp_path: Path) -> None:
-    """apply_delta raises ValueError when the old string is not present in the target file."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
-
-    with pytest.raises(ValueError, match="not found"):
-        StateService(ws, "app").apply_delta(
-            DeltaState(edits=[Edit(path="a.py", old="x = 99", new="x = 2")])
-        )
-
-
-def test_apply_delta_raises_on_empty_old_string(tmp_path: Path) -> None:
-    """apply_delta raises ValueError when edit.old is empty."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
-
-    with pytest.raises(ValueError, match="empty 'old' string"):
-        StateService(ws, "app").apply_delta(
-            DeltaState(edits=[Edit(path="a.py", old="", new="x = 2")])
-        )
-
-
-def test_apply_delta_raises_on_whitespace_only_old_string(tmp_path: Path) -> None:
-    """apply_delta raises ValueError when edit.old is whitespace-only."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
-
-    with pytest.raises(ValueError, match="empty 'old' string"):
-        StateService(ws, "app").apply_delta(
-            DeltaState(edits=[Edit(path="a.py", old="   ", new="x = 2")])
-        )
-
-
-def test_apply_delta_succeeds_with_valid_old_string(tmp_path: Path) -> None:
-    """apply_delta does not raise when edit.old is a non-empty, non-whitespace string."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
-
-    StateService(ws, "app").apply_delta(
-        DeltaState(edits=[Edit(path="a.py", old="x = 1", new="x = 2")])
-    )
-
-    assert (ws.artifact_dir("app") / "a.py").read_text() == "x = 2\n"
-
-
 def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:
     """build_state_view omits .venv, __pycache__, .pyc, lock files, and other noise."""
     ws = _ws(tmp_path)
@@ -178,8 +87,8 @@ def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:
     assert view.files == [FileView(path="src/main.py", content="x = 1")]
 
 
-def test_apply_delta_is_single_write_boundary(tmp_path: Path) -> None:
-    """build_state_view must not write any files — only apply_delta may mutate disk."""
+def test_build_state_view_does_not_mutate_disk(tmp_path: Path) -> None:
+    """build_state_view must not write any files."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     (ws.artifact_dir("app") / "a.py").write_text("x = 1\n")
@@ -196,7 +105,7 @@ def test_apply_delta_is_single_write_boundary(tmp_path: Path) -> None:
 
 
 def test_version_starts_at_zero(tmp_path: Path) -> None:
-    """StateService.current_version is 0 before any apply_delta call."""
+    """StateService.current_version starts at 0."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
 
@@ -205,25 +114,12 @@ def test_version_starts_at_zero(tmp_path: Path) -> None:
     assert ss.current_version == 0
 
 
-def test_apply_delta_increments_version(tmp_path: Path) -> None:
-    """current_version increments by 1 on each successful apply_delta call."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    ss = StateService(ws, "app")
-
-    ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
-    assert ss.current_version == 1
-
-    ss.apply_delta(DeltaState(new_files=[FileWrite(path="b.py", content="x = 2")]))
-    assert ss.current_version == 2
-
-
 def test_build_state_view_includes_current_version(tmp_path: Path) -> None:
     """build_state_view returns a StateView whose version matches current_version."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     ss = StateService(ws, "app")
-    ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
+    ss._version = 1
 
     view = ss.build_state_view()
 
@@ -239,20 +135,6 @@ def test_version_starts_at_zero_even_when_artifact_has_files(tmp_path: Path) -> 
     ss = StateService(ws, "app")
 
     assert ss.current_version == 0
-
-
-def test_apply_delta_increments_from_zero_even_with_existing_files(tmp_path: Path) -> None:
-    """apply_delta increments from 0 regardless of pre-existing files on construction."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    (ws.artifact_dir("app") / "existing.py").write_text("x = 1")
-    ss = StateService(ws, "app")
-
-    assert ss.current_version == 0
-
-    ss.apply_delta(DeltaState(new_files=[FileWrite(path="new.py", content="y = 2")]))
-
-    assert ss.current_version == 1
 
 
 def test_noise_only_files_do_not_set_version_to_one(tmp_path: Path) -> None:
@@ -363,94 +245,6 @@ def test_parse_test_result_failure_text_with_nonzero_exit_returns_false() -> Non
     """_parse_test_result does not inspect language-specific failure text."""
     result = _parse_test_result("failure", returncode=1)
     assert result.passed is False
-
-
-# --- git-transactional apply_delta ---
-
-
-def _make_subprocess_mock(stash_stdout: str = "") -> Callable[..., MagicMock]:
-    """Return a subprocess.run side-effect that returns a sensible mock for every call."""
-
-    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
-        result = MagicMock()
-        result.returncode = 0
-        result.stdout = ""
-        result.stderr = ""
-        if isinstance(cmd, list) and "stash" in cmd and "pop" not in cmd and "drop" not in cmd:
-            result.stdout = stash_stdout
-        return result
-
-    return _run
-
-
-def test_apply_delta_does_not_increment_version_on_test_failure(tmp_path: Path) -> None:
-    """_version stays at 0 when the plugin's tests fail after applying the delta."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    plugin = _plugin()
-    ss = StateService(ws, "app", plugin)
-
-    with patch("subprocess.run", side_effect=_make_subprocess_mock("No local changes to save")):
-        with patch.object(
-            ss, "run_tests", return_value=RunResult(passed=False, summary="FAILED", output="FAILED")
-        ):
-            with pytest.raises(RuntimeError, match="tests failed"):
-                ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
-
-    assert ss.current_version == 0
-
-
-def test_apply_delta_commits_to_git_history_on_success(tmp_path: Path) -> None:
-    """apply_delta issues a git commit and increments _version when tests pass."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    plugin = _plugin()
-    ss = StateService(ws, "app", plugin)
-
-    commit_calls: list[Any] = []
-
-    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
-        result = MagicMock()
-        result.returncode = 0
-        result.stdout = "No local changes to save"
-        result.stderr = ""
-        if isinstance(cmd, list) and "commit" in cmd:
-            commit_calls.append(cmd)
-        return result
-
-    with patch("subprocess.run", side_effect=_run):
-        with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
-            ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
-
-    assert ss.current_version == 1
-    assert len(commit_calls) == 1
-    assert "integrated:" in commit_calls[0][-1]
-
-
-def test_apply_delta_calls_stash_pop_on_test_failure(tmp_path: Path) -> None:
-    """apply_delta calls git stash pop to restore artifact state when tests fail."""
-    ws = _ws(tmp_path)
-    ws.init_artifact("app")
-    plugin = _plugin()
-    ss = StateService(ws, "app", plugin)
-
-    pop_calls: list[Any] = []
-
-    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
-        result = MagicMock()
-        result.returncode = 0
-        result.stdout = ""  # non-empty stash was created
-        result.stderr = ""
-        if isinstance(cmd, list) and "stash" in cmd and "pop" in cmd:
-            pop_calls.append(cmd)
-        return result
-
-    with patch("subprocess.run", side_effect=_run):
-        with patch.object(
-            ss, "run_tests", return_value=RunResult(passed=False, summary="FAIL", output="FAIL")
-        ):
-            with pytest.raises(RuntimeError):
-                ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
 
 
 # --- apply_work_output ---
