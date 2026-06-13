@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.base import render_files
+from forge.agents.attempt import WorkOutputValidator
 from forge.agents.critic import critic_agent
 from forge.core.models import (
     AcceptanceCriterion,
@@ -16,12 +16,12 @@ from forge.core.models import (
     AgentType,
     CriticDisposition,
     CriticFinding,
-    DeltaState,
-    FileWrite,
+    FileContent,
     PlanSpec,
     RequestSource,
     ReviewContext,
     StateView,
+    WorkOutput,
     WorkSpec,
     render_agent_contract,
 )
@@ -103,12 +103,16 @@ def _state_view() -> StateView:
 
 
 def _rendered_output() -> str:
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content='print("Hello, World!")')])
-    return render_files(delta, _state_view())
+    work_output = WorkOutput(files=[FileContent(path="main.py", content='print("Hello, World!")')])
+    return WorkOutputValidator(_registry().get("coding"), _state_view()).render_for_critic(
+        work_output
+    )
 
 
 def _rendered_empty() -> str:
-    return render_files(DeltaState(), _state_view())
+    return WorkOutputValidator(_registry().get("coding"), _state_view()).render_for_critic(
+        WorkOutput()
+    )
 
 
 def _provider(response_json: str) -> MagicMock:

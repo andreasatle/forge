@@ -263,7 +263,7 @@ async def test_work_handler_returns_completed(tmp_path: Path) -> None:
     """make_work_handler returns a COMPLETED response on success."""
     provider = _mock_provider()
     provider.chat = AsyncMock(
-        return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+        return_value='{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
     )
     handler = make_work_handler(
         _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
@@ -357,7 +357,7 @@ async def test_scripted_plan_handler_end_to_end_produces_four_completed_nodes(
     """End-to-end run with scripted_plan_handler produces exactly four INTEGRATED nodes."""
     provider = _mock_provider()
     provider.chat = AsyncMock(
-        return_value='{"new_files": [{"path": "src/out.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+        return_value='{"files": [{"path": "src/out.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
     )
     runner = Runner()
     runner.register(AgentType.PLAN, scripted_plan_handler)
@@ -418,7 +418,7 @@ async def test_make_work_handler_never_calls_chat_with_tools(tmp_path: Path) -> 
     provider = MagicMock()
     provider.max_tokens = 8192
     provider.chat = AsyncMock(
-        return_value='{"new_files": [{"path": "src/main.py", "content": "x = 1"}], "edits": [], "dependencies": []}'
+        return_value='{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
     )
     provider.chat_with_tools = AsyncMock(
         side_effect=AssertionError("chat_with_tools must not be called")

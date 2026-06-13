@@ -1,4 +1,4 @@
-"""Tests for AttemptEngine, DeltaStateValidator, and PlanResponseValidator."""
+"""Tests for AttemptEngine, WorkOutputValidator, and PlanResponseValidator."""
 
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,9 +7,9 @@ from uuid import uuid4
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.attempt import (
     AttemptEngine,
-    DeltaStateValidator,
     PlanResponseValidator,
     RunAgentFailed,
+    WorkOutputValidator,
 )
 from forge.core.models import (
     AgentContract,
@@ -18,9 +18,8 @@ from forge.core.models import (
     AgentType,
     CriticDisposition,
     CriticFinding,
-    DeltaState,
     FailureKind,
-    FileWrite,
+    FileContent,
     PlanResponse,
     PlanSpec,
     RefereeDecision,
@@ -29,6 +28,7 @@ from forge.core.models import (
     RevisionItem,
     StateView,
     TaskSpec,
+    WorkOutput,
     WorkSpec,
     render_agent_contract,
 )
@@ -127,21 +127,21 @@ def _engine(
     max_attempts: int = 3,
     work_noun: str = "implementation",
     requires_nonempty: bool = True,
-) -> AttemptEngine[DeltaState]:
+) -> AttemptEngine[WorkOutput]:
     req = request or _work_request()
     sv = _state_view()
     if run_fn is None:
 
         async def _default(prompt: str) -> AgentResponse:
             return AgentResponse(
-                request_id=req.id, status=ResponseStatus.COMPLETED, delta=DeltaState()
+                request_id=req.id, status=ResponseStatus.COMPLETED, output=WorkOutput()
             )
 
         run_fn = _default
-    return AttemptEngine[DeltaState](
+    return AttemptEngine[WorkOutput](
         request=req,
         state_view=sv,
-        validator=DeltaStateValidator(
+        validator=WorkOutputValidator(
             _adapter_spec(work_noun=work_noun, requires_nonempty=requires_nonempty), sv
         ),
         run_fn=run_fn,
@@ -153,11 +153,11 @@ def _engine(
 
 
 async def test_accept_on_first_attempt_returns_immediately() -> None:
-    """Engine returns the delta immediately when referee accepts on the first attempt."""
+    """Engine returns the work output immediately when referee accepts on the first attempt."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(
         request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
@@ -176,22 +176,26 @@ async def test_accept_on_first_attempt_returns_immediately() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.output == work_output
     assert len(_) == 1
 
 
 async def test_revise_injects_feedback_and_retries() -> None:
     """Engine retries with a structured required-revision block when disposition is REVISE."""
     request = _work_request()
-    first_delta = DeltaState(new_files=[FileWrite(path="main.py", content="first")])
-    improved_delta = DeltaState(new_files=[FileWrite(path="main.py", content="improved")])
+    first_work_output = WorkOutput(files=[FileContent(path="main.py", content="first")])
+    improved_work_output = WorkOutput(files=[FileContent(path="main.py", content="improved")])
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, delta=first_delta
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=first_work_output,
             ),
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, delta=improved_delta
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=improved_work_output,
             ),
         ]
     )
@@ -218,7 +222,7 @@ async def test_revise_injects_feedback_and_retries() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == improved_delta
+    assert result.output == improved_work_output
     assert len(prompts) == 2
     assert "REQUIRED REVISION" in prompts[1]
     assert "Previous disposition: revise" in prompts[1]
@@ -226,23 +230,27 @@ async def test_revise_injects_feedback_and_retries() -> None:
     assert "1. Required change: add tests" in prompts[1]
     assert "The next output must address every required change listed below." in prompts[1]
     assert "FINAL OUTPUT FORMAT REMINDER" in prompts[1]
-    assert "Return valid JSON only matching DeltaState." in prompts[1]
-    assert "new_files must be an array of JSON objects" in prompts[1]
+    assert "Return valid JSON only matching WorkOutput." in prompts[1]
+    assert "files must be an array of JSON objects" in prompts[1]
     assert 'Do not use string entries like "path:...".' in prompts[1]
 
 
 async def test_revise_prompt_preserves_structured_criterion_ids() -> None:
     """Structured revision items supplied by the referee are rendered with criterion ids."""
     request = _work_request()
-    first_delta = DeltaState(new_files=[FileWrite(path="main.py", content="first")])
-    improved_delta = DeltaState(new_files=[FileWrite(path="main.py", content="improved")])
+    first_work_output = WorkOutput(files=[FileContent(path="main.py", content="first")])
+    improved_work_output = WorkOutput(files=[FileContent(path="main.py", content="improved")])
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, delta=first_delta
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=first_work_output,
             ),
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, delta=improved_delta
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=improved_work_output,
             ),
         ]
     )
@@ -293,12 +301,18 @@ async def test_revise_prompt_preserves_structured_criterion_ids() -> None:
 async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
     """Successive revise rounds accumulate all prior RevisionRequests in the prompt."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, prompts = _make_run_fn(
         [
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
         ]
     )
     engine = _engine(
@@ -369,15 +383,19 @@ async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> No
     quoted_contract = (
         f"The output missed a rule.\n\n{contract_block}\n\nAfter applying the contract, add tests."
     )
-    first_delta = DeltaState(new_files=[FileWrite(path="main.toy", content="first")])
-    improved_delta = DeltaState(new_files=[FileWrite(path="main.toy", content="improved")])
+    first_work_output = WorkOutput(files=[FileContent(path="main.toy", content="first")])
+    improved_work_output = WorkOutput(files=[FileContent(path="main.toy", content="improved")])
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, delta=first_delta
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=first_work_output,
             ),
             AgentResponse(
-                request_id=request.id, status=ResponseStatus.COMPLETED, delta=improved_delta
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=improved_work_output,
             ),
         ]
     )
@@ -446,12 +464,18 @@ async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
     contract_block = render_agent_contract(request)
     base_prompt = f"base prompt\n\n{contract_block}"
     quoted_contract = f"Fix the missing work.\n\n{contract_block}"
-    delta = DeltaState(new_files=[FileWrite(path="main.toy", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.toy", content="code")])
     run_fn, prompts = _make_run_fn(
         [
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
         ]
     )
     engine = _engine(
@@ -495,11 +519,11 @@ async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
 
 
 async def test_rejected_validation_returns_failed_without_delta() -> None:
-    """Engine fails immediately when validation rejects a worker delta."""
+    """Engine fails immediately when validation rejects a worker output."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(
         request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
@@ -527,9 +551,13 @@ async def test_rejected_validation_returns_failed_without_delta() -> None:
 async def test_repeated_revise_until_max_attempts_returns_failed_without_delta() -> None:
     """Engine fails when all validation attempts are exhausted without acceptance."""
     request = _work_request()
-    last_delta = DeltaState(new_files=[FileWrite(path="main.py", content="final")])
+    last_work_output = WorkOutput(files=[FileContent(path="main.py", content="final")])
     run_fn, prompts = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=last_delta)]
+        [
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=last_work_output
+            )
+        ]
     )
     engine = _engine(
         request=request,
@@ -561,19 +589,25 @@ async def test_repeated_revise_until_max_attempts_returns_failed_without_delta()
 async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
     """Failed PWC preserves attempt starts, parsed results, revisions, and exhaustion."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
         [
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
         ]
     )
     sink = _MemoryTelemetrySink()
-    engine = AttemptEngine[DeltaState](
+    engine = AttemptEngine[WorkOutput](
         request=request,
         state_view=_state_view(),
-        validator=DeltaStateValidator(_adapter_spec(), _state_view()),
+        validator=WorkOutputValidator(_adapter_spec(), _state_view()),
         run_fn=run_fn,
         registry=_registry_with(),
         critic_provider=MagicMock(),
@@ -634,15 +668,15 @@ async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
 async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
     """Telemetry is best-effort and cannot fail an otherwise accepted PWC run."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     sink = _FailingTelemetrySink()
-    engine = AttemptEngine[DeltaState](
+    engine = AttemptEngine[WorkOutput](
         request=request,
         state_view=_state_view(),
-        validator=DeltaStateValidator(_adapter_spec(), _state_view()),
+        validator=WorkOutputValidator(_adapter_spec(), _state_view()),
         run_fn=run_fn,
         registry=_registry_with(),
         critic_provider=MagicMock(),
@@ -664,15 +698,15 @@ async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.output == work_output
 
 
 async def test_critic_parse_failure_returns_failed_without_delta() -> None:
     """Engine fails when critic validation cannot be parsed."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(
         request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
@@ -696,9 +730,9 @@ async def test_critic_parse_failure_returns_failed_without_delta() -> None:
 async def test_referee_parse_failure_returns_failed_without_delta() -> None:
     """Engine fails when referee validation cannot be parsed."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(
         request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
@@ -725,9 +759,9 @@ async def test_referee_parse_failure_returns_failed_without_delta() -> None:
 async def test_no_providers_skips_validation() -> None:
     """Engine skips critic/referee entirely when both providers are None."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(request=request, run_fn=run_fn, critic_provider=None, referee_provider=None)
 
@@ -735,7 +769,7 @@ async def test_no_providers_skips_validation() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.output == work_output
     assert len(_) == 1
     mock_critic.assert_not_called()
 
@@ -760,19 +794,21 @@ async def test_run_agent_failure_raises_run_agent_failed() -> None:
 
 
 async def test_empty_delta_no_critic_first_attempt_retries_not_already_done() -> None:
-    """Engine retries with correction feedback on a non-final empty delta when no critic is configured."""
+    """Engine retries with correction feedback on a non-final empty output when no critic is configured."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
             ),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
         ]
     )
     engine = _engine(
@@ -786,7 +822,7 @@ async def test_empty_delta_no_critic_first_attempt_retries_not_already_done() ->
     result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.output == work_output
     assert len(prompts) == 2
     assert "produced no implementation" in prompts[1]
 
@@ -794,7 +830,7 @@ async def test_empty_delta_no_critic_first_attempt_retries_not_already_done() ->
 async def test_empty_delta_no_critic_last_attempt_requires_nonempty_false_returns_already_done() -> (
     None
 ):
-    """Engine returns ALREADY_DONE on the last attempt with empty delta when requires_nonempty is False."""
+    """Engine returns ALREADY_DONE on the last attempt with empty output when requires_nonempty is False."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
         [
@@ -802,8 +838,8 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_false_return
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
             )
         ]
     )
@@ -820,13 +856,13 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_false_return
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.ALREADY_DONE
-    assert result.delta == DeltaState()
+    assert result.output == WorkOutput()
     assert len(prompts) == 1
     mock_critic.assert_not_called()
 
 
 async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns_failed() -> None:
-    """Engine returns FAILED on the last attempt with empty delta when requires_nonempty is True."""
+    """Engine returns FAILED on the last attempt with empty output when requires_nonempty is True."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
         [
@@ -834,8 +870,8 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
             )
         ]
     )
@@ -858,7 +894,7 @@ async def test_empty_delta_no_critic_last_attempt_requires_nonempty_true_returns
 
 
 async def test_empty_delta_ran_tests_and_passed_returns_already_done() -> None:
-    """Engine returns ALREADY_DONE for empty delta when ran_tests_and_passed=True, ignoring requires_nonempty."""
+    """Engine returns ALREADY_DONE for empty output when ran_tests_and_passed=True, ignoring requires_nonempty."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
         [
@@ -866,8 +902,8 @@ async def test_empty_delta_ran_tests_and_passed_returns_already_done() -> None:
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
                 ran_tests_and_passed=True,
             )
         ]
@@ -885,7 +921,7 @@ async def test_empty_delta_ran_tests_and_passed_returns_already_done() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.ALREADY_DONE
-    assert result.delta == DeltaState()
+    assert result.output == WorkOutput()
     assert len(prompts) == 1
     mock_critic.assert_not_called()
 
@@ -899,8 +935,8 @@ async def test_empty_delta_ran_tests_not_passed_uses_existing_behavior() -> None
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
                 ran_tests_and_passed=False,
             )
         ]
@@ -924,7 +960,7 @@ async def test_empty_delta_ran_tests_not_passed_uses_existing_behavior() -> None
 
 
 async def test_empty_delta_critic_already_done_accepts() -> None:
-    """Engine accepts empty delta when critic confirms the success condition is already met."""
+    """Engine accepts empty output when critic confirms the success condition is already met."""
     request = _work_request()
     run_fn, _ = _make_run_fn(
         [
@@ -932,8 +968,8 @@ async def test_empty_delta_critic_already_done_accepts() -> None:
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
             )
         ]
     )
@@ -948,13 +984,13 @@ async def test_empty_delta_critic_already_done_accepts() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.ALREADY_DONE
-    assert result.delta == DeltaState()
+    assert result.output == WorkOutput()
     assert len(_) == 1
     mock_critic.assert_called_once()
 
 
 async def test_empty_delta_critic_parse_failure_returns_failed_without_delta() -> None:
-    """Engine does not treat an unparsable empty-delta critic result as ALREADY_DONE."""
+    """Engine does not treat an unparsable empty-output critic result as ALREADY_DONE."""
     request = _work_request()
     run_fn, _ = _make_run_fn(
         [
@@ -962,8 +998,8 @@ async def test_empty_delta_critic_parse_failure_returns_failed_without_delta() -
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
             )
         ]
     )
@@ -984,19 +1020,21 @@ async def test_empty_delta_critic_parse_failure_returns_failed_without_delta() -
 
 
 async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
-    """Engine retries with feedback when critic returns REVISE on an empty delta attempt."""
+    """Engine retries with feedback when critic returns REVISE on an empty output attempt."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
                 failure_kind=FailureKind.VALIDATION_REJECTED,
-                delta=DeltaState(),
-                error="empty delta",
+                output=WorkOutput(),
+                error="empty output",
             ),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
         ]
     )
     engine = _engine(
@@ -1021,7 +1059,7 @@ async def test_empty_delta_critic_revise_triggers_retry_with_feedback() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.delta == delta
+    assert result.output == work_output
     assert len(prompts) == 2
     assert "REQUIRED REVISION" in prompts[1]
     assert "Revise your implementation now." in prompts[1]
@@ -1040,11 +1078,15 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
             artifact="docs",
         ),
     )
-    delta = DeltaState(new_files=[FileWrite(path="README.md", content="# Hello")])
+    work_output = WorkOutput(files=[FileContent(path="README.md", content="# Hello")])
     run_fn, prompts = _make_run_fn(
         [
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
         ]
     )
     registry = AdapterRegistry()
@@ -1059,10 +1101,10 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
         )
     )
     sv = StateView(artifact_name="docs", language=None, files=[], dependencies=[])
-    engine = AttemptEngine[DeltaState](
+    engine = AttemptEngine[WorkOutput](
         request=request,
         state_view=sv,
-        validator=DeltaStateValidator(registry.get("document"), sv),
+        validator=WorkOutputValidator(registry.get("document"), sv),
         run_fn=run_fn,
         registry=registry,
         critic_provider=MagicMock(),
@@ -1229,15 +1271,15 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
 async def test_decompose_disposition_returns_decompose_status_immediately() -> None:
     """Engine returns ResponseStatus.DECOMPOSE immediately when referee disposition is DECOMPOSE."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     sink = _MemoryTelemetrySink()
-    engine = AttemptEngine[DeltaState](
+    engine = AttemptEngine[WorkOutput](
         request=request,
         state_view=_state_view(),
-        validator=DeltaStateValidator(_adapter_spec(), _state_view()),
+        validator=WorkOutputValidator(_adapter_spec(), _state_view()),
         run_fn=run_fn,
         registry=_registry_with(),
         critic_provider=MagicMock(),
@@ -1273,9 +1315,9 @@ async def test_decompose_disposition_returns_decompose_status_immediately() -> N
 async def test_decompose_disposition_does_not_retry() -> None:
     """Engine makes exactly one producer call when referee returns DECOMPOSE — no retry."""
     request = _work_request()
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     run_fn, prompts = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(
         request=request,

@@ -15,11 +15,9 @@ from forge.core.models import (
     AgentType,
     CriticDisposition,
     CriticFinding,
-    DeltaState,
     FailureKind,
     FileContent,
     FileView,
-    FileWrite,
     RefereeDecision,
     RequestSource,
     ResponseStatus,
@@ -140,7 +138,7 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: P
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
@@ -150,12 +148,12 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: P
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
-            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
+            request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
         )
         response = await executor.run(request, _state_view())
 
     assert response.status == ResponseStatus.COMPLETED
-    assert response.delta == delta
+    assert response.output == work_output
 
 
 async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:
@@ -380,7 +378,7 @@ async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path: Path) ->
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = PromptBuilder(tools, DeltaState).build()
+    system_prompt = PromptBuilder(tools, WorkOutput).build()
 
     for tool_name in BLACKBOARD_TOOL_NAMES:
         assert tool_name not in system_prompt
@@ -407,7 +405,7 @@ async def test_worker_prompt_tool_mentions_match_registry(tmp_path: Path) -> Non
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = PromptBuilder(tools, DeltaState).build()
+    system_prompt = PromptBuilder(tools, WorkOutput).build()
     tool_names = _tool_names(tools)
 
     assert _available_tool_names(system_prompt) == tool_names
@@ -436,10 +434,8 @@ async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path: Path) ->
 
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = PromptBuilder(tools, DeltaState).build()
-    schema_system_prompt = PromptBuilder(tools, DeltaState).build(
-        DeltaState(new_files=[FileWrite(path="x.py", content="x")])
-    )
+    system_prompt = PromptBuilder(tools, WorkOutput).build()
+    schema_system_prompt = PromptBuilder(tools, WorkOutput, always_show_final=True).build()
 
     assert "tool_call" in system_prompt
     assert "Generated JSON schema" in schema_system_prompt
@@ -630,7 +626,7 @@ async def test_worker_prompt_warns_against_empty_delta(tmp_path: Path) -> None:
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+            output=WorkOutput(files=[FileContent(path="x.py", content="x")]),
         )
         await work_agent(
             request,
@@ -822,7 +818,7 @@ async def test_python_worker_prompt_includes_packaging_guidance(tmp_path: Path) 
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+            output=WorkOutput(files=[FileContent(path="x.py", content="x")]),
         )
         await work_agent(
             request,
@@ -855,7 +851,7 @@ async def test_coding_worker_prompt_without_language_plugin_is_language_agnostic
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="main.txt", content="content")]),
+            output=WorkOutput(files=[FileContent(path="main.txt", content="content")]),
         )
         await work_agent(
             request,
@@ -885,7 +881,7 @@ async def test_python_specific_instructions_come_from_python_plugin_only(tmp_pat
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="x.py", content="x")]),
+            output=WorkOutput(files=[FileContent(path="x.py", content="x")]),
         )
         await work_agent(
             request,
@@ -932,7 +928,7 @@ async def test_non_python_language_plugin_does_not_receive_python_wording(
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            delta=DeltaState(new_files=[FileWrite(path="module.toy", content="ok")]),
+            output=WorkOutput(files=[FileContent(path="module.toy", content="ok")]),
         )
         await work_agent(
             request,
@@ -1060,18 +1056,18 @@ async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: 
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
-    delta = DeltaState(new_files=[FileWrite(path="main.py", content="code")])
+    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = AgentResponse(
-            request_id=request.id, status=ResponseStatus.COMPLETED, delta=delta
+            request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
         )
         response = await work_agent(
             request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
         )
 
     assert response.status == ResponseStatus.COMPLETED
-    assert response.delta == delta
+    assert response.output == work_output
 
 
 async def test_worker_prompt_includes_explicit_base_version_instruction(tmp_path: Path) -> None:
