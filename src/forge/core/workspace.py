@@ -71,3 +71,43 @@ class Workspace:
             if d.exists():
                 for item in d.iterdir():
                     shutil.rmtree(item) if item.is_dir() else item.unlink()
+
+    def create_worktree(self, artifact_name: str, node_id: str) -> Path:
+        """Create a git worktree for a work node, branched from main.
+        Returns the worktree path."""
+        artifact_dir = self.artifact_dir(artifact_name)
+        worktree_path = self.path / f"{artifact_name}-work-{node_id}"
+        branch_name = f"work/{node_id}"
+        subprocess.run(
+            ["git", "worktree", "add", "-b", branch_name, str(worktree_path), "main"],
+            cwd=artifact_dir,
+            check=True,
+        )
+        return worktree_path
+
+    def remove_worktree(self, artifact_name: str, node_id: str) -> None:
+        """Remove a git worktree and its branch after integration."""
+        artifact_dir = self.artifact_dir(artifact_name)
+        worktree_path = self.path / f"{artifact_name}-work-{node_id}"
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(worktree_path)],
+            cwd=artifact_dir,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "branch", "-D", f"work/{node_id}"],
+            cwd=artifact_dir,
+            check=True,
+        )
+
+    def get_current_sha(self, artifact_name: str) -> str:
+        """Return the current HEAD commit SHA of the artifact main branch."""
+        artifact_dir = self.artifact_dir(artifact_name)
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=artifact_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()

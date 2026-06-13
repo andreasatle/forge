@@ -5,7 +5,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from forge.core.models import DeltaState, FileView, RunResult, StateView
+from forge.core.models import DeltaState, FileView, RunResult, StateView, WorkOutput
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
 
@@ -164,6 +164,44 @@ class StateService:
                 )
         else:
             self._version += 1
+
+    async def apply_work_output(self, output: WorkOutput, node_id: str) -> None:
+        """Apply WorkOutput via git worktree — write files, merge to main, run tests,
+        commit on pass or rollback on fail."""
+        worktree_path = self._workspace.create_worktree(self._artifact_name, node_id)
+        try:
+            for file in output.files:
+                dest = worktree_path / file.path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(file.content)
+
+            subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", f"work: {node_id}"],
+                cwd=worktree_path,
+                check=True,
+            )
+
+            artifact_dir = self._workspace.artifact_dir(self._artifact_name)
+            subprocess.run(
+                ["git", "merge", "--no-ff", f"work/{node_id}", "-m", f"integrated: {node_id}"],
+                cwd=artifact_dir,
+                check=True,
+            )
+
+            result = self.run_tests()
+            if not result.passed:
+                subprocess.run(
+                    ["git", "reset", "--hard", "HEAD~1"],
+                    cwd=artifact_dir,
+                    check=True,
+                )
+                raise RuntimeError(f"tests failed after delta: {result.output}")
+
+            self._version += 1
+
+        finally:
+            self._workspace.remove_worktree(self._artifact_name, node_id)
 
     def run_tests(self) -> RunResult:
         """Run the language plugin test command and return structured result."""

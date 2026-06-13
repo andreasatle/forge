@@ -227,3 +227,83 @@ def test_init_artifact_raises_when_git_not_available(tmp_path: Path) -> None:
     with patch("forge.core.workspace.shutil.which", return_value=None):
         with pytest.raises(RuntimeError, match="git is required"):
             ws.init_artifact("codebase", _make_plugin())
+
+
+# --- create_worktree ---
+
+
+def test_create_worktree_returns_expected_path(tmp_path: Path) -> None:
+    """create_worktree returns workspace.path / '{artifact}-work-{node_id}'."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+
+    with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        result = ws.create_worktree("codebase", "abc123")
+
+    assert result == ws.path / "codebase-work-abc123"
+
+
+def test_create_worktree_runs_correct_git_command(tmp_path: Path) -> None:
+    """create_worktree calls git worktree add with branch and path arguments."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+
+    captured: list[Any] = []
+
+    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
+        captured.append(cmd)
+        return MagicMock(returncode=0)
+
+    with patch("subprocess.run", side_effect=_run):
+        ws.create_worktree("codebase", "abc123")
+
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert cmd[:4] == ["git", "worktree", "add", "-b"]
+    assert cmd[4] == "work/abc123"
+    assert "codebase-work-abc123" in cmd[5]
+    assert cmd[6] == "main"
+
+
+# --- remove_worktree ---
+
+
+def test_remove_worktree_runs_two_git_commands(tmp_path: Path) -> None:
+    """remove_worktree issues git worktree remove and git branch -D."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+
+    captured: list[Any] = []
+
+    def _run(cmd: Any, **kwargs: Any) -> MagicMock:
+        captured.append(cmd)
+        return MagicMock(returncode=0)
+
+    with patch("subprocess.run", side_effect=_run):
+        ws.remove_worktree("codebase", "abc123")
+
+    assert len(captured) == 2
+    assert captured[0][:3] == ["git", "worktree", "remove"]
+    assert "--force" in captured[0]
+    assert captured[1] == ["git", "branch", "-D", "work/abc123"]
+
+
+# --- get_current_sha ---
+
+
+def test_get_current_sha_returns_stripped_sha(tmp_path: Path) -> None:
+    """get_current_sha returns the stdout of git rev-parse HEAD, stripped."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+
+    mock_result = MagicMock()
+    mock_result.stdout = "deadbeefcafe1234\n"
+
+    with patch("subprocess.run", return_value=mock_result):
+        sha = ws.get_current_sha("codebase")
+
+    assert sha == "deadbeefcafe1234"

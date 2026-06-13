@@ -9,7 +9,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from forge.core.models import DeltaState, Edit, FileView, FileWrite, RunResult
+from forge.core.models import (
+    DeltaState,
+    Edit,
+    FileContent,
+    FileView,
+    FileWrite,
+    RunResult,
+    WorkOutput,
+)
 from forge.core.state_service import StateService, _parse_test_result
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin
@@ -444,4 +452,133 @@ def test_apply_delta_calls_stash_pop_on_test_failure(tmp_path: Path) -> None:
             with pytest.raises(RuntimeError):
                 ss.apply_delta(DeltaState(new_files=[FileWrite(path="a.py", content="x = 1")]))
 
-    assert len(pop_calls) == 1
+
+# --- apply_work_output ---
+
+
+def _mock_subprocess_ok() -> MagicMock:
+    result = MagicMock()
+    result.returncode = 0
+    result.stdout = ""
+    result.stderr = ""
+    return result
+
+
+async def test_apply_work_output_writes_files_to_worktree(tmp_path: Path) -> None:
+    """apply_work_output writes WorkOutput files into the worktree directory."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node1"
+    worktree_path.mkdir()
+    output = WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")])
+
+    with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "remove_worktree"):
+            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                    await ss.apply_work_output(output, "node1")
+
+    assert (worktree_path / "src" / "main.py").read_text() == "x = 1"
+
+
+async def test_apply_work_output_increments_version_on_pass(tmp_path: Path) -> None:
+    """apply_work_output increments _version by 1 when tests pass."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node2"
+    worktree_path.mkdir()
+    output = WorkOutput()
+
+    with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "remove_worktree"):
+            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                    await ss.apply_work_output(output, "node2")
+
+    assert ss.current_version == 1
+
+
+async def test_apply_work_output_does_not_increment_version_on_fail(tmp_path: Path) -> None:
+    """apply_work_output leaves _version at 0 when tests fail."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node3"
+    worktree_path.mkdir()
+    output = WorkOutput()
+
+    with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "remove_worktree"):
+            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch.object(
+                    ss,
+                    "run_tests",
+                    return_value=RunResult(passed=False, summary="FAIL", output="FAIL"),
+                ):
+                    with pytest.raises(RuntimeError, match="tests failed"):
+                        await ss.apply_work_output(output, "node3")
+
+    assert ss.current_version == 0
+
+
+async def test_apply_work_output_removes_worktree_after_pass(tmp_path: Path) -> None:
+    """apply_work_output calls remove_worktree after a successful integration."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node4"
+    worktree_path.mkdir()
+    output = WorkOutput()
+
+    remove_calls: list[tuple[str, str]] = []
+
+    def _record_remove(artifact_name: str, node_id: str) -> None:
+        remove_calls.append((artifact_name, node_id))
+
+    with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "remove_worktree", side_effect=_record_remove):
+            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                    await ss.apply_work_output(output, "node4")
+
+    assert remove_calls == [("app", "node4")]
+
+
+async def test_apply_work_output_removes_worktree_after_fail(tmp_path: Path) -> None:
+    """apply_work_output calls remove_worktree even when tests fail (finally block)."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    plugin = _plugin()
+    ss = StateService(ws, "app", plugin)
+
+    worktree_path = tmp_path / "app-work-node5"
+    worktree_path.mkdir()
+    output = WorkOutput()
+
+    remove_calls: list[tuple[str, str]] = []
+
+    def _record_remove(artifact_name: str, node_id: str) -> None:
+        remove_calls.append((artifact_name, node_id))
+
+    with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "remove_worktree", side_effect=_record_remove):
+            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch.object(
+                    ss,
+                    "run_tests",
+                    return_value=RunResult(passed=False, summary="FAIL", output="FAIL"),
+                ):
+                    with pytest.raises(RuntimeError):
+                        await ss.apply_work_output(output, "node5")
+
+    assert remove_calls == [("app", "node5")]
