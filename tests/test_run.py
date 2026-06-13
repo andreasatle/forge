@@ -11,7 +11,6 @@ from forge.adapters.registry import AdapterRegistry
 from forge.core.config import (
     ArtifactConfig,
     ForgeConfig,
-    IntegratorModelConfig,
     ModelsConfig,
     PwcModelConfig,
 )
@@ -182,7 +181,6 @@ async def test_start_wires_nested_planner_and_worker_models(
                 critic="ollama/worker-critic",
                 referee="ollama/worker-referee",
             ),
-            integrator=IntegratorModelConfig(producer="ollama/integrator"),
         ),
     )
 

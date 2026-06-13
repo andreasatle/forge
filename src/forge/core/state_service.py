@@ -43,7 +43,7 @@ def _parse_test_result(raw: str, returncode: int = 0) -> RunResult:
 
 
 class StateService:
-    """Single mutation boundary for artifact state — builds StateView and applies DeltaState."""
+    """Single mutation boundary for artifact state."""
 
     def __init__(
         self, workspace: Workspace, artifact_name: str, plugin: LanguagePlugin | None = None

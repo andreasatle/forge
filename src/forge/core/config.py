@@ -29,19 +29,11 @@ class PwcModelConfig:
 
 
 @dataclass
-class IntegratorModelConfig:
-    """Model configuration for integrator behavior."""
-
-    producer: str | None = None
-
-
-@dataclass
 class ModelsConfig:
     """Model configuration per scheduler agent type."""
 
     planner: PwcModelConfig = field(default_factory=PwcModelConfig)
     worker: PwcModelConfig = field(default_factory=PwcModelConfig)
-    integrator: IntegratorModelConfig = field(default_factory=IntegratorModelConfig)
 
 
 @dataclass
@@ -204,18 +196,6 @@ def _load_pwc_model_config(
     )
 
 
-def _load_integrator_model_config(value: object) -> IntegratorModelConfig:
-    if isinstance(value, str):
-        return IntegratorModelConfig(producer=value)
-    if value is None:
-        return IntegratorModelConfig()
-
-    model_data = _as_mapping(value, "models.integrator")
-    return IntegratorModelConfig(
-        producer=_optional_model(model_data.get("producer"), "models.integrator.producer")
-    )
-
-
 def _load_models_config(models_data: object) -> ModelsConfig:
     models = _as_mapping(models_data, "models")
 
@@ -234,5 +214,4 @@ def _load_models_config(models_data: object) -> ModelsConfig:
             fallback_critic=flat_critic,
             fallback_referee=flat_referee,
         ),
-        integrator=_load_integrator_model_config(models.get("integrator")),
     )

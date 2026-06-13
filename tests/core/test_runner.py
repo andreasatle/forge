@@ -591,8 +591,10 @@ async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: P
     ss.apply_work_output.assert_called_once()
 
 
-async def test_validation_failed_work_response_does_not_call_apply_delta(tmp_path: Path) -> None:
-    """StateService.apply_delta is never called when work_agent returns a validation-rejected FAILED response."""
+async def test_validation_failed_work_response_does_not_call_apply_work_output(
+    tmp_path: Path,
+) -> None:
+    """StateService.apply_work_output is not called for validation-rejected work."""
     ss = _mock_ss()
     work = _work_request()
     state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=work)])
@@ -613,5 +615,5 @@ async def test_validation_failed_work_response_does_not_call_apply_delta(tmp_pat
         state, _plan_request()
     )
 
-    ss.apply_delta.assert_not_called()
+    ss.apply_work_output.assert_not_called()
     assert final.dag[work.id].node_state == NodeState.FAILED

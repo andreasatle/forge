@@ -194,7 +194,7 @@ def test_models_defaults_to_ollama_when_absent(tmp_path: Path) -> None:
     assert config.models.worker.producer == "ollama/gemma4:e4b"
     assert config.models.worker.critic == "ollama/gemma4:e4b"
     assert config.models.worker.referee == "ollama/gemma4:e4b"
-    assert config.models.integrator.producer is None
+    assert not hasattr(config.models, "integrator")
 
 
 def test_compact_planner_string_expands_to_full_pwc(tmp_path: Path) -> None:
@@ -228,14 +228,13 @@ def test_compact_worker_string_expands_to_full_pwc(tmp_path: Path) -> None:
 
 
 def test_old_flat_models_section_parsed_correctly(tmp_path: Path) -> None:
-    """load() keeps accepting the old flat model section."""
+    """load() keeps accepting old flat planner/worker/critic/referee model fields."""
     yaml = (
         "northstar: 'goal'\nworkspace: ./ws\n"
         + _ARTIFACTS_YAML
         + "models:\n"
         + "  planner: claude/claude-sonnet-4-20250514\n"
         + "  worker: openai/gpt-4o\n"
-        + "  integrator: ollama/gemma4:e4b\n"
         + "  critic: claude/planner-critic\n"
         + "  referee: openai/referee\n"
     )
@@ -243,7 +242,6 @@ def test_old_flat_models_section_parsed_correctly(tmp_path: Path) -> None:
     config = ForgeConfig.load(p)
     assert config.models.planner.producer == "claude/claude-sonnet-4-20250514"
     assert config.models.worker.producer == "openai/gpt-4o"
-    assert config.models.integrator.producer == "ollama/gemma4:e4b"
     assert config.models.planner.critic == "claude/planner-critic"
     assert config.models.planner.referee == "openai/referee"
     assert config.models.worker.critic == "claude/planner-critic"
@@ -264,8 +262,6 @@ def test_new_nested_models_section_parsed_correctly(tmp_path: Path) -> None:
         + "    producer: openai/worker\n"
         + "    critic: openai/worker-critic\n"
         + "    referee: openai/worker-referee\n"
-        + "  integrator:\n"
-        + "    producer: ollama/integrator\n"
     )
     p = _write_yaml(tmp_path, yaml)
     config = ForgeConfig.load(p)
@@ -275,7 +271,6 @@ def test_new_nested_models_section_parsed_correctly(tmp_path: Path) -> None:
     assert config.models.worker.producer == "openai/worker"
     assert config.models.worker.critic == "openai/worker-critic"
     assert config.models.worker.referee == "openai/worker-referee"
-    assert config.models.integrator.producer == "ollama/integrator"
 
 
 def test_models_config_defaults() -> None:
@@ -287,7 +282,7 @@ def test_models_config_defaults() -> None:
     assert m.worker.producer == "ollama/gemma4:e4b"
     assert m.worker.critic == "ollama/gemma4:e4b"
     assert m.worker.referee == "ollama/gemma4:e4b"
-    assert m.integrator.producer is None
+    assert not hasattr(m, "integrator")
 
 
 def test_nested_explicit_null_critic_and_referee_disables_review(tmp_path: Path) -> None:
@@ -366,20 +361,6 @@ def test_models_critic_and_referee_absent_defaults_to_full_pwc(tmp_path: Path) -
     assert config.models.planner.referee == config.models.planner.producer
     assert config.models.worker.critic == config.models.worker.producer
     assert config.models.worker.referee == config.models.worker.producer
-
-
-def test_integrator_producer_null_remains_accepted(tmp_path: Path) -> None:
-    """Integrator producer can be explicitly null."""
-    yaml = (
-        "northstar: 'goal'\nworkspace: ./ws\n"
-        + _ARTIFACTS_YAML
-        + "models:\n"
-        + "  integrator:\n"
-        + "    producer: null\n"
-    )
-    p = _write_yaml(tmp_path, yaml)
-    config = ForgeConfig.load(p)
-    assert config.models.integrator.producer is None
 
 
 def test_pwc_max_attempts_defaults_to_three(tmp_path: Path) -> None:

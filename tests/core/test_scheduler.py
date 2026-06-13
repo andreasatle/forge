@@ -505,8 +505,8 @@ async def test_integration_failure_cancels_transitive_dependents() -> None:
     assert final.dag[work_c.id].node_state == NodeState.CANCELLED
 
 
-async def test_validation_failed_work_does_not_apply_delta() -> None:
-    """A validation-failed work response never reaches StateService.apply_delta."""
+async def test_validation_failed_work_does_not_apply_work_output() -> None:
+    """A validation-failed work response never reaches StateService.apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -524,7 +524,7 @@ async def test_validation_failed_work_does_not_apply_delta() -> None:
     )
 
     assert final.dag[work.id].node_state == NodeState.FAILED
-    ss.apply_delta.assert_not_called()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_integration_success_marks_node_integrated() -> None:

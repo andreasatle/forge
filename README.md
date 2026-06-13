@@ -4,7 +4,7 @@ Scheduler-centric agent framework.
 
 Forge is an architecture for autonomous software construction built around one central claim: the scheduler should own the run.
 
-Agents can propose plans, produce work, critique outputs, and request revisions, but they do not own graph consequences or artifact consequences. The scheduler owns the graph. The integrator owns artifact mutation. Each node is executed as a bounded game with typed outputs and explicit dispositions.
+Agents can propose plans, produce work, critique outputs, and request revisions, but they do not own graph consequences or artifact consequences. The scheduler owns the graph, and accepted worker output is integrated through the framework-owned StateService git path. Each node is executed as a bounded game with typed outputs and explicit dispositions.
 
 The result is an agentic system that is inspectable, replayable, and constrained by contracts instead of chat history.
 
@@ -29,7 +29,7 @@ Nodes do not communicate directly. All feedback returns to the scheduler, and th
 - **Review is explicit.** Producer output is checked by a critic and decided by a referee.
 - **Outputs are typed.** Plans, work proposals, and failures cross boundaries as structured data.
 - **Graph consequences are scheduler consequences.** A node result can affect dependencies, retries, failure propagation, and decomposition only through the scheduler.
-- **Artifact consequences are integration consequences.** Workers propose changes; the integrator applies them.
+- **Artifact consequences are integration consequences.** Workers propose changes; `StateService.apply_work_output` applies accepted work through git.
 - **Language behavior belongs to language plugins.** Test commands, language guidance, and artifact-specific mechanics stay outside the scheduler.
 - **Telemetry is immutable.** Runs produce append-only trace data for observability and replay-oriented inspection.
 
@@ -69,7 +69,7 @@ Level 2: node / bounded game
   Typed node result
 ```
 
-The scheduler level owns graph state and dispatch. The node level owns bounded execution of one request. The boundary between them is the typed node result: node execution produces it, and the scheduler interprets it. If the accepted result contains artifact changes, the integrator owns applying those changes to the artifact.
+The scheduler level owns graph state and dispatch. The node level owns bounded execution of one request. The boundary between them is the typed node result: node execution produces it, and the scheduler interprets it. If the accepted result contains artifact changes, the scheduler sends the accepted `WorkOutput` to `StateService.apply_work_output`.
 
 The important separation is ownership:
 
@@ -78,7 +78,7 @@ The important separation is ownership:
 - The **producer** owns candidate output.
 - The **critic** owns finding issues in that output.
 - The **referee** owns the final disposition for the attempt.
-- The **integrator** owns artifact mutation.
+- The **state service** owns artifact mutation.
 - The **language plugin** owns language-specific behavior.
 - The **telemetry sink** owns append-only observability.
 
@@ -126,10 +126,10 @@ Forge treats agent output as a boundary, not a suggestion.
 
 Planner nodes return structured plan outputs. Worker nodes return structured artifact change proposals. Failures, revisions, and decomposition requests also travel through explicit response objects.
 
-Typed outputs give the scheduler and integrator a stable contract:
+Typed outputs give the scheduler and state service a stable contract:
 
 - a plan can become graph structure,
-- a delta can become an integration candidate,
+- a work output can become an integration candidate,
 - a rejection can become node failure,
 - a decomposition request can become new planning work,
 - an empty or already-complete result can be represented without pretending work changed.
@@ -235,7 +235,7 @@ artifacts:
 
 ```text
 src/forge/
-  agents/       Producer, critic, referee, planner, worker, and integrator logic
+  agents/       Producer, critic, referee, planner, and worker logic
   adapters/     Artifact adapter definitions
   core/         Scheduler, models, config, persistence, telemetry, trace viewing
   languages/    Language plugin registry
@@ -249,7 +249,7 @@ tests/          Unit and integration tests for the framework contracts
 workspaces/     Local run state, artifacts, and telemetry
 ```
 
-The important boundary is not the directory layout. It is the ownership model: scheduler for graph state, integrator for artifacts, plugins for language behavior, telemetry for observation.
+The important boundary is not the directory layout. It is the ownership model: scheduler for graph state, StateService for artifacts, plugins for language behavior, telemetry for observation.
 
 ## Development
 

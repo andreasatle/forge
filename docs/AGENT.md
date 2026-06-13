@@ -28,9 +28,9 @@ The framework must preserve typed inputs and outputs across all boundaries.
 * Critic/referee judge only against the AgentRequest contract, not against imagined ideal completeness.
 * Producer output must remain typed through PWC.
 * Planner output is PlanResponse.
-* Worker output is DeltaState.
+* Worker output is WorkOutput.
 * Scheduler derives work nodes from accepted PlanResponse.
-* Scheduler integrates accepted DeltaState.
+* Scheduler integrates accepted WorkOutput through StateService.apply_work_output.
 * Integration is deterministic and framework-owned.
 * Language-specific rules belong in language plugins, not Forge core.
 * Adapter-specific behavior belongs behind adapters.
@@ -79,9 +79,8 @@ Important concepts:
 * RevisionRequest
 * AgentResponse.output
 * PlanResponse
-* DeltaState
+* WorkOutput
 * StateService
-* Integrator
 * Language plugin
 * Adapter registry
 * Future: TelemetryService / RunLedger

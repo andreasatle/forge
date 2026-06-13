@@ -355,7 +355,7 @@ def _empty_integration_errors() -> list[IntegrationError]:
 
 
 class DeltaState(BaseModel, frozen=True):
-    """The state change produced by a worker or integrator agent."""
+    """Legacy state change produced by older worker paths."""
 
     new_files: list[FileWrite] = Field(default_factory=_empty_file_writes)
     edits: list[Edit] = Field(default_factory=_empty_edits)

@@ -116,11 +116,11 @@ It simply dispatches ready tasks.
 
 ---
 
-## Integrator
+## Integration
 
-The integrator commits task results.
+StateService commits accepted task results.
 
-Only the integrator changes reality.
+Only the framework-owned integration path changes artifact reality.
 
 Conceptually:
 
@@ -130,7 +130,7 @@ State + Result
 Updated State
 ```
 
-The integrator owns:
+StateService owns:
 
 * state mutation;
 * validation;
@@ -166,7 +166,7 @@ Planning tasks do not directly modify state.
 
 ## Work Task
 
-A work task produces a DeltaState.
+A work task produces a WorkOutput.
 
 Conceptually:
 
@@ -175,10 +175,10 @@ StateView
 ↓
 Execution
 ↓
-DeltaState
+WorkOutput
 ```
 
-Integration applies the DeltaState to state.
+Integration applies the WorkOutput to state through git.
 
 ---
 
