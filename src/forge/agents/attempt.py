@@ -11,6 +11,7 @@ from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.agents.revisions import RevisionHistory
 from forge.core.models import (
+    AgentDiagnostic,
     AgentRequest,
     AgentResponse,
     CriticDisposition,
@@ -29,6 +30,7 @@ from forge.llm.providers import LLMProvider
 _logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
 
 
 @runtime_checkable
@@ -487,6 +489,15 @@ class AttemptLifecycle[T]:
             CriticDisposition.REVISE,
             "maximum validation attempts exhausted without an accept disposition",
             self._validator.work_noun(),
+        ).model_copy(
+            update={
+                "diagnostics": [
+                    AgentDiagnostic(
+                        kind=_VALIDATION_EXHAUSTED_DIAGNOSTIC,
+                        message="maximum validation attempts exhausted without an accept disposition",
+                    )
+                ]
+            }
         )
 
 

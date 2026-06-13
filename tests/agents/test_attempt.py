@@ -583,6 +583,7 @@ async def test_repeated_revise_until_max_attempts_returns_failed_without_output(
     assert result.failure_kind == FailureKind.VALIDATION_REJECTED
     assert result.output is None
     assert "maximum validation attempts exhausted" in (result.error or "")
+    assert [diagnostic.kind for diagnostic in result.diagnostics] == ["validation_exhausted"]
     assert len(prompts) == 2
 
 

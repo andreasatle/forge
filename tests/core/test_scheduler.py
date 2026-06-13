@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from forge.core.models import (
+    AgentDiagnostic,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -184,6 +185,36 @@ async def test_scheduler_does_not_derive_work_nodes_from_failed_plan_output() ->
 
     assert final.dag[planner.id].node_state == NodeState.FAILED
     assert all(n.request.agent_type != AgentType.WORK for n in final.dag.values())
+
+
+async def test_validation_rejected_planner_does_not_spawn_unbounded_planner_nodes() -> None:
+    """A validation-rejected planner failure does not create replacement planner nodes."""
+    planner = _plan_request()
+    blocked_work = _work_request(deps=frozenset({uuid4()}))
+    dispatched: list[RequestId] = []
+    state = _base_state().add_nodes([DAGNode(request=planner), DAGNode(request=blocked_work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        dispatched.append(request.id)
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.FAILED,
+            failure_kind=FailureKind.VALIDATION_REJECTED,
+            error="maximum validation attempts exhausted without an accept disposition",
+            diagnostics=[
+                AgentDiagnostic(
+                    kind="validation_exhausted",
+                    message="maximum validation attempts exhausted without an accept disposition",
+                )
+            ],
+        )
+
+    final = await asyncio.wait_for(Scheduler(runner=runner).run(state, _plan_request()), timeout=1)
+
+    plan_nodes = [node for node in final.dag.values() if node.request.agent_type == AgentType.PLAN]
+    assert len(plan_nodes) == 1
+    assert dispatched == [planner.id]
+    assert final.dag[planner.id].node_state == NodeState.FAILED
 
 
 async def test_failed_node_cancels_dependents() -> None:

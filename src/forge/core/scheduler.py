@@ -4,7 +4,8 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from uuid import UUID, uuid4
+from enum import Enum
+from uuid import UUID
 
 from forge.core.models import (
     AgentContract,
@@ -30,6 +31,7 @@ from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_tele
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
 logger = logging.getLogger(__name__)
+_VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
 
 
 @dataclass
@@ -40,6 +42,58 @@ class SchedulerCallbacks:
     on_node_completed: Callable[[DAGNode], None] | None = None
     on_node_failed: Callable[[DAGNode], None] | None = None
     on_idle: Callable[[SchedulerState], None] | None = None
+
+
+class TerminalOutcomeKind(Enum):
+    """Structured terminal outcome categories consumed by scheduler consequences."""
+
+    ACCEPTED_PLAN = "accepted_plan"
+    ACCEPTED_WORK = "accepted_work"
+    VALIDATION_EXHAUSTED = "validation_exhausted"
+    INTEGRATION_FAILURE = "integration_failure"
+    DECOMPOSITION_REQUEST = "decomposition_request"
+    TERMINAL_FAILURE = "terminal_failure"
+
+
+@dataclass(frozen=True)
+class TerminalNodeOutcome:
+    """Terminal agent result normalized for SchedulerConsequenceHandler."""
+
+    kind: TerminalOutcomeKind
+    response: AgentResponse
+
+    @classmethod
+    def from_response(cls, node: DAGNode, response: AgentResponse) -> "TerminalNodeOutcome":
+        """Classify an agent response into the scheduler's terminal outcome categories."""
+        if response.status == ResponseStatus.DECOMPOSE:
+            return cls(TerminalOutcomeKind.DECOMPOSITION_REQUEST, response)
+        if _has_validation_exhausted_diagnostic(response):
+            return cls(TerminalOutcomeKind.VALIDATION_EXHAUSTED, response)
+        if response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE):
+            if node.request.agent_type == AgentType.PLAN:
+                return cls(TerminalOutcomeKind.ACCEPTED_PLAN, response)
+            if node.request.agent_type == AgentType.WORK:
+                return cls(TerminalOutcomeKind.ACCEPTED_WORK, response)
+        return cls(TerminalOutcomeKind.TERMINAL_FAILURE, response)
+
+    @classmethod
+    def from_exception(cls, node: DAGNode, error: BaseException) -> "TerminalNodeOutcome":
+        """Represent a runner exception as a terminal scheduler failure outcome."""
+        return cls(
+            TerminalOutcomeKind.TERMINAL_FAILURE,
+            AgentResponse(
+                request_id=node.request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.INTERNAL_ERROR,
+                error=str(error),
+            ),
+        )
+
+
+def _has_validation_exhausted_diagnostic(response: AgentResponse) -> bool:
+    return any(
+        diagnostic.kind == _VALIDATION_EXHAUSTED_DIAGNOSTIC for diagnostic in response.diagnostics
+    )
 
 
 class SchedulerConsequenceHandler:
@@ -61,21 +115,23 @@ class SchedulerConsequenceHandler:
         self,
         state: SchedulerState,
         node: DAGNode,
-        response: AgentResponse,
+        outcome: TerminalNodeOutcome,
     ) -> SchedulerState:
         """Apply the effects of a terminal response for a DAG node."""
+        response = outcome.response
         current = state.dag[node.request.id]
-        plan_expansion = self._build_plan_expansion(node, response)
         updated = current.with_response(response)
         state = state.update_node(updated)
 
-        if updated.node_state == NodeState.INTEGRATED:
-            return await self._handle_integrated(state, current, updated, plan_expansion)
-
-        if response.status == ResponseStatus.DECOMPOSE and isinstance(node.request.spec, WorkSpec):
+        if outcome.kind == TerminalOutcomeKind.ACCEPTED_PLAN:
+            plan_expansion = self._build_plan_expansion(node, response)
+            return self._handle_accepted_plan(state, updated, plan_expansion)
+        if outcome.kind == TerminalOutcomeKind.ACCEPTED_WORK:
+            return await self._handle_accepted_work(state, current, updated)
+        if outcome.kind == TerminalOutcomeKind.DECOMPOSITION_REQUEST:
             return self._handle_decompose(state, updated)
 
-        return self._handle_failed(state, updated)
+        return self._handle_failed(state, updated, outcome.kind)
 
     def _build_plan_expansion(
         self,
@@ -93,12 +149,22 @@ class SchedulerConsequenceHandler:
             ]
         return []
 
-    async def _handle_integrated(
+    def _handle_accepted_plan(
+        self,
+        state: SchedulerState,
+        updated: DAGNode,
+        plan_expansion: list[DAGNode],
+    ) -> SchedulerState:
+        if plan_expansion:
+            state = state.add_nodes(plan_expansion)
+        self._fire_node(self._callbacks.on_node_completed, updated)
+        return state
+
+    async def _handle_accepted_work(
         self,
         state: SchedulerState,
         current: DAGNode,
         updated: DAGNode,
-        plan_expansion: list[DAGNode],
     ) -> SchedulerState:
         integration_failed = False
         response = updated.response
@@ -115,10 +181,8 @@ class SchedulerConsequenceHandler:
         if integration_failed:
             failed_node = updated.with_state(NodeState.FAILED)
             state = state.update_node(failed_node)
-            return self._handle_failed(state, failed_node)
+            return self._handle_failed(state, failed_node, TerminalOutcomeKind.INTEGRATION_FAILURE)
 
-        if plan_expansion:
-            state = state.add_nodes(plan_expansion)
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
 
@@ -174,7 +238,7 @@ class SchedulerConsequenceHandler:
     def _handle_decompose(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
         spec = updated.request.spec
         if not isinstance(spec, WorkSpec):
-            return self._handle_failed(state, updated)
+            return self._handle_failed(state, updated, TerminalOutcomeKind.TERMINAL_FAILURE)
 
         new_plan_request = AgentRequest(
             agent_type=AgentType.PLAN,
@@ -200,7 +264,13 @@ class SchedulerConsequenceHandler:
         self._emit_node_decomposed(updated, new_plan_request)
         return state
 
-    def _handle_failed(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
+    def _handle_failed(
+        self,
+        state: SchedulerState,
+        updated: DAGNode,
+        outcome_kind: TerminalOutcomeKind = TerminalOutcomeKind.TERMINAL_FAILURE,
+    ) -> SchedulerState:
+        _ = outcome_kind
         self._emit_node_failed(updated)
         self._fire_node(self._callbacks.on_node_failed, updated)
         return self._cancel_dependents(state, updated.request.id)
@@ -336,11 +406,7 @@ class Scheduler:
                     for n in state.dag.values()
                 ):
                     break
-                new_planner = global_planner.model_copy(
-                    update={"id": uuid4(), "source": RequestSource.PLANNER}
-                )
-                state = state.add_nodes([DAGNode(request=new_planner)])
-                continue
+                break
 
             to_dispatch = ready[: state.max_concurrency]
 
@@ -354,15 +420,10 @@ class Scheduler:
 
             for node, result in zip(to_dispatch, raw):
                 if isinstance(result, BaseException):
-                    error_response = AgentResponse(
-                        request_id=node.request.id,
-                        status=ResponseStatus.FAILED,
-                        failure_kind=FailureKind.INTERNAL_ERROR,
-                        error=str(result),
-                    )
-                    state = await self._consequences.apply(state, node, error_response)
+                    outcome = TerminalNodeOutcome.from_exception(node, result)
                 else:
-                    state = await self._consequences.apply(state, node, result)
+                    outcome = TerminalNodeOutcome.from_response(node, result)
+                state = await self._consequences.apply(state, node, outcome)
 
         return state
 
