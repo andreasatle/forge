@@ -214,7 +214,7 @@ def test_init_artifact_runs_git_init_for_language_backed_artifacts(tmp_path: Pat
         with patch("subprocess.run", side_effect=_run):
             ws.init_artifact("codebase", _make_plugin())
 
-    assert ["git", "init"] in git_cmds
+    assert ["git", "init", "-b", "main"] in git_cmds
     assert ["git", "add", "-A"] in git_cmds
     assert any(c[:3] == ["git", "commit", "-m"] and "init: codebase" in c[-1] for c in git_cmds)
 

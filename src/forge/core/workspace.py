@@ -58,7 +58,7 @@ class Workspace:
         cmd = plugin.init_command.format(artifact_name=name)
         subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
         subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
-        subprocess.run(["git", "init"], cwd=artifact_dir, check=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=artifact_dir, check=True)
         subprocess.run(["git", "add", "-A"], cwd=artifact_dir, check=True)
         subprocess.run(["git", "commit", "-m", f"init: {name}"], cwd=artifact_dir, check=True)
 

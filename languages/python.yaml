@@ -14,7 +14,7 @@ prompt_supplement: |
   Always include a pyproject.toml declaring dependencies and requiring Python >=3.12.
   Use uv as the package manager — never requirements.txt or setup.py.
   uv owns dependency management — never edit pyproject.toml dependency
-  sections directly. Runtime packages go in DeltaState.dependencies.
+  sections directly. Runtime packages go in WorkOutput.dependencies.
   Dev packages are handled by project initialization. Tool configuration
   sections (e.g. [tool.ruff], [tool.pytest.ini_options]) may be added
   when required by the task, but dependency sections must never be
