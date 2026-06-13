@@ -608,7 +608,6 @@ def test_prompt_builder_tool_guidance_uses_registered_tools_only():
         "read_file",
         "run_tests",
         "add_dependency",
-        "write_blackboard",
     ):
         assert unavailable not in prompt
 

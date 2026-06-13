@@ -100,15 +100,6 @@ def test_reset_deletes_state_json(tmp_path: Path) -> None:
     assert not ws.state_path().exists()
 
 
-def test_reset_deletes_blackboard_json(tmp_path: Path) -> None:
-    """reset() removes the blackboard.json file if it exists."""
-    ws = Workspace(tmp_path / "ws")
-    ws.init()
-    ws.blackboard_path().write_text("{}")
-    ws.reset([])
-    assert not ws.blackboard_path().exists()
-
-
 def test_reset_clears_artifact_directory_contents(tmp_path: Path) -> None:
     """reset() removes all files inside the named artifact directory."""
     ws = Workspace(tmp_path / "ws")

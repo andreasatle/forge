@@ -103,8 +103,6 @@ This should store immutable run events for replay and a future web UI:
 * test output
 * state version changes
 
-This is not a blackboard. Agents should not use it as shared mutable memory.
-
 ## Required Development Discipline
 
 Before implementing, answer:

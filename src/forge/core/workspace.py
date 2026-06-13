@@ -21,10 +21,6 @@ class Workspace:
         """Return the path to the scheduler state JSON file."""
         return self.path / "state.json"
 
-    def blackboard_path(self) -> Path:
-        """Return the path to the shared blackboard JSON file."""
-        return self.path / "blackboard.json"
-
     def artifact_dir(self, name: str) -> Path:
         """Return the root directory for the named artifact directly under the workspace."""
         return self.path / name
@@ -63,9 +59,8 @@ class Workspace:
         subprocess.run(["git", "commit", "-m", f"init: {name}"], cwd=artifact_dir, check=True)
 
     def reset(self, artifact_names: list[str]) -> None:
-        """Delete state, blackboard, and all contents of artifact directories."""
+        """Delete state and all contents of artifact directories."""
         self.state_path().unlink(missing_ok=True)
-        self.blackboard_path().unlink(missing_ok=True)
         for name in artifact_names:
             d = self.artifact_dir(name)
             if d.exists():

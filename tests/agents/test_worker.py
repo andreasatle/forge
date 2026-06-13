@@ -30,8 +30,7 @@ from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.tools.registry import ToolRegistry
 
-BLACKBOARD_TOOL_NAMES = {"read_blackboard", "write_blackboard"}
-MUTATING_TOOL_NAMES = {"write_file", "replace_in_file", "add_dependency", "write_blackboard"}
+MUTATING_TOOL_NAMES = {"write_file", "replace_in_file", "add_dependency"}
 PYTHON_PROMPT_WORDS = (
     "pyproject.toml",
     "requirements.txt",
@@ -336,55 +335,6 @@ async def test_work_task_executor_keeps_read_only_policy(tmp_path: Path) -> None
     assert "do not attempt to write files via tools" in user_prompt
 
 
-async def test_worker_tools_do_not_include_blackboard_tools(tmp_path: Path) -> None:
-    """work_agent passes a registry with no blackboard tools — neither read nor write."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
-        mock_run_agent.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-        )
-        await work_agent(
-            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
-        )
-
-    tools = mock_run_agent.call_args.kwargs["tools"]
-    assert _tool_names(tools).isdisjoint(BLACKBOARD_TOOL_NAMES)
-
-
-async def test_worker_prompt_does_not_expose_blackboard_tools(tmp_path: Path) -> None:
-    """Neither user prompt nor system prompt seen by a worker mentions any blackboard tool."""
-    workspace = Workspace(tmp_path / "ws")
-    workspace.init()
-    workspace.init_artifact("codebase")
-    request = _request()
-    provider = MagicMock()
-    provider.max_tokens = 8192
-
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
-        mock_run_agent.return_value = AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-        )
-        await work_agent(
-            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
-        )
-
-    tools = mock_run_agent.call_args.kwargs["tools"]
-    user_prompt = mock_run_agent.call_args.args[3]
-    system_prompt = PromptBuilder(tools, WorkOutput).build()
-
-    for tool_name in BLACKBOARD_TOOL_NAMES:
-        assert tool_name not in system_prompt
-        assert tool_name not in user_prompt
-
-
 async def test_worker_prompt_tool_mentions_match_registry(tmp_path: Path) -> None:
     """Worker-facing prompts mention only tools that are actually registered."""
     workspace = Workspace(tmp_path / "ws")
@@ -499,17 +449,6 @@ async def test_worker_prompt_includes_state_version_and_file_context(tmp_path: P
     assert "Existing files in 'codebase'" in user_prompt
     assert "File: src/app.py" in user_prompt
     assert "print('hi')" in user_prompt
-
-
-def test_production_adapter_yamls_expose_no_blackboard_tools() -> None:
-    """No adapter YAML in the production adapters directory advertises blackboard tools."""
-    adapters_dir = Path(__file__).parents[2] / "adapters"
-    registry = AdapterRegistry()
-    registry.load(adapters_dir)
-    for name in registry.names():
-        spec = registry.get(name)
-        exposed = BLACKBOARD_TOOL_NAMES.intersection(spec.tools)
-        assert not exposed, f"adapter '{name}' exposes blackboard tools: {exposed}"
 
 
 async def test_coding_adapter_receives_exactly_declared_tools(tmp_path: Path) -> None:
