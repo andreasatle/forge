@@ -364,6 +364,27 @@ class DeltaState(BaseModel, frozen=True):
     base_version: int = 0
 
 
+class FileContent(BaseModel, frozen=True):
+    """A file to be written to the artifact directory — full content."""
+
+    path: str
+    content: str
+
+
+def _empty_file_contents() -> list[FileContent]:
+    return []
+
+
+class WorkOutput(BaseModel, frozen=True):
+    """Proposed workspace state from a work agent.
+    Workers provide complete file content; git computes the diff."""
+
+    kind: Literal["work_output"] = "work_output"
+    files: list[FileContent] = Field(default_factory=_empty_file_contents)
+    dependencies: list[str] = Field(default_factory=_empty_strings)
+    base_version: str = ""
+
+
 class RunResult(BaseModel, frozen=True):
     """Result of running tests against the current artifact state."""
 
@@ -418,7 +439,7 @@ class PlanResponse(BaseModel, frozen=True):
     tasks: list[TaskSpec]
 
 
-ProducerOutput = PlanResponse | DeltaState
+ProducerOutput = PlanResponse | DeltaState | WorkOutput
 
 
 def _empty_agent_requests() -> list[AgentRequest]:

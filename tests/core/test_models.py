@@ -16,6 +16,7 @@ from forge.core.models import (
     DeltaState,
     Edit,
     FailureKind,
+    FileContent,
     FileView,
     IntegrationError,
     NodeState,
@@ -29,6 +30,7 @@ from forge.core.models import (
     TaskSpec,
     ToolCallRequest,
     ToolCallResponse,
+    WorkOutput,
     WorkSpec,
     render_agent_contract,
 )
@@ -529,3 +531,45 @@ def test_referee_decision_override_true_when_overriding_critic():
         override=critic.disposition != CriticDisposition.ACCEPT,
     )
     assert decision.override is True
+
+
+# --- FileContent ---
+
+
+def test_file_content_stores_path_and_content():
+    """FileContent stores path and content correctly."""
+    fc = FileContent(path="src/main.py", content="x = 1")
+    assert fc.path == "src/main.py"
+    assert fc.content == "x = 1"
+
+
+# --- WorkOutput ---
+
+
+def test_work_output_defaults_to_empty_files_and_dependencies():
+    """WorkOutput defaults to empty files and dependencies lists."""
+    wo = WorkOutput()
+    assert wo.files == []
+    assert wo.dependencies == []
+
+
+def test_work_output_base_version_defaults_to_empty_string():
+    """WorkOutput.base_version defaults to empty string."""
+    wo = WorkOutput()
+    assert wo.base_version == ""
+
+
+def test_work_output_is_frozen():
+    """WorkOutput raises on direct field mutation."""
+    wo = WorkOutput()
+    with pytest.raises(Exception):
+        wo.base_version = "abc123"  # type: ignore[misc]
+
+
+def test_work_output_stores_files_and_dependencies():
+    """WorkOutput stores provided files and dependencies."""
+    fc = FileContent(path="src/lib.py", content="def f(): pass")
+    wo = WorkOutput(files=[fc], dependencies=["requests"], base_version="deadbeef")
+    assert wo.files == [fc]
+    assert wo.dependencies == ["requests"]
+    assert wo.base_version == "deadbeef"
