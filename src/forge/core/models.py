@@ -62,6 +62,7 @@ class FailureKind(Enum):
     INTEGRATION_FAILED = "integration_failed"
     TEST_FAILED = "test_failed"
     VALIDATION_REJECTED = "validation_rejected"
+    INTERNAL_ERROR = "internal_error"
     UNKNOWN = "unknown"
 
 

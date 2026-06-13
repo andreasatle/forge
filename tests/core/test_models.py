@@ -327,6 +327,7 @@ def test_failure_kind_has_expected_values():
         "integration_failed",
         "test_failed",
         "validation_rejected",
+        "internal_error",
         "unknown",
     }
     assert not hasattr(FailureKind, "TRUNCATED_OUTPUT")

@@ -5,9 +5,8 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, cast, runtime_checkable
 from uuid import UUID
 
-from pydantic import BaseModel
-
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
+from forge.agents.attempt_telemetry import AttemptTelemetryReporter
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.agents.revisions import RevisionHistory
@@ -24,7 +23,7 @@ from forge.core.models import (
     StateView,
     WorkOutput,
 )
-from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
+from forge.core.telemetry import TelemetrySink
 from forge.llm.providers import LLMProvider
 
 _logger = logging.getLogger(__name__)
@@ -227,61 +226,6 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
     )
 
 
-def _preview(text: str | None, limit: int = 500) -> str | None:
-    if text is None:
-        return None
-    stripped = text.strip()
-    if len(stripped) <= limit:
-        return stripped
-    return f"{stripped[: limit - 15].rstrip()} ...[truncated]"
-
-
-def _work_output_summary(output: WorkOutput) -> dict[str, object]:
-    return {
-        "file_count": len(output.files),
-        "dependency_count": len(output.dependencies),
-        "file_paths": [file.path for file in output.files],
-        "dependencies": list(output.dependencies),
-        "base_version": output.base_version,
-    }
-
-
-def _plan_summary(plan: PlanResponse) -> dict[str, object]:
-    return {
-        "task_count": len(plan.tasks),
-        "tasks": [
-            {
-                "objective": task.objective,
-                "adapter": task.adapter,
-                "artifact": task.artifact,
-                "language": task.language,
-                "depends_on": list(task.depends_on),
-            }
-            for task in plan.tasks
-        ],
-    }
-
-
-def _producer_response_summary(response: AgentResponse) -> dict[str, object]:
-    output_type = type(response.output).__name__ if response.output is not None else None
-    data: dict[str, object] = {
-        "status": response.status.value,
-        "failure_kind": response.failure_kind.value if response.failure_kind else None,
-        "error": _preview(response.error),
-        "output_type": output_type,
-        "ran_tests_and_passed": response.ran_tests_and_passed,
-    }
-    if isinstance(response.output, WorkOutput):
-        data["work_output"] = _work_output_summary(response.output)
-    elif isinstance(response.output, PlanResponse):
-        data["plan"] = _plan_summary(response.output)
-    return data
-
-
-def _model_data(model: BaseModel) -> dict[str, object]:
-    return cast(dict[str, object], model.model_dump(mode="json"))
-
-
 class AttemptEngine[T]:
     """Generic producer/critic/referee retry loop for work and plan agents."""
 
@@ -307,38 +251,9 @@ class AttemptEngine[T]:
         self._critic_provider = critic_provider
         self._referee_provider = referee_provider
         self._max_attempts = max_attempts
-        self._telemetry_sink = telemetry_sink
-        self._run_id = run_id
         self._initial_revision = initial_revision
-
-    def _emit(
-        self,
-        *,
-        attempt_number: int | None,
-        role: str,
-        phase: str,
-        event_type: str,
-        status: str | None = None,
-        summary: str | None = None,
-        data: dict[str, object] | None = None,
-    ) -> None:
-        if self._run_id is None:
-            return
-        safe_append_telemetry(
-            self._telemetry_sink,
-            TelemetryEvent(
-                run_id=self._run_id,
-                node_id=self._request.id,
-                request_id=self._request.id,
-                agent_type=self._request.agent_type.value,
-                attempt_number=attempt_number,
-                role=role,
-                phase=phase,
-                event_type=event_type,
-                status=status,
-                summary=summary,
-                data=data or {},
-            ),
+        self._telemetry = AttemptTelemetryReporter(
+            telemetry_sink, run_id, request.id, request.agent_type
         )
 
     async def run(self, prompt: str) -> AgentResponse:
@@ -349,15 +264,7 @@ class AttemptEngine[T]:
 
         for attempt in range(self._max_attempts):
             attempt_number = attempt + 1
-            self._emit(
-                attempt_number=attempt_number,
-                role="producer",
-                phase="pwc",
-                event_type="pwc.attempt.started",
-                status="started",
-                summary=f"attempt {attempt_number}/{self._max_attempts} started",
-                data={"max_attempts": self._max_attempts},
-            )
+            self._telemetry.attempt_started(attempt_number, self._max_attempts)
             current_prompt = (
                 prompt
                 if not history.requests
@@ -368,15 +275,7 @@ class AttemptEngine[T]:
             )
             response = await self._run_fn(current_prompt)
             output = self._validator.extract_from_response(response)
-            self._emit(
-                attempt_number=attempt_number,
-                role="producer",
-                phase="producer",
-                event_type="producer.response.parsed",
-                status=response.status.value,
-                summary=f"producer returned {response.status.value}",
-                data=_producer_response_summary(response),
-            )
+            self._telemetry.producer_response_parsed(attempt_number, response)
 
             if (
                 response.status == ResponseStatus.FAILED
@@ -419,15 +318,7 @@ class AttemptEngine[T]:
                             ],
                         )
                         history = history.append(revision_request)
-                        self._emit(
-                            attempt_number=attempt_number,
-                            role="revision_loop",
-                            phase="pwc",
-                            event_type="pwc.revision.appended",
-                            status="revise",
-                            summary="revision request appended",
-                            data={"revision_request": _model_data(revision_request)},
-                        )
+                        self._telemetry.revision_appended(attempt_number, revision_request)
                         continue
                     if not self._validator.requires_nonempty():
                         _logger.info(
@@ -471,15 +362,7 @@ class AttemptEngine[T]:
                         e,
                     )
                     return _validation_parse_failed_response(self._request, e)
-                self._emit(
-                    attempt_number=attempt_number,
-                    role="critic",
-                    phase="critic",
-                    event_type="critic.finding.parsed",
-                    status=finding.disposition.value,
-                    summary=_preview(finding.rationale),
-                    data={"critic_finding": _model_data(finding)},
-                )
+                self._telemetry.critic_finding_parsed(attempt_number, finding)
                 if finding.disposition == CriticDisposition.ALREADY_DONE:
                     _logger.info(
                         "attempt %d/%d: critic confirmed ALREADY_DONE",
@@ -514,15 +397,7 @@ class AttemptEngine[T]:
                     prior_attempts=attempt_number,
                     critic_finding=finding,
                 )
-                self._emit(
-                    attempt_number=attempt_number,
-                    role="revision_loop",
-                    phase="pwc",
-                    event_type="pwc.revision.appended",
-                    status="revise",
-                    summary="revision request appended",
-                    data={"revision_request": _model_data(history.requests[-1])},
-                )
+                self._telemetry.revision_appended(attempt_number, history.requests[-1])
                 continue
 
             if response.status != ResponseStatus.COMPLETED or output is None:
@@ -567,24 +442,8 @@ class AttemptEngine[T]:
                 decision.disposition.value,
                 "returning" if decision.disposition == CriticDisposition.ACCEPT else "retrying",
             )
-            self._emit(
-                attempt_number=attempt_number,
-                role="critic",
-                phase="critic",
-                event_type="critic.finding.parsed",
-                status=finding.disposition.value,
-                summary=_preview(finding.rationale),
-                data={"critic_finding": _model_data(finding)},
-            )
-            self._emit(
-                attempt_number=attempt_number,
-                role="referee",
-                phase="referee",
-                event_type="referee.decision.parsed",
-                status=decision.disposition.value,
-                summary=_preview(decision.rationale),
-                data={"referee_decision": _model_data(decision)},
-            )
+            self._telemetry.critic_finding_parsed(attempt_number, finding)
+            self._telemetry.referee_decision_parsed(attempt_number, decision)
 
             if decision.disposition == CriticDisposition.ACCEPT:
                 return response
@@ -601,15 +460,7 @@ class AttemptEngine[T]:
                     attempt_number,
                     self._max_attempts,
                 )
-                self._emit(
-                    attempt_number=attempt_number,
-                    role="referee",
-                    phase="referee",
-                    event_type="pwc.decompose.requested",
-                    status="decompose",
-                    summary=_preview(decision.rationale),
-                    data={"referee_decision": _model_data(decision)},
-                )
+                self._telemetry.decompose_requested(attempt_number, decision)
                 return AgentResponse(
                     request_id=self._request.id,
                     status=ResponseStatus.DECOMPOSE,
@@ -621,32 +472,15 @@ class AttemptEngine[T]:
                 critic_finding=finding,
                 referee_decision=decision,
             )
-            self._emit(
-                attempt_number=attempt_number,
-                role="revision_loop",
-                phase="pwc",
-                event_type="pwc.revision.appended",
-                status="revise",
-                summary="revision request appended",
-                data={"revision_request": _model_data(history.requests[-1])},
-            )
+            self._telemetry.revision_appended(attempt_number, history.requests[-1])
 
         _logger.warning(
             "max_attempts (%d) exhausted; validation did not accept",
             self._max_attempts,
         )
-        self._emit(
-            attempt_number=self._max_attempts,
-            role="revision_loop",
-            phase="pwc",
-            event_type="pwc.exhausted",
-            status="failed",
-            summary="maximum validation attempts exhausted without an accept disposition",
-            data={
-                "attempt_count": self._max_attempts,
-                "final_disposition": CriticDisposition.REVISE.value,
-                "error": "maximum validation attempts exhausted without an accept disposition",
-            },
+        self._telemetry.exhausted(
+            self._max_attempts,
+            "maximum validation attempts exhausted without an accept disposition",
         )
         return _validation_rejected_response(
             self._request,

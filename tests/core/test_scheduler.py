@@ -1015,3 +1015,77 @@ async def test_decompose_emits_node_decomposed_telemetry() -> None:
     assert event.phase == "scheduler"
     assert event.status == "decompose"
     assert "plan_node_id" in event.data
+
+
+# --- Runner exception handling ---
+
+
+async def test_runner_exception_stores_failed_response_not_none() -> None:
+    """When the runner raises an unhandled exception, the failed node has a non-None response."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        raise AttributeError("'AttemptEngine' object has no attribute '_emit'")
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    response = final.dag[work.id].response
+    assert response is not None
+    assert response.status == ResponseStatus.FAILED
+
+
+async def test_runner_exception_response_has_internal_error_kind() -> None:
+    """Runner exceptions produce failure_kind=INTERNAL_ERROR on the stored response."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        raise RuntimeError("unexpected executor crash")
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    response = final.dag[work.id].response
+    assert response is not None
+    assert response.failure_kind == FailureKind.INTERNAL_ERROR
+    assert "unexpected executor crash" in (response.error or "")
+
+
+async def test_runner_exception_telemetry_node_failed_has_error_summary() -> None:
+    """node.failed telemetry emitted for runner exceptions includes status, failure_kind, and error."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        raise AttributeError("'AttemptEngine' object has no attribute '_emit'")
+
+    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        state, _plan_request()
+    )
+
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    events = [e for e in sink.events if e.event_type == "node.failed"]
+    assert len(events) == 1
+    event = events[0]
+    assert event.status == "failed"
+    assert event.data.get("failure_kind") == "internal_error"
+    assert "'AttemptEngine'" in (event.summary or "")
+
+
+async def test_runner_exception_cancels_dependents() -> None:
+    """A runner exception on node A cancels dependent nodes just like a normal failure."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            raise RuntimeError("crash before attempt")
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(state, _plan_request())
+
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED

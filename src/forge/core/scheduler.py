@@ -148,7 +148,13 @@ class Scheduler:
                 current = state.dag[node.request.id]
 
                 if isinstance(result, BaseException):
-                    failed = current.with_state(NodeState.FAILED)
+                    error_response = AgentResponse(
+                        request_id=node.request.id,
+                        status=ResponseStatus.FAILED,
+                        failure_kind=FailureKind.INTERNAL_ERROR,
+                        error=str(result),
+                    )
+                    failed = current.with_response(error_response)
                     state = state.update_node(failed)
                     self._emit_node_failed(failed)
                     self._fire_node(self._callbacks.on_node_failed, failed)
