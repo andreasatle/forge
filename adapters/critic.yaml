@@ -18,8 +18,8 @@ prompt_template: |
   - REJECT: the {output_noun} fundamentally violates the objective, success condition, artifact, adapter, language, constraints, or explicit non-goals
 
   Be demanding within the contract only. Do not accept partial output when it leaves
-  contract requirements unsatisfied. If tests are missing and the contract implies
-  testable correctness, that is REVISE. {empty_output_guidance}
+  contract requirements unsatisfied. If the contract's success condition or acceptance
+  criteria are not satisfied, that is REVISE. {empty_output_guidance}
 
   Rules:
   - Use lowercase disposition values: "accept", "revise", or "reject"

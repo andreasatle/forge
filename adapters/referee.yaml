@@ -30,7 +30,7 @@ prompt_template: |
 
   Choose "decompose" when:
   - The task has multiple unrelated concerns that have not converged after multiple revision rounds
-  - The critic keeps requesting changes to unrelated areas simultaneously (e.g. tests AND dependencies AND file structure)
+  - The critic keeps requesting changes to unrelated areas simultaneously (e.g. implementation AND documentation AND configuration)
   - The success condition requires work that belongs in separate, focused tasks
   - The task scope is too broad for a single focused implementation
   "decompose" means: this task must be broken into smaller focused tasks by the planner — do not attempt further revisions.
