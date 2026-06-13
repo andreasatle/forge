@@ -1,13 +1,7 @@
 name: zig
-package_manager: zig build
 init_command: zig init
 test_command: zig build test
 sync_command: zig build
-add_dependency_command: zig fetch {package}
-project_structure:
-  - build.zig
-  - src/
-  - tests/
 prompt_supplement: |
   Always place source code under src/.
   Always write tests under tests/.

@@ -7,12 +7,9 @@ import yaml
 
 _REQUIRED_FIELDS = (
     "name",
-    "package_manager",
     "init_command",
     "test_command",
     "sync_command",
-    "add_dependency_command",
-    "project_structure",
     "prompt_supplement",
     "work_output_example",
 )
@@ -23,12 +20,9 @@ class LanguagePlugin:
     """Language plugin loaded from a YAML file defining project structure and tooling."""
 
     name: str
-    package_manager: str
     init_command: str
     test_command: str
     sync_command: str
-    add_dependency_command: str
-    project_structure: list[str]
     prompt_supplement: str
     work_output_example: str
 
@@ -55,12 +49,9 @@ class LanguageRegistry:
                     )
             plugin = LanguagePlugin(
                 name=data["name"],
-                package_manager=data["package_manager"],
                 init_command=data["init_command"],
                 test_command=data["test_command"],
                 sync_command=data["sync_command"],
-                add_dependency_command=data["add_dependency_command"],
-                project_structure=data["project_structure"],
                 prompt_supplement=data["prompt_supplement"],
                 work_output_example=data["work_output_example"],
             )

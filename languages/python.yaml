@@ -1,13 +1,7 @@
 name: python
-package_manager: uv
 init_command: uv init --vcs none --no-readme --no-workspace --name {artifact_name} && uv add --dev pytest
 test_command: uv run pytest
 sync_command: uv sync
-add_dependency_command: uv add {package}
-project_structure:
-  - pyproject.toml
-  - src/
-  - tests/
 prompt_supplement: |
   Always place source code under src/.
   Always write tests under tests/ using pytest.

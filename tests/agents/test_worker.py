@@ -93,12 +93,9 @@ def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
     lr.register(
         LanguagePlugin(
             name=name,
-            package_manager="uv",
             init_command="uv init",
             test_command="pytest",
             sync_command="uv sync",
-            add_dependency_command="uv add {package}",
-            project_structure=[],
             prompt_supplement="",
             work_output_example="",
         )
@@ -234,12 +231,9 @@ async def test_work_task_executor_python_language_supplement_appears_in_prompt(
     language_registry.register(
         LanguagePlugin(
             name="python",
-            package_manager="uv",
             init_command="uv init",
             test_command="pytest",
             sync_command="uv sync",
-            add_dependency_command="uv add {package}",
-            project_structure=[],
             prompt_supplement="UNIQUE_EXECUTOR_SUPPLEMENT",
             work_output_example="",
         )
@@ -643,12 +637,9 @@ async def test_language_supplement_appears_in_worker_prompt(tmp_path: Path) -> N
     lr.register(
         LanguagePlugin(
             name="python",
-            package_manager="uv",
             init_command="uv init",
             test_command="pytest",
             sync_command="uv sync",
-            add_dependency_command="uv add {package}",
-            project_structure=[],
             prompt_supplement="UNIQUE_SUPPLEMENT_MARKER",
             work_output_example="",
         )
@@ -688,12 +679,9 @@ async def test_producer_critic_and_referee_receive_same_plugin_guidance(
     language_registry.register(
         LanguagePlugin(
             name="toy",
-            package_manager="toy-packages",
             init_command="toy init",
             test_command="toy test",
             sync_command="toy sync",
-            add_dependency_command="toy add {package}",
-            project_structure=["module.toy"],
             prompt_supplement="TOY_REVIEWER_CONTRACT_GUIDANCE",
             work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
         )
@@ -852,12 +840,9 @@ async def test_non_python_language_plugin_does_not_receive_python_wording(
     language_registry.register(
         LanguagePlugin(
             name="toy",
-            package_manager="toy-packages",
             init_command="toy init",
             test_command="toy test",
             sync_command="toy sync",
-            add_dependency_command="toy add {package}",
-            project_structure=["module.toy"],
             prompt_supplement="TOY_LANGUAGE_SUPPLEMENT",
             work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
         )
@@ -896,12 +881,9 @@ async def test_language_work_output_example_appears_in_worker_prompt(tmp_path: P
     lr.register(
         LanguagePlugin(
             name="python",
-            package_manager="uv",
             init_command="uv init",
             test_command="pytest",
             sync_command="uv sync",
-            add_dependency_command="uv add {package}",
-            project_structure=[],
             prompt_supplement="",
             work_output_example='{{"path": "WORK_OUTPUT_EXAMPLE_MARKER"}}',
         )

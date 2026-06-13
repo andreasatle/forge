@@ -27,12 +27,9 @@ def _ws(tmp_path: Path) -> Workspace:
 def _plugin(name: str = "python") -> LanguagePlugin:
     return LanguagePlugin(
         name=name,
-        package_manager="uv",
         init_command="uv init",
         test_command="uv run pytest",
         sync_command="uv sync",
-        add_dependency_command="uv add {package}",
-        project_structure=[],
         prompt_supplement="",
         work_output_example="",
     )
