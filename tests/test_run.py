@@ -27,11 +27,13 @@ from forge.core.models import (
     StateView,
     WorkSpec,
 )
+from forge.core.runtime import format_failed_node
 from forge.core.scheduler import SchedulerCallbacks
 from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
-from forge.run import _format_failed_node, _start
+from forge.run import _format_failed_node as _format_failed_node_from_run
+from forge.run import _start
 
 
 class _FakeProvider:
@@ -57,7 +59,7 @@ def test_failed_plan_node_output_includes_response_reason() -> None:
     )
     node = DAGNode(request=request).with_response(response)
 
-    text = _format_failed_node(node)
+    text = format_failed_node(node)
 
     assert "✗ failed: plan" in text
     assert "status: failed" in text
@@ -65,10 +67,15 @@ def test_failed_plan_node_output_includes_response_reason() -> None:
     assert "validation rejected work with disposition 'reject': missing tests" in text
 
 
+def test_format_failed_node_re_exported_from_run() -> None:
+    """_format_failed_node is accessible from forge.run for backward compatibility."""
+    assert _format_failed_node_from_run is format_failed_node
+
+
 async def test_start_wires_nested_planner_and_worker_models(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
-    """_start uses nested producer/critic/referee config for planner and worker handlers."""
+    """ForgeRuntime uses nested producer/critic/referee config for planner and worker handlers."""
     made_models: list[str] = []
     captured: dict[str, object] = {}
 
@@ -154,8 +161,8 @@ async def test_start_wires_nested_planner_and_worker_models(
             )
             return state
 
-    monkeypatch.setattr("forge.run.make_provider", fake_make_provider)
-    monkeypatch.setattr("forge.run.Scheduler", FakeScheduler)
+    monkeypatch.setattr("forge.core.runtime.make_provider", fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", FakeScheduler)
     monkeypatch.setattr("forge.core.runner.plan_agent", fake_plan_agent)
     monkeypatch.setattr("forge.core.runner.work_agent", fake_work_agent)
 
