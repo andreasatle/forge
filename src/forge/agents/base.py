@@ -37,6 +37,7 @@ class ToolError(Exception):
 _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS = 4000
 _MAX_BAD_VALUE_CHARS = 300
 _KNOWN_PROTOCOL_KINDS = {kind.value for kind in AgentMessageKind}
+_MUTATING_TOOL_NAMES = frozenset({"write_file", "replace_in_file"})
 _TOOL_CALL_PROTOCOL_REMINDER = "\n".join(
     [
         "Tool-call protocol:",
@@ -397,6 +398,7 @@ class ToolLoop:
         requires_nonempty = (
             self.adapter_spec.requires_nonempty_output if self.adapter_spec is not None else True
         )
+        has_run_tests = self.tools is not None and any(t.name == "run_tests" for t in self.tools)
         any_tool_called = False
         ran_tests_and_passed = False
         final_response_only = False
@@ -419,7 +421,7 @@ class ToolLoop:
                 parsed = self.response_parser.parse(raw)
                 if final_response_only and isinstance(parsed, ToolCallRequest):
                     raise ValueError(
-                        "Tests have already passed. "
+                        "File changes are complete. "
                         "Return final WorkOutput JSON now instead of calling tools."
                     )
                 if (
@@ -473,6 +475,7 @@ class ToolLoop:
             if isinstance(parsed, ToolCallRequest):
                 tool_response = await self.tool_executor.execute(parsed)
                 any_tool_called = True
+                coercion: str | None = None
                 if (
                     tool_response.name == "run_tests"
                     and tool_response.success
@@ -481,17 +484,20 @@ class ToolLoop:
                 ):
                     ran_tests_and_passed = True
                     final_response_only = True
+                    coercion = (
+                        "Tests passed. Stop calling tools and return final WorkOutput JSON now."
+                    )
+                elif (
+                    not has_run_tests
+                    and tool_response.name in _MUTATING_TOOL_NAMES
+                    and tool_response.success
+                ):
+                    final_response_only = True
+                    coercion = "Write complete. Return final WorkOutput JSON now."
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
-                if final_response_only:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Tests passed. Stop calling tools and return final WorkOutput JSON now."
-                            ),
-                        }
-                    )
+                if coercion is not None:
+                    messages.append({"role": "user", "content": coercion})
                 continue
 
             output: ProducerOutput | None = None

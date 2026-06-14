@@ -986,3 +986,147 @@ async def test_tool_loop_rejects_tool_call_after_successful_tests() -> None:
     assert response.status == ResponseStatus.COMPLETED
     assert response.ran_tests_and_passed is True
     assert mock_fn.call_count == 0
+
+
+# --- final_response_only without run_tests (no-test workers) ---
+
+
+async def test_tool_loop_no_test_write_file_triggers_final_response_only(
+    tmp_path: Path,
+) -> None:
+    """No-test worker: write_file succeeds, next turn has no tools, valid WorkOutput completes."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "f.txt", "content": "hello"}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 2
+
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    system_content = second_call_messages[0]["content"]
+    assert "write_file" not in system_content
+    assert "WorkOutput" in system_content
+
+    last_user_content = second_call_messages[-1]["content"]
+    assert "Write complete" in last_user_content
+
+
+async def test_tool_loop_no_test_rejects_tool_call_after_write(
+    tmp_path: Path,
+) -> None:
+    """No-test worker: attempted tool call after successful write is rejected and not executed."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "a.txt", "content": "first"}}',
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "b.txt", "content": "second"}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_retries=3,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert (tmp_path / "a.txt").exists()
+    assert not (tmp_path / "b.txt").exists()
+
+
+async def test_tool_loop_with_tests_write_file_alone_does_not_finalize(
+    tmp_path: Path,
+) -> None:
+    """Test-enabled worker: successful write_file alone does not finalize until run_tests passes."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    registry.register(_make_passing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "f.txt", "content": "hello"}}',
+            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is True
+    # 3 calls needed (write_file → run_tests → JSON) proves write_file alone did not finalize
+    assert provider.chat.call_count == 3
+
+
+async def test_tool_loop_with_tests_failed_tests_do_not_finalize(
+    tmp_path: Path,
+) -> None:
+    """Test-enabled worker: failed run_tests does not finalize."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+
+    async def _failing_run_tests(req: RunTestsRequest) -> RunTestsResponse:
+        return RunTestsResponse(
+            passed=False, failures=["AssertionError"], summary="1 failed", output=""
+        )
+
+    registry.register(
+        Tool(
+            name="run_tests",
+            description="run tests",
+            request_type=RunTestsRequest,
+            response_type=RunTestsResponse,
+            fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], _failing_run_tests),
+        )
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "fix.txt", "content": "fix"}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is False
+    # write_file executed after failed tests proves failed run_tests did not finalize
+    assert (tmp_path / "fix.txt").exists()
