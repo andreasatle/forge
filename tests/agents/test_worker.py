@@ -1106,6 +1106,100 @@ async def test_worker_prompt_includes_base_commit_sha_instruction(tmp_path: Path
     assert "You MUST set base_version to 3 in your response." not in user_prompt
 
 
+async def test_document_adapter_writes_file_then_returns_metadata_only_work_output(
+    tmp_path: Path,
+) -> None:
+    """Document adapter worker writes docs to worktree then returns metadata-only WorkOutput."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("docs")
+    adapter_registry = _yaml_adapter_registry()
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write API documentation",
+            success_condition="API docs are complete",
+            adapter="document",
+            artifact="docs",
+        ),
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    provider.chat = AsyncMock(
+        side_effect=[
+            (
+                '{"kind": "tool_call", "name": "write_file", '
+                '"arguments": {"path": "README.md", "content": "# API Docs\\n\\nThis is the API documentation.\\n"}}'
+            ),
+            (
+                '{"kind": "work_output", '
+                '"summary": "Created README.md with API documentation.", '
+                '"base_version": "0"}'
+            ),
+        ]
+    )
+    executor = WorkTaskExecutor(
+        registry=adapter_registry,
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+    )
+
+    response = await executor.run(request, _state_view("docs"))
+
+    assert response.status == ResponseStatus.COMPLETED
+    output = response.output
+    assert isinstance(output, WorkOutput)
+    assert output.summary == "Created README.md with API documentation."
+    worktree_path = workspace.worktree_path("docs", str(request.id))
+    assert (worktree_path / "README.md").exists()
+    assert "# API Docs" not in output.summary
+
+
+async def test_document_adapter_prompt_instructs_write_file_and_json_only_response(
+    tmp_path: Path,
+) -> None:
+    """document.yaml prompt tells workers to use write_file and return JSON-only final response."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("docs")
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write API documentation",
+            success_condition="API docs are complete",
+            adapter="document",
+            artifact="docs",
+        ),
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="Created README.md with API documentation."),
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view("docs"),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "write_file" in user_prompt
+    assert "final WorkOutput is completion metadata only" in user_prompt
+    assert "do not include markdown documentation in the final response" in user_prompt
+    assert "JSON only" in user_prompt
+    assert "summary should briefly describe" in user_prompt
+
+
 async def test_worker_uses_work_output_as_final_response_type(tmp_path: Path) -> None:
     """WorkTaskExecutor passes final_response_type=WorkOutput to run_agent."""
     workspace = Workspace(tmp_path / "ws")
