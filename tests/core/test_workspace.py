@@ -177,6 +177,7 @@ def test_init_artifact_skips_init_when_directory_is_not_empty(tmp_path: Path) ->
     assert sentinel.exists()
     assert {path.name for path in ws.artifact_dir("codebase").iterdir()} == {
         ".git",
+        ".gitignore",
         "existing.txt",
     }
 
@@ -210,6 +211,18 @@ def test_init_artifact_runs_git_init_for_language_backed_artifacts(tmp_path: Pat
     assert ["git", "add", "-A"] in git_cmds
     assert any(
         c[:3] == ["git", "commit", "--allow-empty"] and "init: codebase" in c[-1] for c in git_cmds
+    )
+
+
+def test_init_artifact_creates_python_gitignore(tmp_path: Path) -> None:
+    """Python artifacts include ignores for generated Python/cache files."""
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+
+    ws.init_artifact("codebase", _make_plugin("python"))
+
+    assert (ws.artifact_dir("codebase") / ".gitignore").read_text(encoding="utf-8") == (
+        "__pycache__/\n*.py[cod]\n.pytest_cache/\n.ruff_cache/\n.venv/\n"
     )
 
 

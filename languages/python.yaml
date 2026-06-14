@@ -38,6 +38,7 @@ work_output_example: |
   - add requests with uv so pyproject.toml/uv.lock change in the worktree
   Final response:
   {{
+    "kind": "work_output",
     "summary": "Implemented scraper module, added tests, and added requests dependency.",
     "base_version": "{base_version}"
   }}

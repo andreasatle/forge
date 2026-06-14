@@ -2,6 +2,7 @@
 
 from forge.core.models import (
     AcceptanceCriterion,
+    AgentMessageKind,
     AgentRequest,
     AgentType,
     PlanResponse,
@@ -24,7 +25,7 @@ def _plan_request() -> AgentRequest:
 def test_plan_expansion_builder_emits_simple_work_node() -> None:
     """A single plan task becomes a single WORK request."""
     plan = PlanResponse(
-        kind="plan",
+        kind=AgentMessageKind.PLAN,
         tasks=[
             TaskSpec(
                 objective="write code",
@@ -46,7 +47,7 @@ def test_plan_expansion_builder_emits_simple_work_node() -> None:
 def test_plan_expansion_builder_remaps_task_dependencies_to_work_ids() -> None:
     """depends_on indices become dependencies on the corresponding work request IDs."""
     plan = PlanResponse(
-        kind="plan",
+        kind=AgentMessageKind.PLAN,
         tasks=[
             TaskSpec(
                 objective="A", success_condition="done", adapter="coding", artifact="codebase"
@@ -76,7 +77,7 @@ def test_plan_expansion_builder_remaps_task_dependencies_to_work_ids() -> None:
 def test_plan_expansion_builder_propagates_artifact_and_language() -> None:
     """Task artifact and language are copied into the generated WorkSpec."""
     plan = PlanResponse(
-        kind="plan",
+        kind=AgentMessageKind.PLAN,
         tasks=[
             TaskSpec(
                 objective="write code",
@@ -98,7 +99,7 @@ def test_plan_expansion_builder_propagates_artifact_and_language() -> None:
 def test_plan_expansion_builder_preserves_contract_fields() -> None:
     """Planner-emitted contract fields are copied into the generated WorkSpec contract."""
     plan = PlanResponse(
-        kind="plan",
+        kind=AgentMessageKind.PLAN,
         tasks=[
             TaskSpec(
                 objective="write code",
@@ -126,7 +127,7 @@ def test_plan_expansion_builder_preserves_contract_fields() -> None:
 def test_plan_expansion_builder_ignores_out_of_range_dependency_indices() -> None:
     """Existing manual dependency validation ignores indices outside the task list."""
     plan = PlanResponse(
-        kind="plan",
+        kind=AgentMessageKind.PLAN,
         tasks=[
             TaskSpec(
                 objective="A",
@@ -145,6 +146,6 @@ def test_plan_expansion_builder_ignores_out_of_range_dependency_indices() -> Non
 
 def test_plan_expansion_builder_empty_plan_returns_no_work_requests() -> None:
     """An empty plan produces no work requests."""
-    plan = PlanResponse(kind="plan", tasks=[])
+    plan = PlanResponse(kind=AgentMessageKind.PLAN, tasks=[])
 
     assert PlanExpansionBuilder(_plan_request()).build(plan) == []

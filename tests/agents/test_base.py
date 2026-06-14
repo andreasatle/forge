@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +22,7 @@ from forge.agents.base import (
     run_agent,
 )
 from forge.core.models import (
+    AgentMessageKind,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -33,6 +35,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.llm.providers import ProviderEmptyOutputError
+from forge.tools.file_tools import make_write_file_tool_for_root
 from forge.tools.registry import Tool, ToolRegistry
 
 _NONEMPTY_WORK_OUTPUT = '{"summary": "Changed files in the worktree.", "base_version": ""}'
@@ -133,6 +136,15 @@ def test_response_parser_parses_tool_call_request():
     result = ResponseParser(WorkOutput).parse(raw)
     assert isinstance(result, ToolCallRequest)
     assert result.name == "my_tool"
+    assert result.kind == AgentMessageKind.TOOL_CALL
+
+
+def test_response_parser_parses_tool_call_without_registered_tool_names():
+    """ResponseParser treats name as opaque protocol data, not a registered tool lookup."""
+    raw = '{"kind": "tool_call", "name": "not_a_registered_tool_name", "arguments": {}}'
+    result = ResponseParser(WorkOutput).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.name == "not_a_registered_tool_name"
 
 
 def test_response_parser_parses_valid_final_response():
@@ -164,10 +176,27 @@ def test_response_parser_correctly_parses_tool_call_request():
 
 
 def test_response_parser_correctly_parses_work_output_as_final_response():
-    """ResponseParser returns WorkOutput when JSON matches WorkOutput schema."""
-    raw = '{"files": [], "dependencies": []}'
+    """ResponseParser returns metadata-only WorkOutput when JSON matches the schema."""
+    raw = (
+        '{"kind": "work_output", '
+        '"summary": "Changed files in the worktree.", '
+        '"base_version": "abc123"}'
+    )
     result = ResponseParser(WorkOutput).parse(raw)
     assert isinstance(result, WorkOutput)
+    assert result.kind == AgentMessageKind.WORK_OUTPUT
+    assert result.summary == "Changed files in the worktree."
+    assert result.base_version == "abc123"
+
+
+def test_response_parser_rejects_tool_name_in_kind():
+    """ResponseParser rejects shorthand tool calls that put a tool name in kind."""
+    raw = '{"kind": "run_tests"}'
+    with pytest.raises(ValueError) as excinfo:
+        ResponseParser(WorkOutput).parse(raw)
+    message = str(excinfo.value)
+    assert "Tool names do not belong in `kind`" in message
+    assert '{"kind":"tool_call","name":"run_tests","arguments":{}}' in message
 
 
 def test_response_parser_correctly_parses_plan_response_as_final_response():
@@ -190,7 +219,7 @@ def test_response_parser_raises_value_error_on_unknown_format():
 async def test_tracked_tool_executor_executes_valid_tool():
     """TrackedToolExecutor returns a successful tool response for a valid tool call."""
     registry, mock_fn = _make_registry()
-    request = ToolCallRequest(kind="tool_call", name="do_thing", arguments={})
+    request = ToolCallRequest(kind=AgentMessageKind.TOOL_CALL, name="do_thing", arguments={})
 
     response = await TrackedToolExecutor(registry).execute(request)
 
@@ -202,7 +231,7 @@ async def test_tracked_tool_executor_executes_valid_tool():
 async def test_tracked_tool_executor_rejects_unknown_tool():
     """TrackedToolExecutor returns the existing failed response for an unknown tool."""
     registry = ToolRegistry()
-    request = ToolCallRequest(kind="tool_call", name="nonexistent", arguments={})
+    request = ToolCallRequest(kind=AgentMessageKind.TOOL_CALL, name="nonexistent", arguments={})
 
     response = await TrackedToolExecutor(registry).execute(request)
 
@@ -215,7 +244,7 @@ async def test_tracked_tool_executor_validates_tool_arguments():
     registry = ToolRegistry()
     registry.register(_make_needs_content_tool())
     request = ToolCallRequest(
-        kind="tool_call",
+        kind=AgentMessageKind.TOOL_CALL,
         name="needs_content",
         arguments={},
     )
@@ -243,7 +272,7 @@ async def test_tracked_tool_executor_returns_failed_response_when_tool_raises():
         )
     )
     request = ToolCallRequest(
-        kind="tool_call",
+        kind=AgentMessageKind.TOOL_CALL,
         name="failing_tool",
         arguments={},
     )
@@ -298,6 +327,46 @@ async def test_tool_loop_runs_tool_call_then_final_response():
     assert response.status == ResponseStatus.COMPLETED
     assert provider.chat.call_count == 2
     assert mock_fn.call_count == 1
+
+
+async def test_tool_loop_accepts_metadata_only_work_output_after_write_file(
+    tmp_path: Path,
+):
+    """ToolLoop accepts metadata-only WorkOutput after a mutating write_file call."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            (
+                '{"kind": "tool_call", "name": "write_file", '
+                '"arguments": {"path": "src/main.py", "content": "print(42)\\n"}}'
+            ),
+            (
+                '{"kind": "work_output", '
+                '"summary": "Wrote src/main.py in the worktree.", '
+                '"base_version": "abc123"}'
+            ),
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.output == WorkOutput(
+        kind=AgentMessageKind.WORK_OUTPUT,
+        summary="Wrote src/main.py in the worktree.",
+        base_version="abc123",
+    )
+    assert (tmp_path / "src/main.py").read_text() == "print(42)\n"
+    assert provider.chat.call_count == 2
 
 
 async def test_tool_loop_retries_invalid_json():
@@ -538,6 +607,20 @@ def test_prompt_builder_builds_prompt_with_tools():
     assert "do_thing" in prompt
 
 
+def test_prompt_builder_makes_tool_call_protocol_explicit():
+    """PromptBuilder explains kind/name/arguments and shows each tool envelope."""
+    registry, _ = _make_registry()
+    prompt = PromptBuilder(registry, WorkOutput).build()
+
+    assert "kind = tool_call" in prompt
+    assert "name = tool name" in prompt
+    assert "arguments = object" in prompt
+    assert '{"kind":"tool_call","name":"do_thing","arguments":{...}}' in prompt
+    assert "Tool names never appear in kind" in prompt
+    assert '{"kind":"do_thing"' not in prompt
+    assert '"kind": "do_thing"' not in prompt
+
+
 def test_prompt_builder_builds_prompt_without_tools():
     """PromptBuilder omits tool-call instructions when tools are not configured."""
     prompt = PromptBuilder(None, WorkOutput).build()
@@ -609,9 +692,11 @@ def test_prompt_builder_includes_work_output_format_clarification():
     """PromptBuilder includes WorkOutput format rules in the system prompt."""
     prompt = PromptBuilder(None, WorkOutput).build()
     assert "Format rules:" in prompt
+    assert 'kind: must be "work_output"' in prompt
     assert "summary: briefly describe the worktree changes" in prompt
     assert "Dependency changes must be made in package manager files" in prompt
     assert "Do not include complete file contents" in prompt
+    assert "stop calling tools and return final JSON with kind, summary, and base_version" in prompt
     assert "base_version set to the current commit SHA" in prompt
 
 
@@ -619,7 +704,9 @@ def test_prompt_builder_always_shows_work_output_schema_for_work_agents():
     """PromptBuilder includes WorkOutput schema on first turn when always_show_final is True."""
     registry, _ = _make_registry()
     prompt = PromptBuilder(registry, WorkOutput, always_show_final=True).build()
-    assert "files" in prompt
+    assert "Top-level fields: kind, summary, base_version" in prompt
+    assert '"files"' not in prompt
+    assert '"dependencies"' not in prompt
 
 
 async def test_run_agent_rejects_premature_empty_work_output_when_no_tool_calls_made():
@@ -768,6 +855,35 @@ async def test_tool_loop_retry_preserves_original_prompt_plus_json_repair_block(
     assert second_call_messages[1]["content"] == original_prompt
     assert second_call_messages[-1]["role"] == "user"
     assert "Invalid response:" in second_call_messages[-1]["content"]
+    assert "kind = tool_call" in second_call_messages[-1]["content"]
+    assert "name = tool name" in second_call_messages[-1]["content"]
+    assert "arguments = object" in second_call_messages[-1]["content"]
+
+
+async def test_tool_loop_repair_prompt_explains_shorthand_tool_call_shape():
+    """Malformed shorthand tool calls get protocol-specific repair guidance."""
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "run_tests"}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=WorkOutput,
+        max_retries=3,
+    ).run()
+
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    repair_prompt = second_call_messages[-1]["content"]
+    assert "Tool names do not belong in `kind`" in repair_prompt
+    assert '{"kind":"tool_call","name":"run_tests","arguments":{}}' in repair_prompt
 
 
 async def test_run_agent_allows_empty_work_output_without_tool_calls_when_adapter_allows_it():

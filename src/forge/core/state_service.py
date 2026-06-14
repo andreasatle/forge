@@ -13,6 +13,9 @@ _EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyo", ".lock", ".egg-info"})
 
 _TEST_TIMEOUT = 60
 
+_GENERATED_DIR_NAMES = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".venv"})
+_GENERATED_SUFFIXES = frozenset({".pyc", ".pyo", ".pyd"})
+
 
 def _is_noise(path: Path, root: Path) -> bool:
     parts = path.relative_to(root).parts
@@ -38,6 +41,65 @@ def _parse_test_result(raw: str, returncode: int = 0) -> RunResult:
     passed = returncode == 0
     failures = [] if passed else [summary]
     return RunResult(passed=passed, failures=failures, summary=summary, output=raw)
+
+
+def _is_generated_artifact_path(path: str) -> bool:
+    parts = Path(path).parts
+    return any(part in _GENERATED_DIR_NAMES for part in parts) or Path(path).suffix in (
+        _GENERATED_SUFFIXES
+    )
+
+
+def _clean_ignored_files(cwd: Path) -> None:
+    run_git(["clean", "-fdX"], cwd=cwd)
+
+
+def _status_lines(cwd: Path) -> list[str]:
+    result = run_git(
+        ["status", "--porcelain", "--untracked-files=normal"],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+    return [line for line in result.stdout.splitlines() if line.strip()]
+
+
+def _status_path(line: str) -> str:
+    path = line[3:]
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip('"')
+
+
+def _restore_tracked_generated_changes(cwd: Path) -> None:
+    paths = [
+        _status_path(line)
+        for line in _status_lines(cwd)
+        if not line.startswith("?? ") and _is_generated_artifact_path(_status_path(line))
+    ]
+    if paths:
+        run_git(["checkout", "--", *paths], cwd=cwd)
+
+
+def _ensure_clean_for_merge(cwd: Path) -> None:
+    _clean_ignored_files(cwd)
+    _restore_tracked_generated_changes(cwd)
+    remaining = _status_lines(cwd)
+    if remaining:
+        raise RuntimeError(
+            "artifact worktree has uncommitted changes before merge:\n" + "\n".join(remaining)
+        )
+
+
+def _format_git_error(error: subprocess.CalledProcessError) -> str:
+    parts = [f"git command failed with exit code {error.returncode}: {' '.join(error.cmd)}"]
+    stdout = getattr(error, "stdout", None)
+    stderr = getattr(error, "stderr", None)
+    if stdout:
+        parts.append(str(stdout).strip())
+    if stderr:
+        parts.append(str(stderr).strip())
+    return "\n".join(part for part in parts if part)
 
 
 class StateService:
@@ -107,23 +169,20 @@ class StateService:
         worktree_path = self._workspace.worktree_path(self._artifact_name, node_id)
         if not worktree_path.exists():
             raise RuntimeError(f"worktree not found for node {node_id}: {worktree_path}")
+        artifact_dir = self._workspace.artifact_dir(self._artifact_name)
         try:
-            status = run_git(
-                ["status", "--porcelain"],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-            )
-            if not status.stdout.strip():
+            _clean_ignored_files(worktree_path)
+            _restore_tracked_generated_changes(worktree_path)
+            if not _status_lines(worktree_path):
                 raise RuntimeError("no worktree changes produced")
 
-            run_git(["add", "-A"], cwd=worktree_path)
+            run_git(["add", "-A", "--", "."], cwd=worktree_path)
             run_git(
                 ["commit", "-m", f"work: {node_id}"],
                 cwd=worktree_path,
             )
 
-            artifact_dir = self._workspace.artifact_dir(self._artifact_name)
+            _ensure_clean_for_merge(artifact_dir)
             run_git(
                 ["merge", "--no-ff", f"work/{node_id}", "-m", f"integrated: {node_id}"],
                 cwd=artifact_dir,
@@ -139,6 +198,12 @@ class StateService:
 
             self._version += 1
 
+        except subprocess.CalledProcessError as e:
+            try:
+                run_git(["merge", "--abort"], cwd=artifact_dir)
+            except subprocess.CalledProcessError:
+                pass
+            raise RuntimeError(_format_git_error(e)) from e
         finally:
             self._workspace.remove_worktree(self._artifact_name, node_id)
 

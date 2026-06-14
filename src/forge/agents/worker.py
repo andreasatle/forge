@@ -175,6 +175,7 @@ class WorkTaskExecutor:
             "\n\nModify files directly in the assigned worktree using the available write/edit tools."
             "\nThe framework will use git status and git diff as the source of truth."
             "\nDo not include complete file contents in your final response."
+            "\nAfter edits and tests are complete, stop calling tools and return final JSON with kind, summary, and base_version."
         )
 
         provider = self.provider

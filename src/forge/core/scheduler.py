@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -229,7 +230,7 @@ class SchedulerConsequenceHandler:
 
         try:
             await ss.apply_work_output(work_output, str(updated.request.id))
-        except RuntimeError as e:
+        except (RuntimeError, subprocess.CalledProcessError) as e:
             return (
                 current.with_response(
                     AgentResponse(

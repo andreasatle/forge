@@ -88,6 +88,7 @@ def _render_revision_requests(
         "REQUIRED REVISION",
         "You must revise your next output against the same AgentRequest contract above.",
         "The next output must address every required change listed below.",
+        "This revision block does not replace the system prompt's tool-call syntax.",
     ]
     for request_index, revision_request in enumerate(revision_requests, start=1):
         lines.extend(

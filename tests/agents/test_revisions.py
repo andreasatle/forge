@@ -185,6 +185,17 @@ def test_render_starts_with_required_revision_header() -> None:
     assert rendered.startswith("REQUIRED REVISION")
 
 
+def test_render_says_revision_does_not_replace_tool_call_syntax() -> None:
+    """Revision prompts keep protocol syntax owned by the system prompt."""
+    history = RevisionHistory().append_from_review(
+        rationale="needs work",
+        prior_attempts=1,
+        critic_finding=_finding(hints=["fix it"]),
+    )
+    rendered = history.render("implementation", "")
+    assert "does not replace the system prompt's tool-call syntax" in rendered
+
+
 def test_render_includes_revise_noun_line() -> None:
     """render uses the output_noun argument in the closing revision directive."""
     history = RevisionHistory().append_from_review(

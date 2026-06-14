@@ -15,4 +15,9 @@ work_output_example: |
   Use paths such as src/main.rs and tests/integration_test.rs.
   Keep runtime crates in Cargo.toml/Cargo.lock.
   Keep test-only utilities under dev-dependencies in Cargo.toml.
-  Final WorkOutput should summarize the worktree changes; do not include file contents.
+  Final response:
+  {{
+    "kind": "work_output",
+    "summary": "Implemented Rust changes and updated tests.",
+    "base_version": "{base_version}"
+  }}

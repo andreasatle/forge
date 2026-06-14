@@ -13,7 +13,7 @@ from forge.core.models import (
     WorkOutput,
 )
 from forge.core.state_service import StateService, _parse_test_result
-from forge.core.workspace import Workspace
+from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 
 
@@ -26,9 +26,9 @@ def _ws(tmp_path: Path) -> Workspace:
 def _plugin(name: str = "python") -> LanguagePlugin:
     return LanguagePlugin(
         name=name,
-        init_command="uv init",
-        test_command="uv run pytest",
-        sync_command="uv sync",
+        init_command="true",
+        test_command="true",
+        sync_command="true",
         prompt_supplement="",
         work_output_example="",
     )
@@ -246,12 +246,21 @@ def test_parse_test_result_failure_text_with_nonzero_exit_returns_false() -> Non
 # --- apply_work_output ---
 
 
-def _mock_subprocess_ok() -> MagicMock:
-    result = MagicMock()
-    result.returncode = 0
-    result.stdout = " M src/main.py\n"
-    result.stderr = ""
-    return result
+def _mock_subprocess_apply(worktree_path: Path):
+    def _run(cmd: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = ""
+        result.stdout = ""
+        if (
+            isinstance(cmd, list)
+            and cmd[:3] == ["git", "status", "--porcelain"]
+            and kwargs.get("cwd") == worktree_path
+        ):
+            result.stdout = " M src/main.py\n"
+        return result
+
+    return _run
 
 
 async def test_apply_work_output_commits_existing_worktree_changes(tmp_path: Path) -> None:
@@ -267,7 +276,7 @@ async def test_apply_work_output_commits_existing_worktree_changes(tmp_path: Pat
 
     with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree"):
-            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+            with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                     await ss.apply_work_output(output, "node1")
 
@@ -285,7 +294,7 @@ async def test_apply_work_output_increments_version_on_pass(tmp_path: Path) -> N
 
     with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree"):
-            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+            with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                     await ss.apply_work_output(output, "node2")
 
@@ -305,7 +314,7 @@ async def test_apply_work_output_does_not_increment_version_on_fail(tmp_path: Pa
 
     with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree"):
-            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+            with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                 with patch.object(
                     ss,
                     "run_tests",
@@ -335,7 +344,7 @@ async def test_apply_work_output_removes_worktree_after_pass(tmp_path: Path) -> 
 
     with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree", side_effect=_record_remove):
-            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+            with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                     await ss.apply_work_output(output, "node4")
 
@@ -360,7 +369,7 @@ async def test_apply_work_output_removes_worktree_after_fail(tmp_path: Path) -> 
 
     with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree", side_effect=_record_remove):
-            with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+            with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                 with patch.object(
                     ss,
                     "run_tests",
@@ -403,7 +412,7 @@ async def test_apply_work_output_accepts_correct_base_version(tmp_path: Path) ->
     with patch.object(ws, "get_current_sha", return_value="matching-sha"):
         with patch.object(ws, "worktree_path", return_value=worktree_path):
             with patch.object(ws, "remove_worktree"):
-                with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                     with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                         await ss.apply_work_output(output, "node-ok")
 
@@ -425,9 +434,82 @@ async def test_apply_work_output_accepts_empty_base_version(tmp_path: Path) -> N
     with patch.object(ws, "get_current_sha", mock_get_sha):
         with patch.object(ws, "worktree_path", return_value=worktree_path):
             with patch.object(ws, "remove_worktree"):
-                with patch("subprocess.run", return_value=_mock_subprocess_ok()):
+                with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                     with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                         await ss.apply_work_output(output, "node-empty")
 
     mock_get_sha.assert_not_called()
     assert ss.current_version == 1
+
+
+async def test_apply_work_output_excludes_python_cache_files_from_commit(
+    tmp_path: Path,
+) -> None:
+    """Worker-created __pycache__ files are ignored and excluded from integration commits."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app", _plugin("python"))
+    ss = StateService(ws, "app", _plugin("python"))
+    worktree_path = ws.create_worktree("app", "node-pyc")
+
+    (worktree_path / "src").mkdir()
+    (worktree_path / "src" / "scraper.py").write_text("def scrape():\n    return 'ok'\n")
+    (worktree_path / "src" / "__pycache__").mkdir()
+    (worktree_path / "src" / "__pycache__" / "scraper.cpython-312.pyc").write_bytes(b"pyc")
+
+    await ss.apply_work_output(WorkOutput(summary="added scraper"), "node-pyc")
+
+    tree = run_git(
+        ["ls-tree", "-r", "--name-only", "HEAD"],
+        cwd=ws.artifact_dir("app"),
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert "src/scraper.py" in tree
+    assert all("__pycache__" not in path and not path.endswith(".pyc") for path in tree)
+
+
+async def test_apply_work_output_cleans_dirty_ignored_main_files_before_merge(
+    tmp_path: Path,
+) -> None:
+    """Dirty generated Python artifacts in main do not crash worker branch merges."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app", _plugin("python"))
+    artifact_dir = ws.artifact_dir("app")
+    (artifact_dir / "tests" / "__pycache__").mkdir(parents=True)
+    pyc_path = artifact_dir / "tests" / "__pycache__" / "test_scraper.cpython-312.pyc"
+    pyc_path.write_bytes(b"tracked-pyc")
+    run_git(["add", "-f", "tests/__pycache__/test_scraper.cpython-312.pyc"], cwd=artifact_dir)
+    run_git(["commit", "-m", "fixture: tracked pyc"], cwd=artifact_dir)
+
+    worktree_path = ws.create_worktree("app", "node-dirty-main")
+    (worktree_path / "src").mkdir()
+    (worktree_path / "src" / "scraper.py").write_text("def scrape():\n    return 'ok'\n")
+    pyc_path.write_bytes(b"dirty-generated-change")
+
+    ss = StateService(ws, "app", _plugin("python"))
+    await ss.apply_work_output(WorkOutput(summary="added scraper"), "node-dirty-main")
+
+    assert ss.current_version == 1
+    assert (artifact_dir / "src" / "scraper.py").exists()
+
+
+async def test_apply_work_output_real_merge_conflict_raises_runtime_error(
+    tmp_path: Path,
+) -> None:
+    """A git merge conflict is converted from CalledProcessError into RuntimeError."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app", _plugin("python"))
+    artifact_dir = ws.artifact_dir("app")
+    (artifact_dir / "conflict.py").write_text("value = 'base'\n")
+    run_git(["add", "conflict.py"], cwd=artifact_dir)
+    run_git(["commit", "-m", "fixture: base conflict file"], cwd=artifact_dir)
+
+    worktree_path = ws.create_worktree("app", "node-conflict")
+    (worktree_path / "conflict.py").write_text("value = 'worker'\n")
+    (artifact_dir / "conflict.py").write_text("value = 'main'\n")
+    run_git(["add", "conflict.py"], cwd=artifact_dir)
+    run_git(["commit", "-m", "fixture: conflicting main change"], cwd=artifact_dir)
+
+    ss = StateService(ws, "app", _plugin("python"))
+    with pytest.raises(RuntimeError, match="git command failed"):
+        await ss.apply_work_output(WorkOutput(summary="conflicting change"), "node-conflict")

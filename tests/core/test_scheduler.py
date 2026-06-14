@@ -1,6 +1,7 @@
 """Tests for Scheduler DAG execution, concurrency, callbacks, and termination."""
 
 import asyncio
+import subprocess
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -492,6 +493,34 @@ async def test_integration_failure_preserves_integration_response() -> None:
     assert response.status == ResponseStatus.FAILED
     assert response.failure_kind == FailureKind.INTEGRATION_FAILED
     assert "tests failed after work output" in (response.error or "")
+
+
+async def test_integration_called_process_error_becomes_integration_failed() -> None:
+    """Raw git subprocess failures are captured as structured integration failures."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    ss = _mock_ss()
+    ss.apply_work_output = AsyncMock(
+        side_effect=subprocess.CalledProcessError(
+            1,
+            ["git", "merge", "--no-ff", "work/node"],
+            stderr="merge conflict",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
+        state, _plan_request()
+    )
+
+    response = final.dag[work.id].response
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    assert response is not None
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
+    assert "integration failed" in (response.error or "")
 
 
 async def test_integration_failure_cancels_transitive_dependents() -> None:

@@ -1,6 +1,6 @@
 """Core Pydantic models and enums shared across all forge components."""
 
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
@@ -22,6 +22,15 @@ class AgentType(Enum):
 
     PLAN = "plan"
     WORK = "work"
+
+
+class AgentMessageKind(StrEnum):
+    """Protocol-level discriminator values for agent messages."""
+
+    TOOL_CALL = "tool_call"
+    TOOL_RESPONSE = "tool_response"
+    WORK_OUTPUT = "work_output"
+    PLAN = "plan"
 
 
 class RequestSource(Enum):
@@ -299,7 +308,7 @@ class FileContent(BaseModel, frozen=True):
 class WorkOutput(BaseModel, frozen=True):
     """Completion metadata for work already written to the assigned git worktree."""
 
-    kind: Literal["work_output"] = "work_output"
+    kind: Literal[AgentMessageKind.WORK_OUTPUT] = AgentMessageKind.WORK_OUTPUT
     summary: str = ""
     base_version: str = ""
 
@@ -371,7 +380,7 @@ class TaskSpec(BaseModel, frozen=True):
 class PlanResponse(BaseModel, frozen=True):
     """The planner's final output — a list of tasks to execute."""
 
-    kind: Literal["plan"] = "plan"
+    kind: Literal[AgentMessageKind.PLAN] = AgentMessageKind.PLAN
     tasks: list[TaskSpec]
 
 
@@ -410,7 +419,7 @@ class AgentResponse(BaseModel):
 class ToolCallRequest(BaseModel, frozen=True):
     """LLM requests a tool to be executed."""
 
-    kind: Literal["tool_call"]
+    kind: Literal[AgentMessageKind.TOOL_CALL]
     name: str
     arguments: dict[str, Any]
 
@@ -418,7 +427,7 @@ class ToolCallRequest(BaseModel, frozen=True):
 class ToolCallResponse(BaseModel, frozen=True):
     """Framework response to a tool call — fed back to the LLM."""
 
-    kind: Literal["tool_response"]
+    kind: Literal[AgentMessageKind.TOOL_RESPONSE]
     name: str
     success: bool
     result: Any

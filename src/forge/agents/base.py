@@ -11,6 +11,7 @@ from pydantic import BaseModel, ValidationError
 from forge.adapters.registry import AdapterSpec
 from forge.core.models import (
     AgentDiagnostic,
+    AgentMessageKind,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -32,6 +33,16 @@ class ToolError(Exception):
 
 _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS = 4000
 _MAX_BAD_VALUE_CHARS = 300
+_KNOWN_PROTOCOL_KINDS = {kind.value for kind in AgentMessageKind}
+_TOOL_CALL_PROTOCOL_REMINDER = "\n".join(
+    [
+        "Tool-call protocol:",
+        "  - kind = tool_call (literal message type for every tool call)",
+        "  - name = tool name (one of the listed tools)",
+        "  - arguments = object (must match that tool's input schema; use {} when empty)",
+        "  - Tool names never appear in kind.",
+    ]
+)
 
 
 def _classify_failure(exc: Exception) -> FailureKind:
@@ -103,6 +114,28 @@ def _invalid_response_diagnostic(error: Exception, raw: str) -> AgentDiagnostic:
     )
 
 
+def _malformed_tool_call_guidance(kind: object) -> str:
+    """Return guidance for common shorthand tool-call mistakes."""
+    if not isinstance(kind, str) or kind in _KNOWN_PROTOCOL_KINDS:
+        return ""
+    return (
+        " Tool names do not belong in `kind`. Use: "
+        f'{{"kind":"tool_call","name":"{kind}","arguments":{{}}}}'
+    )
+
+
+def _default_correction_prompt(error: Exception) -> str:
+    """Return generic structured-output repair guidance for the next model turn."""
+    return "\n".join(
+        [
+            f"Invalid response: {error}.",
+            "Respond with valid JSON only.",
+            _TOOL_CALL_PROTOCOL_REMINDER,
+            'Tool-call shape: {"kind":"tool_call","name":"<tool_name>","arguments":{}}',
+        ]
+    )
+
+
 class PromptBuilder:
     """Build the generic system prompt for tool use and final response schemas."""
 
@@ -164,11 +197,15 @@ class PromptBuilder:
                 "",
                 "1. To call a tool — use this exact format:",
                 '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
+                _TOOL_CALL_PROTOCOL_REMINDER,
                 "",
                 "Available tools:",
             ]
             for tool in self.tools:
                 lines.append(f"  {tool.name}: {tool.description}")
+                lines.append(
+                    f'    invocation shape: {{"kind":"tool_call","name":"{tool.name}","arguments":{{...}}}}'
+                )
                 lines.append(
                     f"    input schema: {json.dumps(tool.request_type.model_json_schema())}"
                 )
@@ -179,6 +216,8 @@ class PromptBuilder:
             lines += [
                 "Tool-use rules:",
                 "  - Only call tools listed above, using exactly those tool names.",
+                '  - Use kind="tool_call" for every tool call; put the selected tool in name.',
+                "  - Never put a tool name in kind.",
                 "  - Do not invent or reference tools that are not listed above.",
                 "  - If a needed capability is not listed, include the requested result in your final JSON response instead.",
                 "",
@@ -193,10 +232,12 @@ class PromptBuilder:
                     "",
                     "Rules for your final response:",
                     "  - Modify files directly in the assigned worktree before responding.",
+                    "  - After edits and tests are complete, stop calling tools and return final JSON with kind, summary, and base_version.",
                     "  - The framework uses git status and git diff as the source of truth.",
                     "  - Do not include complete file contents in your final response.",
                     "",
                     "Format rules:",
+                    '- kind: must be "work_output".',
                     "- summary: briefly describe the worktree changes you made.",
                     "- Dependency changes must be made in package manager files in the worktree.",
                     "IMPORTANT: your response must include base_version set to the current commit SHA shown above.",
@@ -229,7 +270,7 @@ class ResponseParser:
         except json.JSONDecodeError as e:
             raise ValueError(f"response is not valid JSON: {e}") from e
         data_dict = cast(dict[str, object], data) if isinstance(data, dict) else None
-        if data_dict is not None and data_dict.get("kind") == "tool_call":
+        if data_dict is not None and data_dict.get("kind") == AgentMessageKind.TOOL_CALL:
             try:
                 return ToolCallRequest.model_validate(data_dict)
             except Exception as e:
@@ -237,8 +278,11 @@ class ResponseParser:
         try:
             return self.final_response_type.model_validate(data)
         except Exception as e:
+            guidance = _malformed_tool_call_guidance(
+                data_dict.get("kind") if data_dict is not None else None
+            )
             raise ValueError(
-                f"response does not match {self.final_response_type.__name__}: {e}"
+                f"response does not match {self.final_response_type.__name__}: {e}{guidance}"
             ) from e
 
 
@@ -262,7 +306,7 @@ class TrackedToolExecutor:
         """Execute a tool call and return the response."""
         if self.tools is None:
             return ToolCallResponse(
-                kind="tool_response",
+                kind=AgentMessageKind.TOOL_RESPONSE,
                 name=request.name,
                 success=False,
                 result=None,
@@ -272,7 +316,7 @@ class TrackedToolExecutor:
             tool = self.tools.get(request.name)
         except KeyError as e:
             return ToolCallResponse(
-                kind="tool_response",
+                kind=AgentMessageKind.TOOL_RESPONSE,
                 name=request.name,
                 success=False,
                 result=None,
@@ -286,14 +330,14 @@ class TrackedToolExecutor:
                     f"tool returned {type(result).__name__}, expected {tool.response_type.__name__}"
                 )
             return ToolCallResponse(
-                kind="tool_response",
+                kind=AgentMessageKind.TOOL_RESPONSE,
                 name=request.name,
                 success=True,
                 result=result.model_dump(),
             )
         except Exception as e:
             return ToolCallResponse(
-                kind="tool_response",
+                kind=AgentMessageKind.TOOL_RESPONSE,
                 name=request.name,
                 success=False,
                 result=None,
@@ -406,7 +450,7 @@ class ToolLoop:
                 correction = (
                     self.correction_prompt_fn(e, raw)
                     if self.correction_prompt_fn
-                    else f"Invalid response: {e}. Respond with valid JSON."
+                    else _default_correction_prompt(e)
                 )
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": correction})

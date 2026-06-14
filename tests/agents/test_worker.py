@@ -10,6 +10,7 @@ from forge.agents.worker import WorkTaskExecutor, work_agent
 from forge.core.models import (
     AcceptanceCriterion,
     AgentContract,
+    AgentMessageKind,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -152,6 +153,48 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: P
 
     assert response.status == ResponseStatus.COMPLETED
     assert response.output == work_output
+
+
+async def test_work_task_executor_accepts_write_file_then_metadata_only_work_output(
+    tmp_path: Path,
+) -> None:
+    """WorkTaskExecutor accepts a mutating write_file call followed by metadata only."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    provider.chat = AsyncMock(
+        side_effect=[
+            (
+                '{"kind": "tool_call", "name": "write_file", '
+                '"arguments": {"path": "src/main.py", "content": "print(42)\\n"}}'
+            ),
+            (
+                '{"kind": "work_output", '
+                '"summary": "Wrote src/main.py in the worktree.", '
+                '"base_version": "0"}'
+            ),
+        ]
+    )
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+    )
+
+    response = await executor.run(request, _state_view())
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.output == WorkOutput(
+        kind=AgentMessageKind.WORK_OUTPUT,
+        summary="Wrote src/main.py in the worktree.",
+        base_version="0",
+    )
+    worktree_path = workspace.worktree_path("codebase", str(request.id))
+    assert (worktree_path / "src/main.py").read_text() == "print(42)\n"
 
 
 async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:

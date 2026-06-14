@@ -7,6 +7,7 @@ import pytest
 from forge.core.models import (
     AcceptanceCriterion,
     AgentContract,
+    AgentMessageKind,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -266,7 +267,7 @@ def test_state_view_stores_files_as_file_views():
 def test_plan_response_kind_discriminator():
     """PlanResponse requires kind to be 'plan'."""
     pr = PlanResponse(
-        kind="plan",
+        kind=AgentMessageKind.PLAN,
         tasks=[],
     )
     assert pr.kind == "plan"
@@ -292,7 +293,9 @@ def test_task_spec_defaults_depends_on_to_empty_list():
 
 def test_tool_call_request_kind_discriminator():
     """ToolCallRequest requires kind to be 'tool_call'."""
-    req = ToolCallRequest(kind="tool_call", name="read_file", arguments={"path": "a.py"})
+    req = ToolCallRequest(
+        kind=AgentMessageKind.TOOL_CALL, name="read_file", arguments={"path": "a.py"}
+    )
     assert req.kind == "tool_call"
 
 
@@ -301,13 +304,23 @@ def test_tool_call_request_kind_discriminator():
 
 def test_tool_call_response_kind_discriminator():
     """ToolCallResponse requires kind to be 'tool_response'."""
-    resp = ToolCallResponse(kind="tool_response", name="read_file", success=True, result="content")
+    resp = ToolCallResponse(
+        kind=AgentMessageKind.TOOL_RESPONSE,
+        name="read_file",
+        success=True,
+        result="content",
+    )
     assert resp.kind == "tool_response"
 
 
 def test_tool_call_response_error_defaults_to_none():
     """ToolCallResponse.error defaults to None when not provided."""
-    resp = ToolCallResponse(kind="tool_response", name="read_file", success=True, result="ok")
+    resp = ToolCallResponse(
+        kind=AgentMessageKind.TOOL_RESPONSE,
+        name="read_file",
+        success=True,
+        result="ok",
+    )
     assert resp.error is None
 
 

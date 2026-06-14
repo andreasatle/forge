@@ -28,6 +28,14 @@ _GIT_LOCAL_ENV_VARS = (
     "GIT_COMMON_DIR",
 )
 
+_PYTHON_GITIGNORE_LINES = (
+    "__pycache__/",
+    "*.py[cod]",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".venv/",
+)
+
 
 def git_subprocess_env() -> dict[str, str]:
     """Return an environment where parent-repository Git variables are removed."""
@@ -50,6 +58,19 @@ def run_git(
             env=git_subprocess_env(),
             **kwargs,
         ),
+    )
+
+
+def _ensure_python_gitignore(artifact_dir: Path) -> None:
+    gitignore = artifact_dir / ".gitignore"
+    existing = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.exists() else []
+    missing = [line for line in _PYTHON_GITIGNORE_LINES if line not in existing]
+    if not missing:
+        return
+    prefix = "\n" if existing and existing[-1] != "" else ""
+    gitignore.write_text(
+        "\n".join(existing) + prefix + "\n".join(missing) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -95,6 +116,8 @@ class Workspace:
             cmd = plugin.init_command.format(artifact_name=name)
             subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
             subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
+        if plugin is not None and plugin.name == "python":
+            _ensure_python_gitignore(artifact_dir)
         if (artifact_dir / ".git").exists():
             return
         if not shutil.which("git"):

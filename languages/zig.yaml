@@ -15,4 +15,9 @@ work_output_example: |
   Use paths such as src/main.zig and src/module.zig.
   Keep package metadata in build.zig.zon and wire test steps through build.zig.
   Use std.testing for test code.
-  Final WorkOutput should summarize the worktree changes; do not include file contents.
+  Final response:
+  {{
+    "kind": "work_output",
+    "summary": "Implemented Zig changes and updated tests.",
+    "base_version": "{base_version}"
+  }}
