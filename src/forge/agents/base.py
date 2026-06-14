@@ -1,6 +1,7 @@
 """Base agent runner — universal engine with plain chat loop and structured JSON parsing."""
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from typing import cast
@@ -25,6 +26,8 @@ from forge.core.models import (
 )
 from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
 from forge.tools.registry import ToolRegistry
+
+_logger = logging.getLogger(__name__)
 
 
 class ToolError(Exception):
@@ -384,8 +387,8 @@ class ToolLoop:
 
     async def run(self) -> AgentResponse:
         """Run the tool loop until a final response is produced or limits are exceeded."""
-        print(f"[debug] system prompt (initial):\n{self.prompt_builder.build()}")
-        print(f"[debug] user prompt:\n{self.prompt}")
+        _logger.debug("system prompt (initial):\n%s", self.prompt_builder.build())
+        _logger.debug("user prompt:\n%s", self.prompt)
         messages: list[ChatMessage] = [
             {"role": "system", "content": ""},
             {"role": "user", "content": self.prompt},
@@ -457,7 +460,7 @@ class ToolLoop:
                         diagnostics=invalid_response_diagnostics,
                     )
                 retry_count += 1
-                print(f"  agent retry {retry_count}/{self.max_retries}: {e}")
+                _logger.debug("agent retry %d/%d: %s", retry_count, self.max_retries, e)
                 correction = (
                     self.correction_prompt_fn(e, raw)
                     if self.correction_prompt_fn
@@ -536,7 +539,7 @@ async def run_agent[S: BaseModel](
         ).run()
 
     except Exception as e:
-        print(f"agent error: {type(e).__name__}: {e}")
+        _logger.exception("agent error: %s", e)
         return AgentResponse(
             request_id=request.id,
             status=ResponseStatus.FAILED,

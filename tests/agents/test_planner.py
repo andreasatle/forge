@@ -284,8 +284,10 @@ async def test_planner_llm_error_returns_failed_immediately() -> None:
     assert provider.chat.call_count == 1
 
 
-async def test_planner_prints_warning_on_retry(capsys: pytest.CaptureFixture[str]) -> None:
-    """plan_agent prints a retry warning when the LLM returns invalid JSON."""
+async def test_planner_logs_warning_on_retry(caplog: pytest.LogCaptureFixture) -> None:
+    """plan_agent logs a debug retry message when the LLM returns invalid JSON."""
+    import logging
+
     request = _make_request()
     provider = _mock_provider()
     provider.chat = AsyncMock(
@@ -295,10 +297,10 @@ async def test_planner_prints_warning_on_retry(capsys: pytest.CaptureFixture[str
         ]
     )
 
-    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider, max_retries=3)
+    with caplog.at_level(logging.DEBUG, logger="forge.agents.base"):
+        await plan_agent(request, ["codebase"], {"codebase": "python"}, provider, max_retries=3)
 
-    captured = capsys.readouterr()
-    assert "agent retry 1" in captured.out
+    assert any("agent retry 1" in r.message for r in caplog.records)
 
 
 async def test_plan_agent_never_calls_chat_with_tools() -> None:
