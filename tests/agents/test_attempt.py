@@ -15,8 +15,10 @@ from forge.agents.attempt import (
     RunAgentFailed,
     WorkOutputValidator,
 )
+from forge.agents.attempt_telemetry import AttemptTelemetryReporter
 from forge.core.models import (
     AgentContract,
+    AgentDiagnostic,
     AgentRequest,
     AgentResponse,
     AgentType,
@@ -667,6 +669,39 @@ async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
     )
     exhausted = [event for event in sink.events if event.event_type == "pwc.exhausted"][0]
     assert exhausted.data["attempt_count"] == 3
+
+
+def test_producer_telemetry_includes_diagnostics_for_failed_response() -> None:
+    """producer_response_parsed emits diagnostics in telemetry data when the response has them."""
+    sink = _MemoryTelemetrySink()
+    reporter = AttemptTelemetryReporter(
+        sink=sink,
+        run_id=sink.run_id,
+        node_id=uuid4(),
+        agent_type=AgentType.WORK,
+    )
+    response = AgentResponse(
+        request_id=uuid4(),
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.INVALID_JSON,
+        error="agent failed after 3 retries: response is not valid JSON",
+        diagnostics=[
+            AgentDiagnostic(
+                kind="invalid_structured_output",
+                message="response is not valid JSON",
+                raw_response_excerpt="this is definitely not json",
+            )
+        ],
+    )
+
+    reporter.producer_response_parsed(1, response)
+
+    assert sink.events
+    event = sink.events[0]
+    assert event.event_type == "producer.response.parsed"
+    diagnostics = event.data.get("diagnostics")
+    assert diagnostics
+    assert diagnostics[0]["raw_response_excerpt"] == "this is definitely not json"
 
 
 async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:

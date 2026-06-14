@@ -67,6 +67,8 @@ def _producer_response_summary(response: AgentResponse) -> dict[str, object]:
         data["work_output"] = _work_output_summary(response.output)
     elif isinstance(response.output, PlanResponse):
         data["plan"] = _plan_summary(response.output)
+    if response.diagnostics:
+        data["diagnostics"] = [_model_data(d) for d in response.diagnostics]
     return data
 
 

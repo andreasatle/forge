@@ -322,3 +322,69 @@ def test_render_run_node_prefix_full_timeline_excludes_other_nodes() -> None:
     text = TextTraceRenderer().render_run(run, node_prefix=NODE_1[:4])
     assert "exhausted:" in text
     assert NODE_2[:8] not in text
+
+
+# ---------------------------------------------------------------------------
+# render_run — diagnostic raw_response_excerpt
+# ---------------------------------------------------------------------------
+
+
+def _failed_producer_event_with_excerpt(node_id: str, excerpt: str) -> dict[str, object]:
+    return {
+        "run_id": RUN_1,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "node_id": node_id,
+        "agent_type": "work",
+        "attempt_number": 1,
+        "event_type": "producer.response.parsed",
+        "status": "failed",
+        "summary": "producer returned failed",
+        "data": {
+            "status": "failed",
+            "output_type": None,
+            "failure_kind": "invalid_json",
+            "error": "agent failed after 3 retries: response is not valid JSON",
+            "diagnostics": [
+                {
+                    "kind": "invalid_structured_output",
+                    "message": "response is not valid JSON",
+                    "raw_response_excerpt": excerpt,
+                }
+            ],
+        },
+    }
+
+
+def test_render_run_shows_raw_response_excerpt_for_invalid_json_failure() -> None:
+    """Failed producer with raw_response_excerpt shows it in the timeline."""
+    excerpt = "this is markdown ## not json"
+    run = _make_run(
+        RUN_1,
+        events=[_failed_producer_event_with_excerpt(NODE_1, excerpt)],
+    )
+    text = TextTraceRenderer().render_run(run)
+    assert "raw_response:" in text
+    assert "this is markdown" in text
+
+
+def test_render_run_omits_raw_response_excerpt_when_absent() -> None:
+    """Producer event without diagnostics does not show raw_response: line."""
+    run = _make_run(
+        RUN_1,
+        events=[_event(NODE_1, "work", "producer.response.parsed", attempt=1, status="failed")],
+    )
+    text = TextTraceRenderer().render_run(run)
+    assert "raw_response:" not in text
+
+
+def test_render_run_truncates_long_raw_response_excerpt() -> None:
+    """Raw response excerpt longer than 300 chars is truncated in the timeline."""
+    excerpt = "x" * 500
+    run = _make_run(
+        RUN_1,
+        events=[_failed_producer_event_with_excerpt(NODE_1, excerpt)],
+    )
+    text = TextTraceRenderer().render_run(run)
+    assert "raw_response:" in text
+    raw_line = next(line for line in text.splitlines() if "raw_response:" in line)
+    assert len(raw_line) < 400

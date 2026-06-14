@@ -148,6 +148,10 @@ def _render_event(event: TraceEvent, *, indent: str, full: bool) -> list[str]:
         error = str_value(data.get("error"))
         if error:
             parts[0] += f" error={error}"
+        for diag in list_value(data.get("diagnostics")):
+            excerpt = str_value(dict_value(diag).get("raw_response_excerpt"))
+            if excerpt:
+                parts.append(f"{indent}  raw_response: {fit(excerpt, 300)}")
         return parts
 
     if event_type == "critic.finding.parsed":

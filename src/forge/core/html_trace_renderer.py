@@ -245,7 +245,15 @@ class HtmlTraceRenderer:
                 summary += f" plan_tasks={plan.get('task_count', 0)}"
             if work_out:
                 summary += f" work_output={work_output_text(work_out)}"
-            return f'<p class="event-body">{self._e(summary)}</p>'
+            parts = [f'<p class="event-body">{self._e(summary)}</p>']
+            for diag in list_value(data.get("diagnostics")):
+                excerpt = str_value(dict_value(diag).get("raw_response_excerpt"))
+                if excerpt:
+                    parts.append(
+                        f"<details><summary>raw_response_excerpt</summary>"
+                        f"<pre>{self._e(excerpt)}</pre></details>"
+                    )
+            return "".join(parts)
         if event_type == "critic.finding.parsed":
             return self._disposition(event, "critic_finding")
         if event_type == "referee.decision.parsed":

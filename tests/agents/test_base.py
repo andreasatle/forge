@@ -807,6 +807,28 @@ async def test_run_agent_allows_empty_work_output_after_tool_call_when_adapter_a
     assert response.output == WorkOutput()
 
 
+async def test_tool_loop_preserves_raw_response_excerpt_for_json_parse_failure():
+    """ToolLoop captures raw_response_excerpt when model returns unparseable text."""
+    raw = "this is definitely not json and will cause a parse error"
+    provider = _mock_provider(raw)
+
+    response = await ToolLoop(
+        request=_work_request(),
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=WorkOutput,
+        max_retries=0,
+    ).run()
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.INVALID_JSON
+    assert response.diagnostics
+    excerpt = response.diagnostics[0].raw_response_excerpt
+    assert excerpt is not None
+    assert raw in excerpt
+
+
 async def test_tool_loop_preserves_raw_invalid_response_diagnostics_on_retry_exhaustion():
     """Parse-exhausted AgentResponse carries bounded invalid response diagnostics."""
     request = _work_request()
