@@ -1,11 +1,14 @@
 """Worker agent that executes a task using an adapter and tool registry."""
 
+from pathlib import Path
+
 from forge.adapters.registry import AdapterRegistry
 from forge.agents.attempt import AttemptEngine, RunAgentFailed, WorkOutputValidator
 from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
+    FailureKind,
     ResponseStatus,
     RevisionRequest,
     StateView,
@@ -14,16 +17,26 @@ from forge.core.models import (
     render_agent_contract,
 )
 from forge.core.telemetry import TelemetrySink
-from forge.core.workspace import Workspace
+from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.llm.providers import LLMProvider
-from forge.tools.builtin import build_read_registry
+from forge.tools.builtin import build_worktree_registry
 from forge.tools.registry import ToolRegistry
 
 _FALLBACK_WORK_OUTPUT_EXAMPLE = (
     "No language-specific file layout conventions are configured for this artifact."
 )
 _LANGUAGE_GUIDANCE_CONSTRAINT_PREFIX = "Language plugin guidance:"
+
+
+def _worktree_has_changes(worktree_path: Path) -> bool:
+    result = run_git(
+        ["status", "--porcelain"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
 
 
 def _request_with_language_guidance(
@@ -97,14 +110,16 @@ class WorkTaskExecutor:
                 status=ResponseStatus.FAILED,
                 error=f"expected WorkSpec, got {type(contract_spec).__name__}",
             )
-        full_registry = build_read_registry(
-            self.workspace,
-            spec.artifact,
+        node_id = str(request.id)
+        worktree_path = self.workspace.create_worktree(spec.artifact, node_id)
+        full_registry = build_worktree_registry(
+            str(worktree_path),
             plugin.test_command if plugin else None,
         )
         try:
             tool_list = full_registry.get_many(adapter.tools)
         except KeyError as e:
+            self.workspace.remove_worktree(spec.artifact, node_id)
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.FAILED,
@@ -157,8 +172,9 @@ class WorkTaskExecutor:
             )
 
         base_prompt += (
-            "\n\nWorkers are read-only: do not attempt to write files via tools."
-            "\nPropose file creations and edits only through your task result."
+            "\n\nModify files directly in the assigned worktree using the available write/edit tools."
+            "\nThe framework will use git status and git diff as the source of truth."
+            "\nDo not include complete file contents in your final response."
         )
 
         provider = self.provider
@@ -178,7 +194,7 @@ class WorkTaskExecutor:
                 max_tool_iterations=max_tool_iterations,
             )
 
-        validator = WorkOutputValidator(adapter, state_view)
+        validator = WorkOutputValidator(adapter, state_view, worktree_path)
         engine = AttemptEngine(
             request=contract_request,
             state_view=state_view,
@@ -194,9 +210,35 @@ class WorkTaskExecutor:
         )
 
         try:
-            return await engine.run(base_prompt)
+            response = await engine.run(base_prompt)
         except RunAgentFailed as e:
-            return e.response
+            response = e.response
+        except Exception:
+            self.workspace.remove_worktree(spec.artifact, node_id)
+            raise
+
+        if response.status == ResponseStatus.COMPLETED:
+            if _worktree_has_changes(worktree_path):
+                return response
+            self.workspace.remove_worktree(spec.artifact, node_id)
+            if adapter.requires_nonempty_output:
+                return AgentResponse(
+                    request_id=request.id,
+                    status=ResponseStatus.FAILED,
+                    failure_kind=FailureKind.VALIDATION_REJECTED,
+                    error="worker completed without producing worktree changes",
+                    output=response.output,
+                    ran_tests_and_passed=response.ran_tests_and_passed,
+                )
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.ALREADY_DONE,
+                output=response.output,
+                ran_tests_and_passed=response.ran_tests_and_passed,
+            )
+
+        self.workspace.remove_worktree(spec.artifact, node_id)
+        return response
 
 
 async def work_agent(

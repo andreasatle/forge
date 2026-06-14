@@ -16,7 +16,6 @@ from forge.core.models import (
     AgentType,
     CriticDisposition,
     CriticFinding,
-    FileContent,
     PlanSpec,
     RefereeDecision,
     RequestSource,
@@ -105,7 +104,7 @@ def _state_view() -> StateView:
 
 
 def _rendered_output() -> str:
-    work_output = WorkOutput(files=[FileContent(path="main.py", content='print("Hello, World!")')])
+    work_output = WorkOutput(summary="Changed main.py in the worktree.")
     return WorkOutputValidator(_registry().get("coding"), _state_view()).render_for_critic(
         work_output
     )

@@ -1,25 +1,32 @@
 """Tests for workspace file tool functions: read and list."""
 
+from pathlib import Path
+from typing import cast
+
 import pytest
 
 from forge.core.workspace import Workspace
 from forge.tools.file_tools import (
     list_files,
     make_list_files_tool,
+    make_replace_in_file_tool_for_root,
     read_file,
+    write_file_to_root,
 )
 from forge.tools.schemas import (
     ListFilesRequest,
     ListFilesResponse,
+    ReplaceInFileRequest,
+    ReplaceInFileResponse,
 )
 
 _ARTIFACT = "test-artifact"
 
 
 @pytest.fixture
-def workspace(tmp_path: pytest.TempPathFactory) -> Workspace:
+def workspace(tmp_path: Path) -> Workspace:
     """Return an initialised Workspace with a test-artifact directory."""
-    ws = Workspace(tmp_path)  # type: ignore[arg-type]
+    ws = Workspace(tmp_path)
     ws.init()
     ws.init_artifact(_ARTIFACT)
     return ws
@@ -85,3 +92,31 @@ async def test_list_files_tool_returns_empty_list_for_missing_directory(
 
     assert isinstance(result, ListFilesResponse)
     assert result.paths == []
+
+
+async def test_write_file_to_root_writes_inside_scoped_root(tmp_path: Path) -> None:
+    """write_file_to_root writes content under the provided root."""
+    result = await write_file_to_root("src/main.py", "x = 1", tmp_path)
+
+    assert (tmp_path / "src" / "main.py").read_text() == "x = 1"
+    assert result.path == "src/main.py"
+
+
+async def test_write_file_to_root_rejects_path_escape(tmp_path: Path) -> None:
+    """write_file_to_root rejects paths outside the scoped root."""
+    with pytest.raises(ValueError, match="escapes"):
+        await write_file_to_root("../outside.py", "x", tmp_path)
+
+
+async def test_replace_in_file_tool_replaces_exact_text(tmp_path: Path) -> None:
+    """replace_in_file tool replaces one exact text occurrence."""
+    (tmp_path / "main.py").write_text("x = 1\n")
+    tool = make_replace_in_file_tool_for_root(tmp_path)
+
+    result = cast(
+        ReplaceInFileResponse,
+        await tool.fn(ReplaceInFileRequest(path="main.py", old="1", new="2")),
+    )
+
+    assert (tmp_path / "main.py").read_text() == "x = 2\n"
+    assert result.replacements == 1

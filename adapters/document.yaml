@@ -5,14 +5,17 @@ work_noun: document
 tools:
   - read_file
   - list_files
+  - write_file
+  - replace_in_file
 prompt_template: |
   Complete the following task: {objective}
   Success condition: {success_condition}
 
-  Produce your output as markdown files.
+  Produce your output by writing markdown files in the assigned worktree.
   Example: README.md, USAGE.md, API.md etc.
   Write complete, detailed content — do not truncate.
 
-  Your final JSON response MUST be a non-empty WorkOutput:
-  - files must contain every document you produce
-  - Write complete file contents — do not truncate or summarise
+  Your final WorkOutput is completion metadata only:
+  - Write or edit the document files in the worktree before responding
+  - Do not include complete file contents in the final response
+  - Summarize the document changes in the final response

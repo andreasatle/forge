@@ -25,7 +25,6 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     FailureKind,
-    FileContent,
     PlanResponse,
     RequestSource,
     ResponseStatus,
@@ -36,15 +35,9 @@ from forge.core.models import (
 from forge.llm.providers import ProviderEmptyOutputError
 from forge.tools.registry import Tool, ToolRegistry
 
-_NONEMPTY_WORK_OUTPUT = (
-    '{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": []}'
-)
-_MALFORMED_WORK_OUTPUT_WITH_STRING_FILE_ENTRIES = (
-    '{"files": ['
-    '{"path": "src/main.py", "content": "x = 1"}, '
-    '"path:tests/test_scraper.py", '
-    '"content:import pytest\\n"'
-    '], "dependencies": [], "base_version": "abc"}'
+_NONEMPTY_WORK_OUTPUT = '{"summary": "Changed files in the worktree.", "base_version": ""}'
+_MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY = (
+    '{"summary": ["not", "a", "string"], "base_version": "abc"}'
 )
 
 
@@ -278,7 +271,7 @@ async def test_tool_loop_returns_completed_final_response_without_tools():
     ).run()
 
     assert response.status == ResponseStatus.COMPLETED
-    assert response.output == WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")])
+    assert response.output == WorkOutput(summary="Changed files in the worktree.")
     assert provider.chat.call_count == 1
 
 
@@ -616,8 +609,9 @@ def test_prompt_builder_includes_work_output_format_clarification():
     """PromptBuilder includes WorkOutput format rules in the system prompt."""
     prompt = PromptBuilder(None, WorkOutput).build()
     assert "Format rules:" in prompt
-    assert "files: provide complete file content" in prompt
-    assert "dependencies: list any new runtime packages required" in prompt
+    assert "summary: briefly describe the worktree changes" in prompt
+    assert "Dependency changes must be made in package manager files" in prompt
+    assert "Do not include complete file contents" in prompt
     assert "base_version set to the current commit SHA" in prompt
 
 
@@ -728,7 +722,7 @@ async def test_run_agent_allows_empty_work_output_after_tool_call_when_adapter_a
 async def test_tool_loop_preserves_raw_invalid_response_diagnostics_on_retry_exhaustion():
     """Parse-exhausted AgentResponse carries bounded invalid response diagnostics."""
     request = _work_request()
-    provider = _mock_provider(_MALFORMED_WORK_OUTPUT_WITH_STRING_FILE_ENTRIES)
+    provider = _mock_provider(_MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY)
 
     response = await ToolLoop(
         request=request,
@@ -744,10 +738,10 @@ async def test_tool_loop_preserves_raw_invalid_response_diagnostics_on_retry_exh
     assert response.diagnostics
     diagnostic = response.diagnostics[0]
     assert diagnostic.kind == "invalid_structured_output"
-    assert diagnostic.validation_path == "files.1"
-    assert diagnostic.bad_value_excerpt == '"path:tests/test_scraper.py"'
+    assert diagnostic.validation_path == "summary"
+    assert diagnostic.bad_value_excerpt == '["not", "a", "string"]'
     assert diagnostic.raw_response_excerpt is not None
-    assert "path:tests/test_scraper.py" in diagnostic.raw_response_excerpt
+    assert "not" in diagnostic.raw_response_excerpt
     assert len(diagnostic.raw_response_excerpt) <= 4000
 
 
@@ -756,7 +750,7 @@ async def test_tool_loop_retry_preserves_original_prompt_plus_json_repair_block(
     request = _work_request()
     provider = _mock_provider()
     provider.chat = AsyncMock(
-        side_effect=[_MALFORMED_WORK_OUTPUT_WITH_STRING_FILE_ENTRIES, _NONEMPTY_WORK_OUTPUT]
+        side_effect=[_MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY, _NONEMPTY_WORK_OUTPUT]
     )
     original_prompt = "AgentRequest contract: satisfy AC1"
 

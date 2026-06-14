@@ -5,15 +5,18 @@ work_noun: implementation
 tools:
   - list_files
   - read_file
+  - write_file
+  - replace_in_file
   - run_tests
 prompt_template: |
   Complete the following task: {objective}
   Success condition: {success_condition}
 
-  Language-specific output conventions:
+  Language-specific worktree conventions:
   {work_output_example}
 
-  IMPORTANT — your final JSON response MUST be a non-empty WorkOutput:
-  - files must contain the complete content of every file you create or modify
-  - An empty WorkOutput is always wrong
-  - Do not summarise what you would do — write the actual file contents
+  IMPORTANT:
+  - Modify files directly in the assigned worktree using available write/edit tools
+  - Run tests before reporting completion
+  - Add dependencies through the package manager or manifest files in the worktree
+  - Your final WorkOutput is completion metadata only; do not include full file contents

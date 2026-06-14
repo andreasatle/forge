@@ -1,7 +1,7 @@
 """Core Pydantic models and enums shared across all forge components."""
 
 from enum import Enum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -296,18 +296,28 @@ class FileContent(BaseModel, frozen=True):
     content: str
 
 
-def _empty_file_contents() -> list[FileContent]:
-    return []
-
-
 class WorkOutput(BaseModel, frozen=True):
-    """Proposed workspace state from a work agent.
-    Workers provide complete file content; git computes the diff."""
+    """Completion metadata for work already written to the assigned git worktree."""
 
     kind: Literal["work_output"] = "work_output"
-    files: list[FileContent] = Field(default_factory=_empty_file_contents)
-    dependencies: list[str] = Field(default_factory=_empty_strings)
+    summary: str = ""
     base_version: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_summary_from_legacy_payload(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        d = cast("dict[str, object]", data)
+        if d.get("summary"):
+            return d
+        files = d.get("files")
+        dependencies = d.get("dependencies")
+        if files or dependencies:
+            updated: dict[str, object] = dict(d)
+            updated["summary"] = "Completed worktree changes."
+            return updated
+        return d
 
 
 class RunResult(BaseModel, frozen=True):

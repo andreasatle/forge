@@ -11,7 +11,6 @@ from forge.core.models import (
     AgentType,
     DAGNode,
     FailureKind,
-    FileContent,
     NodeState,
     PlanResponse,
     PlanSpec,
@@ -68,7 +67,7 @@ def _ok(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        output=WorkOutput(files=[FileContent(path="src/out.py", content="x = 1")]),
+        output=WorkOutput(summary="Completed worktree changes."),
     )
 
 
@@ -412,7 +411,7 @@ async def test_integrate_called_inline_after_work_completes() -> None:
     await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
 
     ss.apply_work_output.assert_called_once()
-    assert ss.apply_work_output.call_args.args[0].files[0].path == "src/out.py"
+    assert ss.apply_work_output.call_args.args[0].summary == "Completed worktree changes."
 
 
 async def test_transitive_cancellation_propagates_through_chain() -> None:
@@ -678,7 +677,7 @@ async def test_work_node_missing_work_output_marked_failed() -> None:
 
 
 async def test_work_node_empty_work_output_marked_failed() -> None:
-    """WORK node completing with empty WorkOutput is marked FAILED before apply_work_output."""
+    """WORK node completing with empty WorkOutput metadata is marked FAILED before apply_work_output."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
@@ -723,7 +722,7 @@ async def test_work_node_non_empty_work_output_integrates_normally() -> None:
         return AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
 
     final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
@@ -739,7 +738,7 @@ async def test_work_node_integrates_typed_work_output() -> None:
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     ss = _mock_ss()
-    work_output = WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return AgentResponse(

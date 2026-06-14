@@ -1,6 +1,7 @@
 """Tool for running tests in a workspace artifact directory."""
 
 import asyncio
+from pathlib import Path
 
 from forge.core.workspace import Workspace
 from forge.tools.registry import Tool
@@ -14,11 +15,15 @@ _TIMEOUT_SECONDS = 60
 
 async def run_tests(workspace: Workspace, artifact_name: str, test_command: str) -> tuple[str, int]:
     """Run test_command in the artifact directory and return combined output plus exit code."""
-    cwd = workspace.artifact_dir(artifact_name)
+    return await run_tests_in_root(workspace.artifact_dir(artifact_name), test_command)
+
+
+async def run_tests_in_root(root: Path, test_command: str) -> tuple[str, int]:
+    """Run test_command in a scoped root directory and return output plus exit code."""
     try:
         proc = await asyncio.create_subprocess_shell(
             test_command,
-            cwd=cwd,
+            cwd=root,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -49,9 +54,14 @@ def _parse_test_output(raw: str, returncode: int = 0) -> RunTestsResponse:
 
 def make_run_tests_tool(workspace: Workspace, artifact_name: str, test_command: str) -> Tool:
     """Return a Tool that runs test_command in the artifact directory with no LLM-facing parameters."""
+    return make_run_tests_tool_for_root(workspace.artifact_dir(artifact_name), test_command)
+
+
+def make_run_tests_tool_for_root(root: Path, test_command: str) -> Tool:
+    """Return a Tool that runs test_command in a scoped root directory."""
 
     async def fn(req: RunTestsRequest) -> RunTestsResponse:  # type: ignore[misc]
-        raw, returncode = await run_tests(workspace, artifact_name, test_command)
+        raw, returncode = await run_tests_in_root(root, test_command)
         return _parse_test_output(raw, returncode)
 
     return Tool(

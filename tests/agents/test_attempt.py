@@ -19,7 +19,6 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     FailureKind,
-    FileContent,
     PlanResponse,
     PlanSpec,
     RefereeDecision,
@@ -155,7 +154,7 @@ def _engine(
 async def test_accept_on_first_attempt_returns_immediately() -> None:
     """Engine returns the work output immediately when referee accepts on the first attempt."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -183,8 +182,8 @@ async def test_accept_on_first_attempt_returns_immediately() -> None:
 async def test_revise_injects_feedback_and_retries() -> None:
     """Engine retries with a structured required-revision block when disposition is REVISE."""
     request = _work_request()
-    first_work_output = WorkOutput(files=[FileContent(path="main.py", content="first")])
-    improved_work_output = WorkOutput(files=[FileContent(path="main.py", content="improved")])
+    first_work_output = WorkOutput(summary="Completed worktree changes.")
+    improved_work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -231,15 +230,15 @@ async def test_revise_injects_feedback_and_retries() -> None:
     assert "The next output must address every required change listed below." in prompts[1]
     assert "FINAL OUTPUT FORMAT REMINDER" in prompts[1]
     assert "Return valid JSON only matching WorkOutput." in prompts[1]
-    assert "files must be an array of JSON objects" in prompts[1]
-    assert 'Do not use string entries like "path:...".' in prompts[1]
+    assert "summary must describe the worktree changes made" in prompts[1]
+    assert "Do not include full file contents" in prompts[1]
 
 
 async def test_revise_prompt_preserves_structured_criterion_ids() -> None:
     """Structured revision items supplied by the referee are rendered with criterion ids."""
     request = _work_request()
-    first_work_output = WorkOutput(files=[FileContent(path="main.py", content="first")])
-    improved_work_output = WorkOutput(files=[FileContent(path="main.py", content="improved")])
+    first_work_output = WorkOutput(summary="Completed worktree changes.")
+    improved_work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -301,7 +300,7 @@ async def test_revise_prompt_preserves_structured_criterion_ids() -> None:
 async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
     """Successive revise rounds accumulate all prior RevisionRequests in the prompt."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -383,8 +382,8 @@ async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> No
     quoted_contract = (
         f"The output missed a rule.\n\n{contract_block}\n\nAfter applying the contract, add tests."
     )
-    first_work_output = WorkOutput(files=[FileContent(path="main.toy", content="first")])
-    improved_work_output = WorkOutput(files=[FileContent(path="main.toy", content="improved")])
+    first_work_output = WorkOutput(summary="Completed worktree changes.")
+    improved_work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -464,7 +463,7 @@ async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
     contract_block = render_agent_contract(request)
     base_prompt = f"base prompt\n\n{contract_block}"
     quoted_contract = f"Fix the missing work.\n\n{contract_block}"
-    work_output = WorkOutput(files=[FileContent(path="main.toy", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -521,7 +520,7 @@ async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
 async def test_rejected_validation_returns_failed_without_output() -> None:
     """Engine fails immediately when validation rejects a worker output."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -551,7 +550,7 @@ async def test_rejected_validation_returns_failed_without_output() -> None:
 async def test_repeated_revise_until_max_attempts_returns_failed_without_output() -> None:
     """Engine fails when all validation attempts are exhausted without acceptance."""
     request = _work_request()
-    last_work_output = WorkOutput(files=[FileContent(path="main.py", content="final")])
+    last_work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -590,7 +589,7 @@ async def test_repeated_revise_until_max_attempts_returns_failed_without_output(
 async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
     """Failed PWC preserves attempt starts, parsed results, revisions, and exhaustion."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [
             AgentResponse(
@@ -669,7 +668,7 @@ async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
 async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
     """Telemetry is best-effort and cannot fail an otherwise accepted PWC run."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -705,7 +704,7 @@ async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
 async def test_critic_parse_failure_returns_failed_without_output() -> None:
     """Engine fails when critic validation cannot be parsed."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -731,7 +730,7 @@ async def test_critic_parse_failure_returns_failed_without_output() -> None:
 async def test_referee_parse_failure_returns_failed_without_output() -> None:
     """Engine fails when referee validation cannot be parsed."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -760,7 +759,7 @@ async def test_referee_parse_failure_returns_failed_without_output() -> None:
 async def test_no_providers_skips_validation() -> None:
     """Engine skips critic/referee entirely when both providers are None."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -797,7 +796,7 @@ async def test_run_agent_failure_raises_run_agent_failed() -> None:
 async def test_empty_work_output_no_critic_first_attempt_retries_not_already_done() -> None:
     """Engine retries with correction feedback on a non-final empty output when no critic is configured."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -1025,7 +1024,7 @@ async def test_empty_work_output_critic_parse_failure_returns_failed_without_out
 async def test_empty_work_output_critic_revise_triggers_retry_with_feedback() -> None:
     """Engine retries with feedback when critic returns REVISE on an empty output attempt."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -1081,7 +1080,7 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
             artifact="docs",
         ),
     )
-    work_output = WorkOutput(files=[FileContent(path="README.md", content="# Hello")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [
             AgentResponse(
@@ -1261,7 +1260,7 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
 async def test_decompose_disposition_returns_decompose_status_immediately() -> None:
     """Engine returns ResponseStatus.DECOMPOSE immediately when referee disposition is DECOMPOSE."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, _ = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
@@ -1304,7 +1303,7 @@ async def test_decompose_disposition_returns_decompose_status_immediately() -> N
 async def test_decompose_disposition_does_not_retry() -> None:
     """Engine makes exactly one producer call when referee returns DECOMPOSE — no retry."""
     request = _work_request()
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     run_fn, prompts = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )

@@ -19,6 +19,43 @@ class ReadFileResponse(BaseModel):
     content: str
 
 
+class WriteFileRequest(BaseModel):
+    """Request to write complete text content to a file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    content: str
+
+
+class WriteFileResponse(BaseModel):
+    """Response describing a completed file write."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    bytes_written: int
+
+
+class ReplaceInFileRequest(BaseModel):
+    """Request to replace an exact text occurrence in a file."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    old: str
+    new: str
+
+
+class ReplaceInFileResponse(BaseModel):
+    """Response describing a completed in-file replacement."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str
+    replacements: int
+
+
 class ListFilesRequest(BaseModel):
     """Request to list all files under a given directory."""
 

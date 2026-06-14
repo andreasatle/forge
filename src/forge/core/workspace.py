@@ -1,11 +1,56 @@
 """Workspace dataclass for managing the on-disk layout of a forge run."""
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from os import PathLike
 from pathlib import Path
+from typing import Any, cast
 
 from forge.languages.registry import LanguagePlugin
+
+_GIT_LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
+
+
+def git_subprocess_env() -> dict[str, str]:
+    """Return an environment where parent-repository Git variables are removed."""
+    env = os.environ.copy()
+    for key in _GIT_LOCAL_ENV_VARS:
+        env.pop(key, None)
+    return env
+
+
+def run_git(
+    args: list[str], cwd: str | PathLike[str], **kwargs: Any
+) -> subprocess.CompletedProcess[Any]:
+    """Run a git command scoped by cwd, independent of inherited hook Git env."""
+    return cast(
+        "subprocess.CompletedProcess[Any]",
+        subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            check=True,
+            env=git_subprocess_env(),
+            **kwargs,
+        ),
+    )
 
 
 @dataclass
@@ -45,18 +90,21 @@ class Workspace:
         """Create the artifact root directory. For language-backed artifacts, also run init and sync if the directory is new."""
         artifact_dir = self.artifact_dir(name)
         artifact_dir.mkdir(parents=True, exist_ok=True)
-        if plugin is None or any(artifact_dir.iterdir()):
+        was_empty = not any(artifact_dir.iterdir())
+        if plugin is not None and was_empty:
+            cmd = plugin.init_command.format(artifact_name=name)
+            subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
+            subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
+        if (artifact_dir / ".git").exists():
             return
         if not shutil.which("git"):
-            raise RuntimeError(
-                "git is required for language-backed artifacts but not found in PATH"
-            )
-        cmd = plugin.init_command.format(artifact_name=name)
-        subprocess.run(cmd, shell=True, cwd=artifact_dir, check=True)
-        subprocess.run(plugin.sync_command, shell=True, cwd=artifact_dir, check=True)
-        subprocess.run(["git", "init", "-b", "main"], cwd=artifact_dir, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=artifact_dir, check=True)
-        subprocess.run(["git", "commit", "-m", f"init: {name}"], cwd=artifact_dir, check=True)
+            raise RuntimeError("git is required for artifacts but not found in PATH")
+        run_git(["init", "-b", "main"], cwd=artifact_dir)
+        run_git(["add", "-A"], cwd=artifact_dir)
+        run_git(
+            ["commit", "--allow-empty", "-m", f"init: {name}"],
+            cwd=artifact_dir,
+        )
 
     def reset(self, artifact_names: list[str]) -> None:
         """Delete state and all contents of artifact directories."""
@@ -73,35 +121,35 @@ class Workspace:
         artifact_dir = self.artifact_dir(artifact_name)
         worktree_path = self.path / f"{artifact_name}-work-{node_id}"
         branch_name = f"work/{node_id}"
-        subprocess.run(
-            ["git", "worktree", "add", "-b", branch_name, str(worktree_path), "main"],
+        run_git(
+            ["worktree", "add", "-b", branch_name, str(worktree_path), "main"],
             cwd=artifact_dir,
-            check=True,
         )
         return worktree_path
+
+    def worktree_path(self, artifact_name: str, node_id: str) -> Path:
+        """Return the expected worktree path for a work node."""
+        return self.path / f"{artifact_name}-work-{node_id}"
 
     def remove_worktree(self, artifact_name: str, node_id: str) -> None:
         """Remove a git worktree and its branch after integration."""
         artifact_dir = self.artifact_dir(artifact_name)
         worktree_path = self.path / f"{artifact_name}-work-{node_id}"
-        subprocess.run(
-            ["git", "worktree", "remove", "--force", str(worktree_path)],
+        run_git(
+            ["worktree", "remove", "--force", str(worktree_path)],
             cwd=artifact_dir,
-            check=True,
         )
-        subprocess.run(
-            ["git", "branch", "-D", f"work/{node_id}"],
+        run_git(
+            ["branch", "-D", f"work/{node_id}"],
             cwd=artifact_dir,
-            check=True,
         )
 
     def get_current_sha(self, artifact_name: str) -> str:
         """Return the current HEAD commit SHA of the artifact main branch."""
         artifact_dir = self.artifact_dir(artifact_name)
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
+        result = run_git(
+            ["rev-parse", "HEAD"],
             cwd=artifact_dir,
-            check=True,
             capture_output=True,
             text=True,
         )

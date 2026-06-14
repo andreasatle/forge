@@ -73,10 +73,20 @@ def _mock_registry() -> AdapterRegistry:
     registry._adapters["coding"] = AdapterSpec(
         name="coding",
         description="test",
-        tools=[],
+        tools=["write_file"],
         prompt_template="do: {objective}",
     )
     return registry
+
+
+def _write_then_complete() -> list[str]:
+    return [
+        (
+            '{"kind": "tool_call", "name": "write_file", '
+            '"arguments": {"path": "src/main.py", "content": "x = 1"}}'
+        ),
+        '{"summary": "Wrote src/main.py", "base_version": ""}',
+    ]
 
 
 def _make_workspace(tmp_path: Path) -> Workspace:
@@ -254,9 +264,7 @@ async def test_stub_plan_handler_returns_completed() -> None:
 async def test_work_handler_returns_completed(tmp_path: Path) -> None:
     """make_work_handler returns a COMPLETED response on success."""
     provider = _mock_provider()
-    provider.chat = AsyncMock(
-        return_value='{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
-    )
+    provider.chat = AsyncMock(side_effect=_write_then_complete())
     handler = make_work_handler(
         _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
     )
@@ -395,9 +403,7 @@ async def test_make_work_handler_never_calls_chat_with_tools(tmp_path: Path) -> 
     """make_work_handler uses provider.chat only, never chat_with_tools."""
     provider = MagicMock()
     provider.max_tokens = 8192
-    provider.chat = AsyncMock(
-        return_value='{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
-    )
+    provider.chat = AsyncMock(side_effect=_write_then_complete())
     provider.chat_with_tools = AsyncMock(
         side_effect=AssertionError("chat_with_tools must not be called")
     )
@@ -548,9 +554,7 @@ async def test_make_work_handler_passes_none_providers_when_omitted(tmp_path: Pa
 async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: Path) -> None:
     """Scheduler calls state_service.apply_work_output when a work node completes successfully."""
     provider = _mock_provider()
-    provider.chat = AsyncMock(
-        return_value='{"files": [{"path": "src/main.py", "content": "x = 1"}], "dependencies": [], "base_version": ""}'
-    )
+    provider.chat = AsyncMock(side_effect=_write_then_complete())
 
     ss = _mock_ss()
     work = _work_request()

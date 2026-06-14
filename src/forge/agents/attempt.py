@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Protocol, TypeVar, cast, runtime_checkable
 from uuid import UUID
 
@@ -25,6 +26,7 @@ from forge.core.models import (
     WorkOutput,
 )
 from forge.core.telemetry import TelemetrySink
+from forge.core.workspace import run_git
 from forge.llm.providers import LLMProvider
 
 _logger = logging.getLogger(__name__)
@@ -67,29 +69,32 @@ class OutputValidator(Protocol[T]):
 
 
 class WorkOutputValidator:
-    """OutputValidator for WorkOutput — validates full-file-content output from work agents."""
+    """OutputValidator for WorkOutput — validates git-native work completion metadata."""
 
-    def __init__(self, adapter_spec: AdapterSpec, state_view: StateView) -> None:
+    def __init__(
+        self,
+        adapter_spec: AdapterSpec,
+        state_view: StateView,
+        worktree_path: Path | None = None,
+    ) -> None:
         self._adapter = adapter_spec
         self._state_view = state_view
+        self._worktree_path = worktree_path
 
     def extract_from_response(self, response: AgentResponse) -> WorkOutput | None:
         """Return typed WorkOutput output from the response."""
         return response.output if isinstance(response.output, WorkOutput) else None
 
     def is_empty(self, output: WorkOutput) -> bool:
-        """Return True when the WorkOutput has no files or dependencies."""
-        return not output.files and not output.dependencies
+        """Return True when the WorkOutput has no completion summary."""
+        return not output.summary.strip()
 
     def render_for_critic(self, output: WorkOutput) -> str:
-        """Render WorkOutput files and existing artifact state for the critic."""
-        lines: list[str] = []
-        if output.files:
-            lines.append("Files proposed:")
-            for fc in output.files:
-                lines += [f"\nFile: {fc.path}", "```", fc.content, "```"]
-        else:
-            lines.append("No files were proposed.")
+        """Render worktree status/diff and existing artifact state for the critic."""
+        lines: list[str] = [f"Worker summary: {output.summary or '(none)'}"]
+        if self._worktree_path is not None:
+            lines.extend(["", "Git status:", "```", self._git_output("status", "--short"), "```"])
+            lines.extend(["", "Git diff:", "```", self._git_output("diff", "--", "."), "```"])
         if self._state_view.files:
             if lines:
                 lines.append("")
@@ -97,6 +102,17 @@ class WorkOutputValidator:
             for fv in self._state_view.files:
                 lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
         return "\n".join(lines)
+
+    def _git_output(self, *args: str) -> str:
+        if self._worktree_path is None:
+            return "(worktree unavailable)"
+        result = run_git(
+            [*args],
+            cwd=self._worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip() or "(none)"
 
     def work_noun(self) -> str:
         """Return the adapter's work noun."""
@@ -110,9 +126,9 @@ class WorkOutputValidator:
         """Return worker-output review language."""
         return ReviewContext(
             output_noun=self._adapter.work_noun,
-            review_focus="whether the proposed files satisfy the task",
+            review_focus="whether the worktree changes satisfy the task",
             empty_output_guidance=(
-                "If no files were proposed, reject unless the "
+                "If no worktree changes were made, reject unless the "
                 "success condition is already demonstrably met."
             ),
         )
@@ -123,9 +139,8 @@ class WorkOutputValidator:
             [
                 "FINAL OUTPUT FORMAT REMINDER",
                 "Return valid JSON only matching WorkOutput.",
-                "- files must be an array of JSON objects.",
-                '  Each files item must be {"path": "...", "content": "..."}',
-                '- Do not use string entries like "path:...".',
+                "- summary must describe the worktree changes made.",
+                "- Do not include full file contents in the final response.",
             ]
         )
 

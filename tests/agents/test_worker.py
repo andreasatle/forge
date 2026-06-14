@@ -16,7 +16,6 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     FailureKind,
-    FileContent,
     FileView,
     RefereeDecision,
     RequestSource,
@@ -30,7 +29,7 @@ from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.tools.registry import ToolRegistry
 
-MUTATING_TOOL_NAMES = {"write_file", "replace_in_file", "add_dependency"}
+MUTATING_TOOL_NAMES = {"write_file", "replace_in_file"}
 PYTHON_PROMPT_WORDS = (
     "pyproject.toml",
     "requirements.txt",
@@ -61,7 +60,7 @@ def _registry() -> AdapterRegistry:
         AdapterSpec(
             name="coding",
             description="test",
-            tools=[],
+            tools=["write_file", "replace_in_file"],
             prompt_template="do: {objective}\nsuccess: {success_condition}",
         )
     )
@@ -134,7 +133,7 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: P
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
@@ -142,7 +141,10 @@ async def test_work_task_executor_runs_simple_work_task_successfully(tmp_path: P
         provider=provider,
     )
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
         )
@@ -302,8 +304,8 @@ async def test_work_producer_prompt_includes_canonical_contract_block(
     assert "Produce output satisfying this contract." in user_prompt
 
 
-async def test_work_task_executor_keeps_read_only_policy(tmp_path: Path) -> None:
-    """WorkTaskExecutor keeps the worker read-only policy in the prompt."""
+async def test_work_task_executor_prompts_for_worktree_mutation(tmp_path: Path) -> None:
+    """WorkTaskExecutor tells workers to mutate the assigned worktree."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -325,8 +327,9 @@ async def test_work_task_executor_keeps_read_only_policy(tmp_path: Path) -> None
         await executor.run(request, _state_view())
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "Workers are read-only" in user_prompt
-    assert "do not attempt to write files via tools" in user_prompt
+    assert "Modify files directly in the assigned worktree" in user_prompt
+    assert "git status and git diff" in user_prompt
+    assert "Workers are read-only" not in user_prompt
 
 
 async def test_worker_prompt_tool_mentions_match_registry(tmp_path: Path) -> None:
@@ -391,8 +394,8 @@ async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path: Path) ->
     assert "Produce ALL" not in user_prompt
 
 
-async def test_worker_prompt_keeps_read_only_policy(tmp_path: Path) -> None:
-    """worker.py still tells workers to propose changes without mutating through tools."""
+async def test_worker_prompt_uses_git_native_mutation_policy(tmp_path: Path) -> None:
+    """worker.py tells workers to modify the worktree instead of proposing file payloads."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -410,9 +413,9 @@ async def test_worker_prompt_keeps_read_only_policy(tmp_path: Path) -> None:
         )
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "Workers are read-only" in user_prompt
-    assert "do not attempt to write files via tools" in user_prompt
-    assert "task result" in user_prompt
+    assert "Modify files directly in the assigned worktree" in user_prompt
+    assert "complete file contents in your final response" in user_prompt
+    assert "Workers are read-only" not in user_prompt
 
 
 async def test_worker_prompt_includes_state_version_and_file_context(tmp_path: Path) -> None:
@@ -522,8 +525,8 @@ async def test_audit_adapter_receives_exactly_declared_tools(tmp_path: Path) -> 
     assert _tool_names(tools) == expected
 
 
-async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path: Path) -> None:
-    """audit adapter declares only read_file — list_files and run_tests must not be exposed."""
+async def test_audit_adapter_does_not_receive_run_tests(tmp_path: Path) -> None:
+    """audit adapter receives declared file tools but not run_tests."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -542,12 +545,13 @@ async def test_audit_adapter_does_not_receive_list_files_or_run_tests(tmp_path: 
         )
 
     tools = mock_run_agent.call_args.kwargs["tools"]
-    assert "list_files" not in _tool_names(tools)
+    assert "list_files" in _tool_names(tools)
+    assert "write_file" in _tool_names(tools)
     assert "run_tests" not in _tool_names(tools)
 
 
-async def test_worker_prompt_warns_against_empty_work_output(tmp_path: Path) -> None:
-    """coding.yaml warns that empty WorkOutput is always wrong."""
+async def test_worker_prompt_describes_git_native_work_output(tmp_path: Path) -> None:
+    """coding.yaml tells workers that WorkOutput is completion metadata."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -559,7 +563,7 @@ async def test_worker_prompt_warns_against_empty_work_output(tmp_path: Path) -> 
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="x.py", content="x")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
         await work_agent(
             request,
@@ -571,8 +575,8 @@ async def test_worker_prompt_warns_against_empty_work_output(tmp_path: Path) -> 
         )
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "non-empty WorkOutput" in user_prompt
-    assert "empty WorkOutput is always wrong" in user_prompt
+    assert "Modify files directly in the assigned worktree" in user_prompt
+    assert "final WorkOutput is completion metadata only" in user_prompt
 
 
 async def test_language_not_appended_when_no_plugin(tmp_path: Path) -> None:
@@ -695,7 +699,7 @@ async def test_producer_critic_and_referee_receive_same_plugin_guidance(
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="module.toy", content="ok")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
         mock_critic.return_value = CriticFinding(
             disposition=CriticDisposition.ACCEPT,
@@ -745,7 +749,7 @@ async def test_python_worker_prompt_includes_packaging_guidance(tmp_path: Path) 
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="x.py", content="x")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
         await work_agent(
             request,
@@ -778,7 +782,7 @@ async def test_coding_worker_prompt_without_language_plugin_is_language_agnostic
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="main.txt", content="content")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
         await work_agent(
             request,
@@ -808,7 +812,7 @@ async def test_python_specific_instructions_come_from_python_plugin_only(tmp_pat
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="x.py", content="x")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
         await work_agent(
             request,
@@ -852,7 +856,7 @@ async def test_non_python_language_plugin_does_not_receive_python_wording(
         mock_run_agent.return_value = AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=WorkOutput(files=[FileContent(path="module.toy", content="ok")]),
+            output=WorkOutput(summary="Completed worktree changes."),
         )
         await work_agent(
             request,
@@ -904,7 +908,7 @@ async def test_language_work_output_example_appears_in_worker_prompt(tmp_path: P
         )
 
     user_prompt = mock_run_agent.call_args.args[3]
-    assert "Language-specific output conventions" in user_prompt
+    assert "Language-specific worktree conventions" in user_prompt
     assert "Example of a valid WorkOutput response" not in user_prompt
     assert "WORK_OUTPUT_EXAMPLE_MARKER" in user_prompt
 
@@ -958,7 +962,10 @@ async def test_run_agent_failure_propagates_as_failed_response(tmp_path: Path) -
         failure_kind=FailureKind.PROVIDER_ERROR,
     )
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run:
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
         mock_run.return_value = failed_response
         response = await work_agent(
             request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
@@ -977,9 +984,12 @@ async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: 
     request = _request()
     provider = MagicMock()
     provider.max_tokens = 8192
-    work_output = WorkOutput(files=[FileContent(path="main.py", content="code")])
+    work_output = WorkOutput(summary="Completed worktree changes.")
 
-    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run:
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
         mock_run.return_value = AgentResponse(
             request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
         )

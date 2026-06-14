@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from forge.core.models import FileView, RunResult, StateView, WorkOutput
-from forge.core.workspace import Workspace
+from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 
 _EXCLUDED_DIR_NAMES = frozenset({"__pycache__", "node_modules", "dist", "build"})
@@ -94,7 +94,7 @@ class StateService:
         )
 
     async def apply_work_output(self, output: WorkOutput, node_id: str) -> None:
-        """Apply WorkOutput via git worktree — write files, merge to main, run tests,
+        """Apply git-native worktree changes — commit, merge to main, run tests,
         commit on pass or rollback on fail."""
         if output.base_version != "":
             current_sha = self._workspace.get_current_sha(self._artifact_name)
@@ -104,33 +104,36 @@ class StateService:
                     f"but HEAD is {current_sha!r}"
                 )
 
-        worktree_path = self._workspace.create_worktree(self._artifact_name, node_id)
+        worktree_path = self._workspace.worktree_path(self._artifact_name, node_id)
+        if not worktree_path.exists():
+            raise RuntimeError(f"worktree not found for node {node_id}: {worktree_path}")
         try:
-            for file in output.files:
-                dest = worktree_path / file.path
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(file.content)
-
-            subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
-            subprocess.run(
-                ["git", "commit", "-m", f"work: {node_id}"],
+            status = run_git(
+                ["status", "--porcelain"],
                 cwd=worktree_path,
-                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if not status.stdout.strip():
+                raise RuntimeError("no worktree changes produced")
+
+            run_git(["add", "-A"], cwd=worktree_path)
+            run_git(
+                ["commit", "-m", f"work: {node_id}"],
+                cwd=worktree_path,
             )
 
             artifact_dir = self._workspace.artifact_dir(self._artifact_name)
-            subprocess.run(
-                ["git", "merge", "--no-ff", f"work/{node_id}", "-m", f"integrated: {node_id}"],
+            run_git(
+                ["merge", "--no-ff", f"work/{node_id}", "-m", f"integrated: {node_id}"],
                 cwd=artifact_dir,
-                check=True,
             )
 
             result = self.run_tests()
             if not result.passed:
-                subprocess.run(
-                    ["git", "reset", "--hard", "HEAD~1"],
+                run_git(
+                    ["reset", "--hard", "HEAD~1"],
                     cwd=artifact_dir,
-                    check=True,
                 )
                 raise RuntimeError(f"tests failed after work output: {result.output}")
 

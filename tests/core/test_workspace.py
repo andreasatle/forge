@@ -1,5 +1,6 @@
 """Tests for Workspace directory initialisation, reset, and path helpers."""
 
+import subprocess
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -10,7 +11,7 @@ from forge.core.models import (
     SchedulerState,
 )
 from forge.core.persistence import load_run, save_run
-from forge.core.workspace import Workspace
+from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 
 
@@ -174,16 +175,19 @@ def test_init_artifact_skips_init_when_directory_is_not_empty(tmp_path: Path) ->
     sentinel.write_text("already here")
     ws.init_artifact("codebase", _make_plugin())
     assert sentinel.exists()
-    assert len(list(ws.artifact_dir("codebase").iterdir())) == 1
+    assert {path.name for path in ws.artifact_dir("codebase").iterdir()} == {
+        ".git",
+        "existing.txt",
+    }
 
 
-def test_init_artifact_skips_init_when_plugin_is_none(tmp_path: Path) -> None:
-    """init_artifact does not run any command when plugin is None."""
+def test_init_artifact_initializes_git_when_plugin_is_none(tmp_path: Path) -> None:
+    """init_artifact initializes an empty git repo when plugin is None."""
     ws = Workspace(tmp_path / "ws")
     ws.init()
     ws.init_artifact("codebase")
     assert ws.artifact_dir("codebase").is_dir()
-    assert list(ws.artifact_dir("codebase").iterdir()) == []
+    assert (ws.artifact_dir("codebase") / ".git").is_dir()
 
 
 def test_init_artifact_runs_git_init_for_language_backed_artifacts(tmp_path: Path) -> None:
@@ -204,7 +208,9 @@ def test_init_artifact_runs_git_init_for_language_backed_artifacts(tmp_path: Pat
 
     assert ["git", "init", "-b", "main"] in git_cmds
     assert ["git", "add", "-A"] in git_cmds
-    assert any(c[:3] == ["git", "commit", "-m"] and "init: codebase" in c[-1] for c in git_cmds)
+    assert any(
+        c[:3] == ["git", "commit", "--allow-empty"] and "init: codebase" in c[-1] for c in git_cmds
+    )
 
 
 def test_init_artifact_raises_when_git_not_available(tmp_path: Path) -> None:
@@ -253,6 +259,58 @@ def test_create_worktree_runs_correct_git_command(tmp_path: Path) -> None:
     assert cmd[4] == "work/abc123"
     assert "codebase-work-abc123" in cmd[5]
     assert cmd[6] == "main"
+
+
+def test_workspace_git_commands_ignore_inherited_hook_git_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Workspace git commands target the artifact repo even inside a git hook env."""
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=outer, check=True)
+    (outer / "README.md").write_text("outer\n")
+    subprocess.run(["git", "add", "-A"], cwd=outer, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Forge Test",
+            "-c",
+            "user.email=forge-test@example.com",
+            "commit",
+            "-m",
+            "init outer",
+        ],
+        cwd=outer,
+        check=True,
+    )
+    monkeypatch.setenv("GIT_DIR", str(outer / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(outer))
+
+    ws = Workspace(tmp_path / "ws")
+    ws.init()
+    ws.init_artifact("codebase")
+    worktree = ws.create_worktree("codebase", "abc123")
+
+    assert (ws.artifact_dir("codebase") / ".git").exists()
+    branch = run_git(
+        ["branch", "--show-current"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert branch == "work/abc123"
+
+    outer_work_branches = subprocess.run(
+        ["git", "branch", "--list", "work/*"],
+        cwd=outer,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert outer_work_branches == ""
+    ws.remove_worktree("codebase", "abc123")
 
 
 # --- remove_worktree ---

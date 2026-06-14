@@ -437,11 +437,10 @@ def test_file_content_stores_path_and_content():
 # --- WorkOutput ---
 
 
-def test_work_output_defaults_to_empty_files_and_dependencies():
-    """WorkOutput defaults to empty files and dependencies lists."""
+def test_work_output_defaults_to_empty_summary():
+    """WorkOutput defaults to empty completion metadata."""
     wo = WorkOutput()
-    assert wo.files == []
-    assert wo.dependencies == []
+    assert wo.summary == ""
 
 
 def test_work_output_base_version_defaults_to_empty_string():
@@ -457,10 +456,13 @@ def test_work_output_is_frozen():
         wo.base_version = "abc123"  # type: ignore[misc]
 
 
-def test_work_output_stores_files_and_dependencies():
-    """WorkOutput stores provided files and dependencies."""
+def test_work_output_ignores_legacy_files_and_dependencies():
+    """WorkOutput no longer transports file contents or dependencies."""
     fc = FileContent(path="src/lib.py", content="def f(): pass")
-    wo = WorkOutput(files=[fc], dependencies=["requests"], base_version="deadbeef")
-    assert wo.files == [fc]
-    assert wo.dependencies == ["requests"]
+    wo = WorkOutput.model_validate(
+        {"files": [fc.model_dump()], "dependencies": ["requests"], "base_version": "deadbeef"}
+    )
+    assert not hasattr(wo, "files")
+    assert not hasattr(wo, "dependencies")
+    assert wo.summary == "Completed worktree changes."
     assert wo.base_version == "deadbeef"

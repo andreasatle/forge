@@ -10,8 +10,9 @@ prompt_supplement: |
   Always include dev-dependencies in Cargo.toml for testing utilities if needed.
   The built-in #[cfg(test)] module is sufficient for unit tests — always use it.
   Always write at least one test per public function.
-  List required crates in the final dependency output.
+  Add required crates in Cargo.toml/Cargo.lock in the worktree.
 work_output_example: |
   Use paths such as src/main.rs and tests/integration_test.rs.
-  Keep runtime crates in Cargo.toml and WorkOutput.dependencies.
+  Keep runtime crates in Cargo.toml/Cargo.lock.
   Keep test-only utilities under dev-dependencies in Cargo.toml.
+  Final WorkOutput should summarize the worktree changes; do not include file contents.

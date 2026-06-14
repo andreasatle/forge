@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from forge.core.models import (
-    FileContent,
     FileView,
     RunResult,
     WorkOutput,
@@ -250,13 +249,13 @@ def test_parse_test_result_failure_text_with_nonzero_exit_returns_false() -> Non
 def _mock_subprocess_ok() -> MagicMock:
     result = MagicMock()
     result.returncode = 0
-    result.stdout = ""
+    result.stdout = " M src/main.py\n"
     result.stderr = ""
     return result
 
 
-async def test_apply_work_output_writes_files_to_worktree(tmp_path: Path) -> None:
-    """apply_work_output writes WorkOutput files into the worktree directory."""
+async def test_apply_work_output_commits_existing_worktree_changes(tmp_path: Path) -> None:
+    """apply_work_output commits changes that already exist in the assigned worktree."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
@@ -264,15 +263,13 @@ async def test_apply_work_output_writes_files_to_worktree(tmp_path: Path) -> Non
 
     worktree_path = tmp_path / "app-work-node1"
     worktree_path.mkdir()
-    output = WorkOutput(files=[FileContent(path="src/main.py", content="x = 1")])
+    output = WorkOutput(summary="changed src/main.py")
 
-    with patch.object(ws, "create_worktree", return_value=worktree_path):
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree"):
             with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                     await ss.apply_work_output(output, "node1")
-
-    assert (worktree_path / "src" / "main.py").read_text() == "x = 1"
 
 
 async def test_apply_work_output_increments_version_on_pass(tmp_path: Path) -> None:
@@ -286,7 +283,7 @@ async def test_apply_work_output_increments_version_on_pass(tmp_path: Path) -> N
     worktree_path.mkdir()
     output = WorkOutput()
 
-    with patch.object(ws, "create_worktree", return_value=worktree_path):
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree"):
             with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
@@ -306,7 +303,7 @@ async def test_apply_work_output_does_not_increment_version_on_fail(tmp_path: Pa
     worktree_path.mkdir()
     output = WorkOutput()
 
-    with patch.object(ws, "create_worktree", return_value=worktree_path):
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree"):
             with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                 with patch.object(
@@ -336,7 +333,7 @@ async def test_apply_work_output_removes_worktree_after_pass(tmp_path: Path) -> 
     def _record_remove(artifact_name: str, node_id: str) -> None:
         remove_calls.append((artifact_name, node_id))
 
-    with patch.object(ws, "create_worktree", return_value=worktree_path):
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree", side_effect=_record_remove):
             with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
@@ -361,7 +358,7 @@ async def test_apply_work_output_removes_worktree_after_fail(tmp_path: Path) -> 
     def _record_remove(artifact_name: str, node_id: str) -> None:
         remove_calls.append((artifact_name, node_id))
 
-    with patch.object(ws, "create_worktree", return_value=worktree_path):
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
         with patch.object(ws, "remove_worktree", side_effect=_record_remove):
             with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                 with patch.object(
@@ -404,7 +401,7 @@ async def test_apply_work_output_accepts_correct_base_version(tmp_path: Path) ->
     output = WorkOutput(base_version="matching-sha")
 
     with patch.object(ws, "get_current_sha", return_value="matching-sha"):
-        with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "worktree_path", return_value=worktree_path):
             with patch.object(ws, "remove_worktree"):
                 with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                     with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
@@ -426,7 +423,7 @@ async def test_apply_work_output_accepts_empty_base_version(tmp_path: Path) -> N
 
     mock_get_sha = MagicMock()
     with patch.object(ws, "get_current_sha", mock_get_sha):
-        with patch.object(ws, "create_worktree", return_value=worktree_path):
+        with patch.object(ws, "worktree_path", return_value=worktree_path):
             with patch.object(ws, "remove_worktree"):
                 with patch("subprocess.run", return_value=_mock_subprocess_ok()):
                     with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):

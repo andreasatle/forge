@@ -204,15 +204,24 @@ class SchedulerConsequenceHandler:
             return updated, False
 
         work_output = response.output if isinstance(response.output, WorkOutput) else None
-        if work_output is None or (not work_output.files and not work_output.dependencies):
+        if work_output is None:
             return (
                 current.with_response(
                     AgentResponse(
                         request_id=updated.request.id,
                         status=ResponseStatus.FAILED,
-                        error=(
-                            "completed with empty work output — no files or dependencies produced"
-                        ),
+                        error="completed without WorkOutput completion metadata",
+                    )
+                ),
+                True,
+            )
+        if not work_output.summary.strip():
+            return (
+                current.with_response(
+                    AgentResponse(
+                        request_id=updated.request.id,
+                        status=ResponseStatus.FAILED,
+                        error="completed with empty WorkOutput completion metadata",
                     )
                 ),
                 True,

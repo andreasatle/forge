@@ -1,10 +1,10 @@
-"""Tests for builtin registry builders — read-only worker tools."""
+"""Tests for builtin registry builders."""
 
 from pathlib import Path
 
 import forge.agents.worker as worker_module
 from forge.core.workspace import Workspace
-from forge.tools.builtin import build_read_registry
+from forge.tools.builtin import build_read_registry, build_worktree_registry
 from forge.tools.registry import ToolRegistry
 
 MUTATING_TOOL_NAMES = {
@@ -42,6 +42,19 @@ def test_read_registry_exposes_only_non_mutating_tools(tmp_path: Path):
     assert _names(registry) == {"read_file", "list_files", "run_tests"}
 
 
+def test_worktree_registry_exposes_scoped_mutating_tools(tmp_path: Path):
+    """build_worktree_registry exposes tools for mutating one assigned worktree."""
+    registry = build_worktree_registry(str(tmp_path), test_command="pytest")
+
+    assert _names(registry) == {
+        "read_file",
+        "list_files",
+        "write_file",
+        "replace_in_file",
+        "run_tests",
+    }
+
+
 def test_read_registry_registers_run_tests_when_command_given(tmp_path: Path):
     """build_read_registry adds run_tests only when test_command is provided."""
     ws = Workspace(tmp_path)  # type: ignore[arg-type]
@@ -52,10 +65,10 @@ def test_read_registry_registers_run_tests_when_command_given(tmp_path: Path):
 
 
 def test_worker_uses_read_registry():
-    """Worker module must import and use build_read_registry, not the write registry."""
+    """Worker module uses the mutating worktree registry."""
     import inspect
 
     src = inspect.getsource(worker_module)
-    assert "build_read_registry" in src
+    assert "build_worktree_registry" in src
     assert "build_write_registry" not in src
     assert "build_default_registry" not in src

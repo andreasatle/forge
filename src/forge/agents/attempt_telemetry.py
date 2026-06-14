@@ -33,10 +33,7 @@ def _model_data(model: BaseModel) -> dict[str, object]:
 
 def _work_output_summary(output: WorkOutput) -> dict[str, object]:
     return {
-        "file_count": len(output.files),
-        "dependency_count": len(output.dependencies),
-        "file_paths": [file.path for file in output.files],
-        "dependencies": list(output.dependencies),
+        "summary": output.summary,
         "base_version": output.base_version,
     }
 

@@ -192,15 +192,13 @@ class PromptBuilder:
                 lines += [
                     "",
                     "Rules for your final response:",
-                    "  - Provide complete file content for every file you create or modify.",
-                    "  - The framework computes the diff via git.",
-                    "  - Do not return an empty change set if you created or modified files.",
+                    "  - Modify files directly in the assigned worktree before responding.",
+                    "  - The framework uses git status and git diff as the source of truth.",
+                    "  - Do not include complete file contents in your final response.",
                     "",
                     "Format rules:",
-                    "- files: provide complete file content for every file you create or modify.",
-                    '  each entry: {"path": "...", "content": "full file content"}',
-                    "- The framework computes the diff via git — do not compute diffs yourself.",
-                    "- dependencies: list any new runtime packages required.",
+                    "- summary: briefly describe the worktree changes you made.",
+                    "- Dependency changes must be made in package manager files in the worktree.",
                     "IMPORTANT: your response must include base_version set to the current commit SHA shown above.",
                 ]
         return "\n".join(lines)
@@ -304,7 +302,7 @@ class TrackedToolExecutor:
 
 
 def _is_empty_work_output(output: WorkOutput) -> bool:
-    return not output.files and not output.dependencies
+    return not output.summary.strip()
 
 
 class ToolLoop:
@@ -389,7 +387,7 @@ class ToolLoop:
                     return AgentResponse(
                         request_id=self.request.id,
                         status=ResponseStatus.FAILED,
-                        error="empty work output: no files or dependencies produced",
+                        error="empty work output: no completion summary produced",
                         failure_kind=FailureKind.VALIDATION_REJECTED,
                         ran_tests_and_passed=ran_tests_and_passed,
                     )

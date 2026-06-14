@@ -4,10 +4,12 @@ requires_nonempty_output: false
 work_noun: findings
 tools:
   - read_file
+  - list_files
+  - write_file
 prompt_template: |
   Audit the following: {objective}
   Success condition: {success_condition}
 
-  Read the relevant files, then respond with a WorkOutput.
-  - If you find issues, report them as markdown files in files.
-  - If there are no issues, you may return an empty WorkOutput.
+  Read the relevant files, then respond with WorkOutput completion metadata.
+  - If you find issues and the task asks for an artifact, write markdown findings in the worktree.
+  - If there are no issues, summarize that no issues were found.
