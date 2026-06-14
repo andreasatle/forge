@@ -387,6 +387,21 @@ class PlanResponse(BaseModel, frozen=True):
 ProducerOutput = PlanResponse | WorkOutput
 
 
+class ToolTurn(BaseModel, frozen=True):
+    """Strict protocol envelope for one LLM tool call turn."""
+
+    kind: Literal["tool"] = "tool"
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class FinalTurn(BaseModel, frozen=True):
+    """Strict protocol envelope for one LLM final-answer turn."""
+
+    kind: Literal["final"] = "final"
+    output: Annotated[WorkOutput | PlanResponse, Field(discriminator="kind")]
+
+
 VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
 
 

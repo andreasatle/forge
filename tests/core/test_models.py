@@ -17,6 +17,7 @@ from forge.core.models import (
     FailureKind,
     FileContent,
     FileView,
+    FinalTurn,
     NodeState,
     PlanResponse,
     PlanSpec,
@@ -28,6 +29,7 @@ from forge.core.models import (
     TaskSpec,
     ToolCallRequest,
     ToolCallResponse,
+    ToolTurn,
     WorkOutput,
     WorkSpec,
     render_agent_contract,
@@ -479,3 +481,87 @@ def test_work_output_ignores_legacy_files_and_dependencies():
     assert not hasattr(wo, "dependencies")
     assert wo.summary == "Completed worktree changes."
     assert wo.base_version == "deadbeef"
+
+
+# --- ToolTurn ---
+
+
+def test_tool_turn_roundtrip():
+    """ToolTurn serializes to JSON and deserializes back with identical field values."""
+    turn = ToolTurn(name="write_file", arguments={"path": "src/main.py", "content": "x=1"})
+    data = turn.model_dump()
+    restored = ToolTurn.model_validate(data)
+    assert restored.kind == "tool"
+    assert restored.name == "write_file"
+    assert restored.arguments == {"path": "src/main.py", "content": "x=1"}
+
+
+def test_tool_turn_arguments_defaults_to_empty_dict():
+    """ToolTurn.arguments defaults to {} when not provided."""
+    turn = ToolTurn(name="run_tests")
+    assert turn.arguments == {}
+
+
+def test_tool_turn_kind_is_literal_tool():
+    """ToolTurn.kind is always 'tool' and cannot be overridden to another value."""
+    turn = ToolTurn(name="read_file")
+    assert turn.kind == "tool"
+
+
+def test_tool_turn_is_frozen():
+    """ToolTurn raises on direct field mutation."""
+    turn = ToolTurn(name="read_file")
+    with pytest.raises(Exception):
+        turn.name = "write_file"  # type: ignore[misc]
+
+
+# --- FinalTurn ---
+
+
+def test_final_turn_accepts_work_output():
+    """FinalTurn.output holds a WorkOutput when the nested kind is 'work_output'."""
+    ft = FinalTurn(
+        output=WorkOutput(summary="done", base_version="abc123"),
+    )
+    assert ft.kind == "final"
+    assert isinstance(ft.output, WorkOutput)
+    assert ft.output.summary == "done"
+    assert ft.output.base_version == "abc123"
+
+
+def test_final_turn_accepts_plan_response():
+    """FinalTurn.output holds a PlanResponse when the nested kind is 'plan'."""
+    ft = FinalTurn(output=PlanResponse(tasks=[]))
+    assert ft.kind == "final"
+    assert isinstance(ft.output, PlanResponse)
+    assert ft.output.tasks == []
+
+
+def test_final_turn_rejects_unknown_output_kind():
+    """FinalTurn raises ValidationError when the nested output kind is unrecognized."""
+    with pytest.raises(Exception):
+        FinalTurn.model_validate({"kind": "final", "output": {"kind": "unknown_type"}})
+
+
+def test_final_turn_roundtrip_work_output():
+    """FinalTurn with WorkOutput serializes and deserializes back to an equivalent object."""
+    ft = FinalTurn(output=WorkOutput(summary="edits applied", base_version="sha1"))
+    data = ft.model_dump()
+    restored = FinalTurn.model_validate(data)
+    assert isinstance(restored.output, WorkOutput)
+    assert restored.output.summary == "edits applied"
+
+
+def test_final_turn_roundtrip_plan_response():
+    """FinalTurn with PlanResponse serializes and deserializes back to an equivalent object."""
+    task = TaskSpec(
+        objective="write tests",
+        success_condition="tests pass",
+        adapter="coding",
+        artifact="codebase",
+    )
+    ft = FinalTurn(output=PlanResponse(tasks=[task]))
+    data = ft.model_dump()
+    restored = FinalTurn.model_validate(data)
+    assert isinstance(restored.output, PlanResponse)
+    assert len(restored.output.tasks) == 1
