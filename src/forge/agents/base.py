@@ -396,18 +396,29 @@ class ToolLoop:
         )
         any_tool_called = False
         ran_tests_and_passed = False
+        final_response_only = False
         retry_count = 0
         invalid_response_diagnostics: list[AgentDiagnostic] = []
 
         for _ in range(self.max_tool_iterations):
+            active_builder = (
+                PromptBuilder(None, self.final_response_type, always_show_final=True)
+                if final_response_only
+                else self.prompt_builder
+            )
             messages[0] = {
                 "role": "system",
-                "content": self.prompt_builder.build(),
+                "content": active_builder.build(),
             }
             raw = await self.provider.chat(messages)
 
             try:
                 parsed = self.response_parser.parse(raw)
+                if final_response_only and isinstance(parsed, ToolCallRequest):
+                    raise ValueError(
+                        "Tests have already passed. "
+                        "Return final WorkOutput JSON now instead of calling tools."
+                    )
                 if (
                     self.tools is not None
                     and not any_tool_called
@@ -466,8 +477,18 @@ class ToolLoop:
                     and cast(dict[str, object], tool_response.result).get("passed") is True
                 ):
                     ran_tests_and_passed = True
+                    final_response_only = True
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
+                if final_response_only:
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Tests passed. Stop calling tools and return final WorkOutput JSON now."
+                            ),
+                        }
+                    )
                 continue
 
             output: ProducerOutput | None = None

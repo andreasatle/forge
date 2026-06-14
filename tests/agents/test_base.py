@@ -37,6 +37,7 @@ from forge.core.models import (
 from forge.llm.providers import ProviderEmptyOutputError
 from forge.tools.file_tools import make_write_file_tool_for_root
 from forge.tools.registry import Tool, ToolRegistry
+from forge.tools.schemas import RunTestsRequest, RunTestsResponse
 
 _NONEMPTY_WORK_OUTPUT = '{"summary": "Changed files in the worktree.", "base_version": ""}'
 _MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY = (
@@ -904,3 +905,84 @@ async def test_run_agent_allows_empty_work_output_without_tool_calls_when_adapte
 
     assert response.status == ResponseStatus.COMPLETED
     assert response.output == WorkOutput()
+
+
+# --- final_response_only after run_tests passes ---
+
+
+def _make_passing_run_tests_tool() -> Tool:
+    async def fn(req: RunTestsRequest) -> RunTestsResponse:
+        return RunTestsResponse(passed=True, failures=[], summary="1 passed", output="")
+
+    return Tool(
+        name="run_tests",
+        description="run tests",
+        request_type=RunTestsRequest,
+        response_type=RunTestsResponse,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
+    )
+
+
+async def test_tool_loop_disables_tools_after_successful_tests(tmp_path: Path) -> None:
+    """After run_tests passes, the next chat turn receives no-tools system prompt and returns COMPLETED."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    registry.register(_make_passing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "f.py", "content": "x=1"}}',
+            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is True
+    assert provider.chat.call_count == 3
+
+    third_call_messages = provider.chat.call_args_list[2][0][0]
+    system_content = third_call_messages[0]["content"]
+    assert "write_file" not in system_content
+    assert "run_tests" not in system_content
+    assert "WorkOutput" in system_content
+
+    last_user_content = third_call_messages[-1]["content"]
+    assert "Tests passed" in last_user_content
+
+
+async def test_tool_loop_rejects_tool_call_after_successful_tests() -> None:
+    """After run_tests passes, a subsequent tool call is rejected without execution and the loop corrects to final JSON."""
+    registry, mock_fn = _make_registry()
+    registry.register(_make_passing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_retries=3,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is True
+    assert mock_fn.call_count == 0
