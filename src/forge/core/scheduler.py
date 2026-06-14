@@ -8,6 +8,7 @@ from enum import Enum
 from uuid import UUID
 
 from forge.core.models import (
+    VALIDATION_EXHAUSTED_DIAGNOSTIC,
     AgentContract,
     AgentRequest,
     AgentResponse,
@@ -29,7 +30,6 @@ from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_tele
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
 logger = logging.getLogger(__name__)
-_VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
 
 
 @dataclass
@@ -90,7 +90,7 @@ class TerminalNodeOutcome:
 
 def _has_validation_exhausted_diagnostic(response: AgentResponse) -> bool:
     return any(
-        diagnostic.kind == _VALIDATION_EXHAUSTED_DIAGNOSTIC for diagnostic in response.diagnostics
+        diagnostic.kind == VALIDATION_EXHAUSTED_DIAGNOSTIC for diagnostic in response.diagnostics
     )
 
 

@@ -12,6 +12,7 @@ from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.agents.revisions import RevisionHistory
 from forge.core.models import (
+    VALIDATION_EXHAUSTED_DIAGNOSTIC,
     AgentDiagnostic,
     AgentRequest,
     AgentResponse,
@@ -32,7 +33,6 @@ from forge.llm.providers import LLMProvider
 _logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-_VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
 
 _MAX_UNTRACKED_BYTES = 64 * 1024
 _UNTRACKED_NOISE_DIRS = frozenset(
@@ -556,7 +556,7 @@ class AttemptLifecycle[T]:
             update={
                 "diagnostics": [
                     AgentDiagnostic(
-                        kind=_VALIDATION_EXHAUSTED_DIAGNOSTIC,
+                        kind=VALIDATION_EXHAUSTED_DIAGNOSTIC,
                         message="maximum validation attempts exhausted without an accept disposition",
                     )
                 ]

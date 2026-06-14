@@ -387,6 +387,9 @@ class PlanResponse(BaseModel, frozen=True):
 ProducerOutput = PlanResponse | WorkOutput
 
 
+VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
+
+
 class AgentDiagnostic(BaseModel, frozen=True):
     """Bounded diagnostic context captured from a failed agent attempt."""
 
