@@ -1,4 +1,4 @@
-"""Tests for AttemptEngine, WorkOutputValidator, and PlanResponseValidator."""
+"""Tests for AttemptLifecycle, WorkOutputValidator, and PlanResponseValidator."""
 
 import subprocess
 from collections.abc import Awaitable, Callable
@@ -10,7 +10,7 @@ import pytest
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.attempt import (
-    AttemptEngine,
+    AttemptLifecycle,
     PlanResponseValidator,
     RunAgentFailed,
     WorkOutputValidator,
@@ -130,7 +130,7 @@ def _engine(
     max_attempts: int = 3,
     work_noun: str = "implementation",
     requires_nonempty: bool = True,
-) -> AttemptEngine[WorkOutput]:
+) -> AttemptLifecycle[WorkOutput]:
     req = request or _work_request()
     sv = _state_view()
     if run_fn is None:
@@ -141,7 +141,7 @@ def _engine(
             )
 
         run_fn = _default
-    return AttemptEngine[WorkOutput](
+    return AttemptLifecycle[WorkOutput](
         request=req,
         state_view=sv,
         validator=WorkOutputValidator(
@@ -608,7 +608,7 @@ async def test_failed_pwc_writes_attempt_and_exhausted_telemetry() -> None:
         ]
     )
     sink = _MemoryTelemetrySink()
-    engine = AttemptEngine[WorkOutput](
+    engine = AttemptLifecycle[WorkOutput](
         request=request,
         state_view=_state_view(),
         validator=WorkOutputValidator(_adapter_spec(), _state_view()),
@@ -677,7 +677,7 @@ async def test_telemetry_append_failure_does_not_change_pwc_outcome() -> None:
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     sink = _FailingTelemetrySink()
-    engine = AttemptEngine[WorkOutput](
+    engine = AttemptLifecycle[WorkOutput](
         request=request,
         state_view=_state_view(),
         validator=WorkOutputValidator(_adapter_spec(), _state_view()),
@@ -1107,7 +1107,7 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
         )
     )
     sv = StateView(artifact_name="docs", language=None, files=[], dependencies=[])
-    engine = AttemptEngine[WorkOutput](
+    engine = AttemptLifecycle[WorkOutput](
         request=request,
         state_view=sv,
         validator=WorkOutputValidator(registry.get("document"), sv),
@@ -1214,7 +1214,7 @@ async def test_plan_response_validator_extracts_only_typed_output() -> None:
 
 
 async def test_plan_engine_goes_through_full_pwc_loop() -> None:
-    """AttemptEngine with PlanResponseValidator calls critic and referee for plan output."""
+    """AttemptLifecycle with PlanResponseValidator calls critic and referee for plan output."""
     request = _plan_request()
     plan = PlanResponse(
         tasks=[
@@ -1230,7 +1230,7 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan)]
     )
     registry = _registry_with()
-    engine = AttemptEngine(
+    engine = AttemptLifecycle(
         request=request,
         state_view=_state_view(),
         validator=PlanResponseValidator(),
@@ -1269,7 +1269,7 @@ async def test_decompose_disposition_returns_decompose_status_immediately() -> N
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     sink = _MemoryTelemetrySink()
-    engine = AttemptEngine[WorkOutput](
+    engine = AttemptLifecycle[WorkOutput](
         request=request,
         state_view=_state_view(),
         validator=WorkOutputValidator(_adapter_spec(), _state_view()),
@@ -1340,7 +1340,7 @@ async def test_decompose_disposition_does_not_retry() -> None:
 
 
 async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
-    """AttemptEngine retries plans with the same structured RevisionRequest mechanism."""
+    """AttemptLifecycle retries plans with the same structured RevisionRequest mechanism."""
     request = _plan_request()
     plan = PlanResponse(
         tasks=[
@@ -1359,7 +1359,7 @@ async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
         ]
     )
     registry = _registry_with()
-    engine = AttemptEngine(
+    engine = AttemptLifecycle(
         request=request,
         state_view=_state_view(),
         validator=PlanResponseValidator(),

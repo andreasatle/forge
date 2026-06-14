@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.attempt import AttemptEngine, RunAgentFailed, WorkOutputValidator
+from forge.agents.attempt import AttemptLifecycle, RunAgentFailed, WorkOutputValidator
 from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
@@ -204,7 +204,7 @@ class WorkTaskExecutor:
                 )
 
             validator = WorkOutputValidator(adapter, state_view, worktree_path)
-            engine = AttemptEngine(
+            lifecycle = AttemptLifecycle(
                 request=contract_request,
                 state_view=state_view,
                 validator=validator,
@@ -219,7 +219,7 @@ class WorkTaskExecutor:
             )
 
             try:
-                response = await engine.run(base_prompt)
+                response = await lifecycle.run(base_prompt)
             except RunAgentFailed as e:
                 response = e.response
 

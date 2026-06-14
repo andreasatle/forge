@@ -1,7 +1,7 @@
 """Planning agent that decomposes a northstar goal into concrete work tasks."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.attempt import AttemptEngine, PlanResponseValidator, RunAgentFailed
+from forge.agents.attempt import AttemptLifecycle, PlanResponseValidator, RunAgentFailed
 from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
@@ -137,7 +137,7 @@ class PlannerTaskExecutor:
                 max_retries=max_retries,
             )
 
-        engine = AttemptEngine(
+        lifecycle = AttemptLifecycle(
             request=request,
             state_view=_DUMMY_STATE_VIEW,
             validator=PlanResponseValidator(),
@@ -151,7 +151,7 @@ class PlannerTaskExecutor:
         )
 
         try:
-            return await engine.run(prompt)
+            return await lifecycle.run(prompt)
         except RunAgentFailed as e:
             return e.response
 

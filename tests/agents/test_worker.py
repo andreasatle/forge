@@ -994,7 +994,7 @@ async def test_unknown_tool_in_adapter_returns_failed_response(tmp_path: Path) -
 
 
 async def test_run_agent_failure_propagates_as_failed_response(tmp_path: Path) -> None:
-    """work_agent returns the failed AgentResponse when AttemptEngine raises RunAgentFailed."""
+    """work_agent returns the failed AgentResponse when AttemptLifecycle raises RunAgentFailed."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
