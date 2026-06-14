@@ -666,21 +666,20 @@ def test_prompt_builder_builds_prompt_with_tools():
     """PromptBuilder includes tool-call instructions when tools are configured."""
     registry, _ = _make_registry()
     prompt = PromptBuilder(registry, WorkOutput).build()
-    assert "You have two valid response formats" in prompt
-    assert "tool_call" in prompt
+    assert "two JSON shapes" in prompt
+    assert '"kind":"tool"' in prompt
     assert "do_thing" in prompt
 
 
 def test_prompt_builder_makes_tool_call_protocol_explicit():
-    """PromptBuilder explains kind/name/arguments and shows each tool envelope."""
+    """PromptBuilder explains the tool-call envelope and shows each tool invocation shape."""
     registry, _ = _make_registry()
     prompt = PromptBuilder(registry, WorkOutput).build()
 
-    assert "kind = tool_call" in prompt
-    assert "name = tool name" in prompt
-    assert "arguments = object" in prompt
-    assert '{"kind":"tool_call","name":"do_thing","arguments":{...}}' in prompt
-    assert "Tool names never appear in kind" in prompt
+    assert 'kind="tool"' in prompt
+    assert "put the tool name in name" in prompt
+    assert '{"kind":"tool","name":"do_thing","arguments":{...}}' in prompt
+    assert "Never put a tool name in kind" in prompt
     assert '{"kind":"do_thing"' not in prompt
     assert '"kind": "do_thing"' not in prompt
 
@@ -694,9 +693,9 @@ def test_prompt_builder_builds_prompt_without_tools():
 
 
 def test_prompt_builder_includes_generated_pydantic_schema():
-    """PromptBuilder renders schema from the configured final response model."""
+    """PromptBuilder renders schema from the configured output object model."""
     prompt = PromptBuilder(None, _ExtendedResponse).build()
-    assert "Final response model: _ExtendedResponse" in prompt
+    assert "Output object model: _ExtendedResponse" in prompt
     assert "alpha" in prompt
     assert "beta" in prompt
     assert "Generated JSON schema" in prompt
@@ -755,12 +754,15 @@ def test_prompt_builder_tool_guidance_uses_registered_tools_only():
 def test_prompt_builder_includes_work_output_format_clarification():
     """PromptBuilder includes WorkOutput format rules in the system prompt."""
     prompt = PromptBuilder(None, WorkOutput).build()
-    assert "Format rules:" in prompt
+    assert "Format rules (for the output object):" in prompt
     assert 'kind: must be "work_output"' in prompt
     assert "summary: briefly describe the worktree changes" in prompt
     assert "Dependency changes must be made in package manager files" in prompt
     assert "Do not include complete file contents" in prompt
-    assert "stop calling tools and return final JSON with kind, summary, and base_version" in prompt
+    assert (
+        'return final JSON with kind="final" and output containing kind, summary, and base_version'
+        in prompt
+    )
     assert "base_version set to the version value shown in your task prompt" in prompt
 
 
@@ -768,7 +770,7 @@ def test_prompt_builder_always_shows_work_output_schema_for_work_agents():
     """PromptBuilder includes WorkOutput schema on first turn when always_show_final is True."""
     registry, _ = _make_registry()
     prompt = PromptBuilder(registry, WorkOutput, always_show_final=True).build()
-    assert "Top-level fields: kind, summary, base_version" in prompt
+    assert "Output object fields: kind, summary, base_version" in prompt
     assert '"files"' not in prompt
     assert '"dependencies"' not in prompt
 

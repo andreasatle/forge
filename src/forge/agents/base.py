@@ -199,7 +199,7 @@ class PromptBuilder:
 
     @classmethod
     def render_response_schema(cls, response_type: type[BaseModel]) -> str:
-        """Render final-response schema instructions from the actual Pydantic model."""
+        """Render output object schema instructions from the actual Pydantic model."""
         schema = cls.compact_response_schema(response_type)
         fields = (
             ", ".join(cast(dict[str, object], schema["properties"]).keys())
@@ -207,8 +207,8 @@ class PromptBuilder:
             else ""
         )
         lines = [
-            f"Final response model: {response_type.__name__}",
-            f"Top-level fields: {fields}",
+            f"Output object model: {response_type.__name__}",
+            f"Output object fields: {fields}",
             "Generated JSON schema:",
             json.dumps(schema, indent=2),
         ]
@@ -218,25 +218,32 @@ class PromptBuilder:
         """Build the system prompt string, showing tool and schema sections as appropriate."""
         has_tools = self.tools is not None and bool(self.tools)
         show_final = self.tools is None or self.always_show_final
-        step2 = "2. " if has_tools and show_final else ""
+
         lines: list[str] = [
             "You must respond with JSON only — no markdown, no explanation.",
             "",
         ]
-        if self.tools is not None:
+
+        if self.tools is not None and has_tools:
             lines += [
-                "You have two valid response formats:",
+                "Every response must be exactly one of two JSON shapes:",
                 "",
-                "1. To call a tool — use this exact format:",
-                '{"kind": "tool_call", "name": "<tool_name>", "arguments": {"key": "value"}}',
-                _TOOL_CALL_PROTOCOL_REMINDER,
+                "Shape 1 — tool call:",
+                '{"kind":"tool","name":"<tool_name>","arguments":{"key":"value"}}',
+                "",
+                "Tool-call rules:",
+                '  - Use kind="tool" for every tool call; put the tool name in name.',
+                "  - Never put a tool name in kind.",
+                "  - arguments must match the tool's input schema; use {} when empty.",
+                "  - Only call tools listed below.",
+                "  - If a needed capability is not listed, include the result in your final response instead.",
                 "",
                 "Available tools:",
             ]
             for tool in self.tools:
                 lines.append(f"  {tool.name}: {tool.description}")
                 lines.append(
-                    f'    invocation shape: {{"kind":"tool_call","name":"{tool.name}","arguments":{{...}}}}'
+                    f'    invocation shape: {{"kind":"tool","name":"{tool.name}","arguments":{{...}}}}'
                 )
                 lines.append(
                     f"    input schema: {json.dumps(tool.request_type.model_json_schema())}"
@@ -245,18 +252,13 @@ class PromptBuilder:
                     f"    response schema: {json.dumps(tool.response_type.model_json_schema())}"
                 )
                 lines.append("")
-            lines += [
-                "Tool-use rules:",
-                "  - Only call tools listed above, using exactly those tool names.",
-                '  - Use kind="tool_call" for every tool call; put the selected tool in name.',
-                "  - Never put a tool name in kind.",
-                "  - Do not invent or reference tools that are not listed above.",
-                "  - If a needed capability is not listed, include the requested result in your final JSON response instead.",
-                "",
-            ]
+
         if show_final:
+            shape_label = "Shape 2" if has_tools else "Final response"
             lines += [
-                f"{step2}When you have completed your task, respond with JSON matching this generated schema:",
+                f"{shape_label} — task complete:",
+                '{"kind":"final","output":{<output object — schema below>}}',
+                "",
                 self.render_response_schema(self.final_response_type),
             ]
             if self.final_response_type is WorkOutput:
@@ -264,11 +266,11 @@ class PromptBuilder:
                     "",
                     "Rules for your final response:",
                     "  - Modify files directly in the assigned worktree before responding.",
-                    "  - After edits and tests are complete, stop calling tools and return final JSON with kind, summary, and base_version.",
+                    '  - After edits and tests are complete, stop calling tools and return final JSON with kind="final" and output containing kind, summary, and base_version.',
                     "  - The framework uses git status and git diff as the source of truth.",
                     "  - Do not include complete file contents in your final response.",
                     "",
-                    "Format rules:",
+                    "Format rules (for the output object):",
                     '- kind: must be "work_output".',
                     "- summary: briefly describe the worktree changes you made.",
                     "- Dependency changes must be made in package manager files in the worktree.",

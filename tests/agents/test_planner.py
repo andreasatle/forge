@@ -327,7 +327,7 @@ async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
     messages = provider.chat.call_args.args[0]
     system_prompt = messages[0]["content"]
     user_prompt = messages[1]["content"]
-    assert "Final response model: PlanResponse" in system_prompt
+    assert "Output object model: PlanResponse" in system_prompt
     assert '"tasks": [' not in user_prompt
     assert '"kind": "plan"' not in user_prompt
     assert "Respond with ONLY a JSON object" not in user_prompt

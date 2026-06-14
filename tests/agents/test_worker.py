@@ -430,7 +430,7 @@ async def test_worker_prompt_leaves_generic_mechanics_to_base(tmp_path: Path) ->
     system_prompt = PromptBuilder(tools, WorkOutput).build()
     schema_system_prompt = PromptBuilder(tools, WorkOutput, always_show_final=True).build()
 
-    assert "tool_call" in system_prompt
+    assert '"kind":"tool"' in system_prompt
     assert "Generated JSON schema" in schema_system_prompt
     assert "JSON only" in system_prompt
     assert "tool_call" not in user_prompt
