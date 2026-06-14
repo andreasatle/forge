@@ -1,8 +1,12 @@
 """Tests for AttemptEngine, WorkOutputValidator, and PlanResponseValidator."""
 
+import subprocess
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.attempt import (
@@ -1390,3 +1394,97 @@ async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
     assert "REQUIRED REVISION" in prompts[1]
     assert "Revise your plan now." in prompts[1]
     assert "1. Required change: add error handling" in prompts[1]
+
+
+# ── WorkOutputValidator.render_for_critic worktree evidence tests ─────────────
+
+
+@pytest.fixture()
+def git_worktree(tmp_path: Path) -> Path:
+    """Minimal git repo with one initial commit for render_for_critic evidence tests."""
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@forge.local"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Forge Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    (tmp_path / ".gitkeep").write_text("")
+    subprocess.run(["git", "add", ".gitkeep"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True)
+    return tmp_path
+
+
+async def test_render_for_critic_includes_untracked_text_file_content(
+    git_worktree: Path,
+) -> None:
+    """A newly-created untracked file appears in critic evidence with its full content."""
+    (git_worktree / "src").mkdir()
+    (git_worktree / "src" / "scraper.py").write_text("class WebScraper:\n    pass\n")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Implemented WebScraper."))
+
+    assert "src/scraper.py" in text
+    assert "class WebScraper:" in text
+
+
+async def test_render_for_critic_includes_multiple_untracked_files(
+    git_worktree: Path,
+) -> None:
+    """All untracked text files in the worktree appear in the critic evidence."""
+    (git_worktree / "src").mkdir()
+    (git_worktree / "tests").mkdir()
+    (git_worktree / "src" / "scraper.py").write_text("class WebScraper:\n    pass\n")
+    (git_worktree / "tests" / "test_scraper.py").write_text("def test_scraper():\n    pass\n")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Created scraper and tests."))
+
+    assert "class WebScraper:" in text
+    assert "def test_scraper():" in text
+
+
+async def test_render_for_critic_excludes_binary_untracked_files(
+    git_worktree: Path,
+) -> None:
+    """Binary untracked files are excluded from the critic evidence."""
+    (git_worktree / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Added image."))
+
+    assert "New file: image.png" not in text
+
+
+async def test_render_for_critic_excludes_oversized_untracked_files(
+    git_worktree: Path,
+) -> None:
+    """Untracked files larger than 64 KB are excluded from the critic evidence."""
+    (git_worktree / "huge.txt").write_text("x" * (65 * 1024))
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Generated huge file."))
+
+    assert "New file: huge.txt" not in text
+
+
+async def test_render_for_critic_without_worktree_omits_git_and_untracked_sections() -> None:
+    """When worktree_path is None, git status, git diff, and untracked sections are omitted."""
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=None)
+    text = validator.render_for_critic(WorkOutput(summary="Did something."))
+
+    assert "Git status:" not in text
+    assert "Git diff:" not in text
+    assert "New file:" not in text

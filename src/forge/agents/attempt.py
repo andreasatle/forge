@@ -34,6 +34,13 @@ _logger = logging.getLogger(__name__)
 T = TypeVar("T")
 _VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"
 
+_MAX_UNTRACKED_BYTES = 64 * 1024
+_UNTRACKED_NOISE_DIRS = frozenset(
+    {".git", "__pycache__", "node_modules", ".pytest_cache", ".ruff_cache", ".venv"}
+)
+_UNTRACKED_NOISE_SUFFIXES = frozenset({".pyc", ".pyo", ".pyd", ".lock"})
+_UNTRACKED_NOISE_NAMES = frozenset({"CACHEDIR.TAG", "pyvenv.cfg"})
+
 
 @runtime_checkable
 class OutputValidator(Protocol[T]):
@@ -95,6 +102,10 @@ class WorkOutputValidator:
         if self._worktree_path is not None:
             lines.extend(["", "Git status:", "```", self._git_output("status", "--short"), "```"])
             lines.extend(["", "Git diff:", "```", self._git_output("diff", "--", "."), "```"])
+            for path_str in self._untracked_paths():
+                content = self._read_untracked(path_str)
+                if content is not None:
+                    lines += [f"\nNew file: {path_str}", "```", content, "```"]
         if self._state_view.files:
             if lines:
                 lines.append("")
@@ -113,6 +124,43 @@ class WorkOutputValidator:
             text=True,
         )
         return result.stdout.strip() or "(none)"
+
+    def _untracked_paths(self) -> list[str]:
+        """Return paths of untracked non-noise files via git ls-files."""
+        if self._worktree_path is None:
+            return []
+        result = run_git(
+            ["ls-files", "--others", "--exclude-standard"],
+            cwd=self._worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        paths: list[str] = []
+        for raw in result.stdout.splitlines():
+            path_str = raw.strip()
+            if not path_str:
+                continue
+            p = Path(path_str)
+            if (
+                any(part in _UNTRACKED_NOISE_DIRS for part in p.parts)
+                or p.name in _UNTRACKED_NOISE_NAMES
+                or p.suffix in _UNTRACKED_NOISE_SUFFIXES
+            ):
+                continue
+            paths.append(path_str)
+        return paths
+
+    def _read_untracked(self, path_str: str) -> str | None:
+        """Return UTF-8 content of an untracked file if it is small and text-readable."""
+        if self._worktree_path is None:
+            return None
+        full = self._worktree_path / path_str
+        if not full.is_file() or full.stat().st_size > _MAX_UNTRACKED_BYTES:
+            return None
+        try:
+            return full.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            return None
 
     def work_noun(self) -> str:
         """Return the adapter's work noun."""
