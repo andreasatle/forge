@@ -1200,6 +1200,123 @@ async def test_document_adapter_prompt_instructs_write_file_and_json_only_respon
     assert "summary should briefly describe" in user_prompt
 
 
+async def test_document_adapter_prompt_includes_concrete_work_output_example(
+    tmp_path: Path,
+) -> None:
+    """document.yaml prompt includes a concrete WorkOutput example with the actual base_version value."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("docs")
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write API documentation",
+            success_condition="API docs are complete",
+            adapter="document",
+            artifact="docs",
+        ),
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    state_view = StateView(
+        artifact_name="docs", language=None, files=[], dependencies=[], version=0
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="Created README.md."),
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            state_view,
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert '"kind":"work_output"' in user_prompt
+    assert '"base_version":"0"' in user_prompt
+    assert '"..."' not in user_prompt
+
+
+async def test_document_adapter_prompt_prohibits_document_content_in_final_response(
+    tmp_path: Path,
+) -> None:
+    """document.yaml explicitly tells the model not to put document/README content in the final response."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("docs")
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write a README",
+            success_condition="README is written",
+            adapter="document",
+            artifact="docs",
+        ),
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="Created README.md."),
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view("docs"),
+        )
+
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "Never put README contents" in user_prompt
+    assert "do not include markdown documentation in the final response" in user_prompt
+    assert "metadata only" in user_prompt
+
+
+async def test_version_zero_prompt_has_no_sha_contradiction(tmp_path: Path) -> None:
+    """When version_sha is absent, neither the system nor user prompt claims a commit SHA was shown."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    state_view = StateView(
+        artifact_name="codebase",
+        language=None,
+        files=[],
+        dependencies=[],
+        version=0,
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(request, _registry(), workspace, LanguageRegistry(), provider, state_view)
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    user_prompt = mock_run_agent.call_args.args[3]
+    system_prompt = PromptBuilder(tools, WorkOutput, always_show_final=True).build()
+    assert "current commit SHA shown above" not in system_prompt
+    assert "current commit SHA shown above" not in user_prompt
+    assert "Base commit:" not in user_prompt
+    assert "You MUST set base_version to 0 in your response." in user_prompt
+
+
 async def test_worker_uses_work_output_as_final_response_type(tmp_path: Path) -> None:
     """WorkTaskExecutor passes final_response_type=WorkOutput to run_agent."""
     workspace = Workspace(tmp_path / "ws")

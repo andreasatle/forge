@@ -698,7 +698,7 @@ def test_prompt_builder_includes_work_output_format_clarification():
     assert "Dependency changes must be made in package manager files" in prompt
     assert "Do not include complete file contents" in prompt
     assert "stop calling tools and return final JSON with kind, summary, and base_version" in prompt
-    assert "base_version set to the current commit SHA" in prompt
+    assert "base_version set to the version value shown in your task prompt" in prompt
 
 
 def test_prompt_builder_always_shows_work_output_schema_for_work_agents():

@@ -15,8 +15,15 @@ prompt_template: |
   Example files: README.md, docs/index.md, USAGE.md, API.md
   Write complete, detailed content — do not truncate.
 
-  IMPORTANT:
-  - Use write_file to create or update documentation files in the worktree
-  - Your final WorkOutput is completion metadata only; do not include markdown documentation in the final response
-  - Your final response must be JSON only: {{"kind":"work_output","summary":"...","base_version":"..."}}
+  IMPORTANT — two-phase workflow:
+  Phase 1 — Content: use write_file to write all documentation files to the worktree.
+  Phase 2 — Metadata: when all files are written, stop using tools and return final JSON.
+  Your final WorkOutput is completion metadata only; do not include markdown documentation in the final response.
+  Never put README contents, markdown headings, or document text in the final response.
+  Your final response must be JSON only.
+
+  Example final response after writing documentation files to the worktree:
+  {{"kind":"work_output","summary":"Created README.md with project overview and docs/API.md with endpoint reference.","base_version":"{base_version}"}}
+
   - summary should briefly describe the documentation files you created or updated
+  - do not include document contents in the summary or anywhere in the final response

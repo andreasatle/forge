@@ -240,7 +240,7 @@ class PromptBuilder:
                     '- kind: must be "work_output".',
                     "- summary: briefly describe the worktree changes you made.",
                     "- Dependency changes must be made in package manager files in the worktree.",
-                    "IMPORTANT: your response must include base_version set to the current commit SHA shown above.",
+                    "IMPORTANT: your response must include base_version set to the version value shown in your task prompt.",
                 ]
         return "\n".join(lines)
 
