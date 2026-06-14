@@ -200,6 +200,69 @@ def test_response_parser_rejects_tool_name_in_kind():
     assert '{"kind":"tool_call","name":"run_tests","arguments":{}}' in message
 
 
+def _make_replace_in_file_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="replace_in_file",
+            description="replaces text in a file",
+            request_type=_DoThingRequest,
+            response_type=_DoThingResponse,
+            fn=AsyncMock(return_value=_DoThingResponse(result="replaced")),
+        )
+    )
+    return registry
+
+
+def test_response_parser_normalizes_shorthand_tool_call_with_arguments():
+    """ResponseParser normalizes shorthand kind=<tool_name> to ToolCallRequest when tool is registered."""
+    registry = _make_replace_in_file_registry()
+    raw = '{"kind": "replace_in_file", "arguments": {"path": "foo.py", "old": "x", "new": "y"}}'
+    result = ResponseParser(WorkOutput, registry).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.kind == AgentMessageKind.TOOL_CALL
+    assert result.name == "replace_in_file"
+    assert result.arguments == {"path": "foo.py", "old": "x", "new": "y"}
+
+
+def test_response_parser_normalizes_shorthand_tool_call_missing_arguments_defaults_to_empty():
+    """ResponseParser defaults arguments to {} when shorthand tool call has no arguments key."""
+    registry = _make_replace_in_file_registry()
+    raw = '{"kind": "replace_in_file"}'
+    result = ResponseParser(WorkOutput, registry).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.name == "replace_in_file"
+    assert result.arguments == {}
+
+
+def test_response_parser_rejects_unknown_kind_even_with_tools_configured():
+    """ResponseParser rejects unknown kind values even when tools are configured."""
+    registry = _make_replace_in_file_registry()
+    raw = '{"kind": "unknown_tool"}'
+    with pytest.raises(ValueError):
+        ResponseParser(WorkOutput, registry).parse(raw)
+
+
+def test_response_parser_correct_tool_call_protocol_unchanged_with_tools_configured():
+    """ResponseParser correctly parses the standard tool_call protocol when tools are configured."""
+    registry = _make_replace_in_file_registry()
+    raw = '{"kind": "tool_call", "name": "replace_in_file", "arguments": {}}'
+    result = ResponseParser(WorkOutput, registry).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.kind == AgentMessageKind.TOOL_CALL
+    assert result.name == "replace_in_file"
+
+
+def test_response_parser_final_work_output_parsing_unchanged_with_tools_configured():
+    """ResponseParser returns WorkOutput for valid final JSON even when tools are configured."""
+    registry = _make_replace_in_file_registry()
+    raw = '{"kind": "work_output", "summary": "edits applied", "base_version": "abc123"}'
+    result = ResponseParser(WorkOutput, registry).parse(raw)
+    assert isinstance(result, WorkOutput)
+    assert result.summary == "edits applied"
+    assert result.base_version == "abc123"
+
+
 def test_response_parser_correctly_parses_plan_response_as_final_response():
     """ResponseParser returns PlanResponse when final_response_type is PlanResponse."""
     raw = '{"kind": "plan", "tasks": []}'

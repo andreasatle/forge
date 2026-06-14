@@ -288,8 +288,14 @@ def build_system_prompt(
 class ResponseParser:
     """Parse raw model text into either a tool call or the final response model."""
 
-    def __init__(self, final_response_type: type[BaseModel]) -> None:
+    def __init__(
+        self, final_response_type: type[BaseModel], tools: ToolRegistry | None = None
+    ) -> None:
         self.final_response_type = final_response_type
+        self.tools = tools
+        self._registered_tool_names: frozenset[str] = (
+            frozenset(t.name for t in tools) if tools is not None else frozenset()
+        )
 
     def parse(self, raw: str) -> ToolCallRequest | BaseModel:
         """Parse raw LLM text into a ToolCallRequest or the final response model."""
@@ -307,6 +313,22 @@ class ResponseParser:
                 return ToolCallRequest.model_validate(data_dict)
             except Exception as e:
                 raise ValueError(f"invalid tool_call format: {e}") from e
+        # Tolerant normalization: {"kind": "<tool_name>", ...} → ToolCallRequest
+        if (
+            data_dict is not None
+            and self.tools is not None
+            and isinstance(data_dict.get("kind"), str)
+            and cast(str, data_dict["kind"]) in self._registered_tool_names
+            and "name" not in data_dict
+        ):
+            shorthand_name = cast(str, data_dict["kind"])
+            raw_args = data_dict.get("arguments", {})
+            arguments = cast(dict[str, object], raw_args) if isinstance(raw_args, dict) else {}
+            return ToolCallRequest(
+                kind=AgentMessageKind.TOOL_CALL,
+                name=shorthand_name,
+                arguments=arguments,
+            )
         try:
             return self.final_response_type.model_validate(data)
         except Exception as e:
@@ -322,7 +344,7 @@ def parse_response(
     raw: str, tools: ToolRegistry | None, final_response_type: type[BaseModel]
 ) -> ToolCallRequest | BaseModel:
     """Parse a raw LLM response into a tool call or final response model."""
-    return ResponseParser(final_response_type).parse(raw)
+    return ResponseParser(final_response_type, tools).parse(raw)
 
 
 class TrackedToolExecutor:
@@ -411,7 +433,7 @@ class ToolLoop:
             final_response_type,
             always_show_final=request.agent_type == AgentType.WORK,
         )
-        self.response_parser = ResponseParser(final_response_type)
+        self.response_parser = ResponseParser(final_response_type, tools)
         self.tool_executor = TrackedToolExecutor(tools)
 
     async def run(self) -> AgentResponse:
