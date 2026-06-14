@@ -247,12 +247,20 @@ class HtmlTraceRenderer:
                 summary += f" work_output={work_output_text(work_out)}"
             parts = [f'<p class="event-body">{self._e(summary)}</p>']
             for diag in list_value(data.get("diagnostics")):
-                excerpt = str_value(dict_value(diag).get("raw_response_excerpt"))
+                diag_dict = dict_value(diag)
+                excerpt = str_value(diag_dict.get("raw_response_excerpt"))
                 if excerpt:
                     parts.append(
                         f"<details><summary>raw_response_excerpt</summary>"
                         f"<pre>{self._e(excerpt)}</pre></details>"
                     )
+                if str_value(diag_dict.get("kind")) == "max_iterations":
+                    msg = str_value(diag_dict.get("message"))
+                    if msg:
+                        parts.append(
+                            f"<details><summary>max_iterations diagnostic</summary>"
+                            f"<pre>{self._e(msg)}</pre></details>"
+                        )
             return "".join(parts)
         if event_type == "critic.finding.parsed":
             return self._disposition(event, "critic_finding")

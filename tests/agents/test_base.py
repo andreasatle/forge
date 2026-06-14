@@ -1109,6 +1109,118 @@ async def test_tool_loop_with_tests_write_file_alone_does_not_finalize(
     assert provider.chat.call_count == 3
 
 
+async def test_tool_loop_max_iterations_preserves_bounded_tool_call_history():
+    """ToolLoop max-iteration failure records bounded recent tool call names in diagnostics."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=3,
+        max_retries=0,
+    ).run()
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    diag = response.diagnostics[0]
+    assert diag.kind == "max_iterations"
+    assert "do_thing" in diag.message
+    assert "last_tool_calls=" in diag.message
+
+
+async def test_tool_loop_max_iterations_preserves_last_raw_response_excerpt():
+    """ToolLoop max-iteration failure captures the last raw assistant response in the diagnostic."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    tool_call_raw = '{"kind": "tool_call", "name": "do_thing", "arguments": {}}'
+    provider = _mock_provider(tool_call_raw)
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.diagnostics
+    diag = response.diagnostics[0]
+    assert diag.raw_response_excerpt is not None
+    assert "tool_call" in diag.raw_response_excerpt
+
+
+async def test_tool_loop_max_iterations_records_loop_state_flags():
+    """Max-iteration diagnostic includes ran_tests_and_passed, final_response_only, has_run_tests, mutating_tool_succeeded."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.diagnostics
+    diag = response.diagnostics[0]
+    assert "ran_tests_and_passed=False" in diag.message
+    assert "final_response_only=False" in diag.message
+    assert "has_run_tests=False" in diag.message
+    assert "mutating_tool_succeeded=False" in diag.message
+
+
+async def test_tool_loop_max_iterations_bounded_to_five_most_recent():
+    """Max-iteration diagnostic tool call list is bounded to the 5 most recent calls."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=7,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    diag = response.diagnostics[0]
+    # 7 calls were made but only the last 5 should appear
+    assert diag.message.count("do_thing") == 5
+
+
+async def test_tool_loop_successful_run_has_no_diagnostics():
+    """Normal successful ToolLoop run produces no diagnostics."""
+    request = _work_request()
+    provider = _mock_provider(_NONEMPTY_WORK_OUTPUT)
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=None,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert not response.diagnostics
+
+
 async def test_tool_loop_with_tests_failed_tests_do_not_finalize(
     tmp_path: Path,
 ) -> None:

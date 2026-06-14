@@ -36,6 +36,7 @@ class ToolError(Exception):
 
 _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS = 4000
 _MAX_BAD_VALUE_CHARS = 300
+_MAX_RECENT_TOOL_CALLS = 5
 _KNOWN_PROTOCOL_KINDS = {kind.value for kind in AgentMessageKind}
 _MUTATING_TOOL_NAMES = frozenset({"write_file", "replace_in_file"})
 _TOOL_CALL_PROTOCOL_REMINDER = "\n".join(
@@ -115,6 +116,33 @@ def _invalid_response_diagnostic(error: Exception, raw: str) -> AgentDiagnostic:
         validation_path=first_path,
         bad_value_excerpt=first_bad_value,
         raw_response_excerpt=_truncate_text(raw, _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS),
+    )
+
+
+def _max_iterations_diagnostic(
+    recent_tool_calls: list[str],
+    last_raw: str,
+    *,
+    ran_tests_and_passed: bool,
+    final_response_only: bool,
+    has_run_tests: bool,
+    mutating_tool_succeeded: bool,
+) -> AgentDiagnostic:
+    """Build a bounded diagnostic for a max-iterations failure."""
+    tool_summary = ", ".join(recent_tool_calls) if recent_tool_calls else "(none)"
+    message = (
+        f"last_tool_calls=[{tool_summary}] "
+        f"ran_tests_and_passed={ran_tests_and_passed} "
+        f"final_response_only={final_response_only} "
+        f"has_run_tests={has_run_tests} "
+        f"mutating_tool_succeeded={mutating_tool_succeeded}"
+    )
+    return AgentDiagnostic(
+        kind="max_iterations",
+        message=message,
+        raw_response_excerpt=_truncate_text(last_raw, _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS)
+        if last_raw
+        else None,
     )
 
 
@@ -402,8 +430,11 @@ class ToolLoop:
         any_tool_called = False
         ran_tests_and_passed = False
         final_response_only = False
+        mutating_tool_succeeded = False
         retry_count = 0
         invalid_response_diagnostics: list[AgentDiagnostic] = []
+        recent_tool_calls: list[str] = []
+        last_raw: str = ""
 
         for _ in range(self.max_tool_iterations):
             active_builder = (
@@ -416,6 +447,7 @@ class ToolLoop:
                 "content": active_builder.build(),
             }
             raw = await self.provider.chat(messages)
+            last_raw = raw
 
             try:
                 parsed = self.response_parser.parse(raw)
@@ -475,6 +507,10 @@ class ToolLoop:
             if isinstance(parsed, ToolCallRequest):
                 tool_response = await self.tool_executor.execute(parsed)
                 any_tool_called = True
+                recent_tool_calls.append(parsed.name)
+                recent_tool_calls = recent_tool_calls[-_MAX_RECENT_TOOL_CALLS:]
+                if parsed.name in _MUTATING_TOOL_NAMES and tool_response.success:
+                    mutating_tool_succeeded = True
                 coercion: str | None = None
                 if (
                     tool_response.name == "run_tests"
@@ -512,7 +548,27 @@ class ToolLoop:
                 ran_tests_and_passed=ran_tests_and_passed,
             )
 
-        raise RuntimeError(f"agent loop exceeded {self.max_tool_iterations} iterations")
+        diagnostic = _max_iterations_diagnostic(
+            recent_tool_calls,
+            last_raw,
+            ran_tests_and_passed=ran_tests_and_passed,
+            final_response_only=final_response_only,
+            has_run_tests=has_run_tests,
+            mutating_tool_succeeded=mutating_tool_succeeded,
+        )
+        _logger.debug(
+            "tool loop exhausted after %d iterations: %s",
+            self.max_tool_iterations,
+            diagnostic.message,
+        )
+        return AgentResponse(
+            request_id=self.request.id,
+            status=ResponseStatus.FAILED,
+            error=f"agent loop exceeded {self.max_tool_iterations} iterations",
+            failure_kind=FailureKind.MAX_ITERATIONS,
+            ran_tests_and_passed=ran_tests_and_passed,
+            diagnostics=[diagnostic],
+        )
 
 
 async def run_agent[S: BaseModel](

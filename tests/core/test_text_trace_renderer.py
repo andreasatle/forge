@@ -388,3 +388,71 @@ def test_render_run_truncates_long_raw_response_excerpt() -> None:
     assert "raw_response:" in text
     raw_line = next(line for line in text.splitlines() if "raw_response:" in line)
     assert len(raw_line) < 400
+
+
+# ---------------------------------------------------------------------------
+# render_run — max_iterations diagnostic
+# ---------------------------------------------------------------------------
+
+
+def _failed_producer_event_with_max_iterations_diag(node_id: str) -> dict[str, object]:
+    return {
+        "run_id": RUN_1,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "node_id": node_id,
+        "agent_type": "work",
+        "attempt_number": 1,
+        "event_type": "producer.response.parsed",
+        "status": "failed",
+        "summary": "producer returned failed",
+        "data": {
+            "status": "failed",
+            "output_type": None,
+            "failure_kind": "max_iterations",
+            "error": "agent loop exceeded 25 iterations",
+            "diagnostics": [
+                {
+                    "kind": "max_iterations",
+                    "message": (
+                        "last_tool_calls=[do_thing, do_thing] "
+                        "ran_tests_and_passed=False "
+                        "final_response_only=False "
+                        "has_run_tests=False "
+                        "mutating_tool_succeeded=False"
+                    ),
+                    "raw_response_excerpt": '{"kind":"tool_call","name":"do_thing","arguments":{}}',
+                }
+            ],
+        },
+    }
+
+
+def test_render_run_shows_max_iterations_diagnostic_summary() -> None:
+    """Max-iterations failure shows iteration summary line in the timeline."""
+    run = _make_run(RUN_1, events=[_failed_producer_event_with_max_iterations_diag(NODE_1)])
+    text = TextTraceRenderer().render_run(run)
+    assert "iterations:" in text
+    assert "do_thing" in text
+    assert "ran_tests_and_passed=False" in text
+
+
+def test_render_run_max_iterations_also_shows_raw_response_excerpt() -> None:
+    """Max-iterations failure shows both the iteration summary and the last raw response excerpt."""
+    run = _make_run(RUN_1, events=[_failed_producer_event_with_max_iterations_diag(NODE_1)])
+    text = TextTraceRenderer().render_run(run)
+    assert "iterations:" in text
+    assert "raw_response:" in text
+    assert "tool_call" in text
+
+
+def test_render_run_invalid_json_diagnostic_still_renders_excerpt() -> None:
+    """invalid_structured_output diagnostics still show raw_response: in the timeline."""
+    excerpt = "this is markdown ## not json"
+    run = _make_run(
+        RUN_1,
+        events=[_failed_producer_event_with_excerpt(NODE_1, excerpt)],
+    )
+    text = TextTraceRenderer().render_run(run)
+    assert "raw_response:" in text
+    assert "this is markdown" in text
+    assert "iterations:" not in text
