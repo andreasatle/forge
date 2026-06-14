@@ -26,6 +26,7 @@ from forge.core.models import (
     WorkSpec,
     render_agent_contract,
 )
+from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.tools.registry import ToolRegistry
@@ -178,11 +179,14 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
             ),
         ]
     )
+    ss = MagicMock(spec=StateService)
+    ss.apply_work_output = AsyncMock()
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
+        state_service=ss,
     )
 
     response = await executor.run(request, _state_view())
@@ -193,8 +197,7 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
         summary="Wrote src/main.py in the worktree.",
         base_version="0",
     )
-    worktree_path = workspace.worktree_path("codebase", str(request.id))
-    assert (worktree_path / "src/main.py").read_text() == "print(42)\n"
+    ss.apply_work_output.assert_called_once()
 
 
 async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:
@@ -1139,11 +1142,14 @@ async def test_document_adapter_writes_file_then_returns_metadata_only_work_outp
             ),
         ]
     )
+    ss = MagicMock(spec=StateService)
+    ss.apply_work_output = AsyncMock()
     executor = WorkTaskExecutor(
         registry=adapter_registry,
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
+        state_service=ss,
     )
 
     response = await executor.run(request, _state_view("docs"))
@@ -1152,8 +1158,7 @@ async def test_document_adapter_writes_file_then_returns_metadata_only_work_outp
     output = response.output
     assert isinstance(output, WorkOutput)
     assert output.summary == "Created README.md with API documentation."
-    worktree_path = workspace.worktree_path("docs", str(request.id))
-    assert (worktree_path / "README.md").exists()
+    ss.apply_work_output.assert_called_once()
     assert "# API Docs" not in output.summary
 
 
@@ -1337,3 +1342,219 @@ async def test_worker_uses_work_output_as_final_response_type(tmp_path: Path) ->
 
     kwargs = mock_run_agent.call_args.kwargs
     assert kwargs.get("final_response_type") is WorkOutput
+
+
+# --- Worktree ownership tests ---
+
+
+async def test_worktree_removed_after_successful_integration(tmp_path: Path) -> None:
+    """WorkTaskExecutor removes the worktree after successful integration."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    removed: list[tuple[str, str]] = []
+    real_remove = workspace.remove_worktree
+
+    def tracking_remove(artifact: str, node_id: str) -> None:
+        removed.append((artifact, node_id))
+        real_remove(artifact, node_id)
+
+    workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
+    ss = MagicMock(spec=StateService)
+    ss.apply_work_output = AsyncMock()
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+        state_service=ss,
+    )
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="done"),
+        )
+        await executor.run(request, _state_view())
+
+    assert len(removed) == 1
+    assert removed[0][0] == "codebase"
+
+
+async def test_worktree_removed_after_integration_failure(tmp_path: Path) -> None:
+    """WorkTaskExecutor removes the worktree even when integration raises."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    removed: list[tuple[str, str]] = []
+    real_remove = workspace.remove_worktree
+
+    def tracking_remove(artifact: str, node_id: str) -> None:
+        removed.append((artifact, node_id))
+        real_remove(artifact, node_id)
+
+    workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
+    ss = MagicMock(spec=StateService)
+    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("tests failed"))
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+        state_service=ss,
+    )
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="done"),
+        )
+        response = await executor.run(request, _state_view())
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
+    assert len(removed) == 1
+
+
+async def test_worktree_removed_after_engine_exception(tmp_path: Path) -> None:
+    """WorkTaskExecutor removes the worktree even when the engine raises unexpectedly."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    removed: list[tuple[str, str]] = []
+    real_remove = workspace.remove_worktree
+
+    def tracking_remove(artifact: str, node_id: str) -> None:
+        removed.append((artifact, node_id))
+        real_remove(artifact, node_id)
+
+    workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+    )
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.side_effect = Exception("unexpected crash")
+        try:
+            await executor.run(request, _state_view())
+        except Exception:
+            pass
+
+    assert len(removed) == 1
+
+
+async def test_worktree_removed_when_no_changes_produced(tmp_path: Path) -> None:
+    """WorkTaskExecutor removes the worktree on the ALREADY_DONE path (no changes)."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="inspect code",
+            success_condition="report changes",
+            adapter="readonly",
+            artifact="codebase",
+        ),
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    removed: list[tuple[str, str]] = []
+    real_remove = workspace.remove_worktree
+
+    def tracking_remove(artifact: str, node_id: str) -> None:
+        removed.append((artifact, node_id))
+        real_remove(artifact, node_id)
+
+    workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
+    registry = AdapterRegistry()
+    registry.register(
+        AdapterSpec(
+            name="readonly",
+            description="read-only adapter",
+            tools=["write_file", "replace_in_file"],
+            prompt_template="do: {objective}\nsuccess: {success_condition}",
+            requires_nonempty_output=False,
+        )
+    )
+    executor = WorkTaskExecutor(
+        registry=registry,
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+    )
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.worker._worktree_has_changes", return_value=False),
+    ):
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        response = await executor.run(request, _state_view())
+
+    assert response.status == ResponseStatus.ALREADY_DONE
+    assert len(removed) == 1
+
+
+async def test_state_service_never_removes_worktree(tmp_path: Path) -> None:
+    """StateService.apply_work_output does not call workspace.remove_worktree."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _request()
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    removed: list[tuple[str, str]] = []
+    real_remove = workspace.remove_worktree
+
+    def tracking_remove(artifact: str, node_id: str) -> None:
+        removed.append((artifact, node_id))
+        real_remove(artifact, node_id)
+
+    workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
+    ss = MagicMock(spec=StateService)
+    ss.apply_work_output = AsyncMock()
+    executor = WorkTaskExecutor(
+        registry=_registry(),
+        workspace=workspace,
+        language_registry=LanguageRegistry(),
+        provider=provider,
+        state_service=ss,
+    )
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="done"),
+        )
+        await executor.run(request, _state_view())
+
+    ss.apply_work_output.assert_called_once()
+    assert len(removed) == 1

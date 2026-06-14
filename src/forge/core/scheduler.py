@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import subprocess
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -22,11 +21,9 @@ from forge.core.models import (
     RequestSource,
     ResponseStatus,
     SchedulerState,
-    WorkOutput,
     WorkSpec,
 )
 from forge.core.plan_expansion import PlanExpansionBuilder
-from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
@@ -102,12 +99,10 @@ class SchedulerConsequenceHandler:
 
     def __init__(
         self,
-        state_services: dict[str, StateService] | None = None,
         callbacks: SchedulerCallbacks | None = None,
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
     ) -> None:
-        self._state_services = state_services
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
@@ -128,7 +123,7 @@ class SchedulerConsequenceHandler:
             plan_expansion = self._build_plan_expansion(node, response)
             return self._handle_accepted_plan(state, updated, plan_expansion)
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_WORK:
-            return await self._handle_accepted_work(state, current, updated)
+            return self._handle_accepted_work(state, updated)
         if outcome.kind == TerminalOutcomeKind.DECOMPOSITION_REQUEST:
             return self._handle_decompose(state, updated)
 
@@ -161,89 +156,13 @@ class SchedulerConsequenceHandler:
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
 
-    async def _handle_accepted_work(
+    def _handle_accepted_work(
         self,
         state: SchedulerState,
-        current: DAGNode,
         updated: DAGNode,
     ) -> SchedulerState:
-        integration_failed = False
-        response = updated.response
-        if response is None:
-            return self._handle_failed(state, updated)
-
-        if (
-            updated.request.agent_type == AgentType.WORK
-            and self._state_services is not None
-            and response.status != ResponseStatus.ALREADY_DONE
-        ):
-            updated, integration_failed = await self._integrate_work_node(current, updated)
-
-        if integration_failed:
-            failed_node = updated.with_state(NodeState.FAILED)
-            state = state.update_node(failed_node)
-            return self._handle_failed(state, failed_node, TerminalOutcomeKind.INTEGRATION_FAILURE)
-
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
-
-    async def _integrate_work_node(
-        self,
-        current: DAGNode,
-        updated: DAGNode,
-    ) -> tuple[DAGNode, bool]:
-        response = updated.response
-        if response is None:
-            return updated, False
-
-        spec = updated.request.spec
-        if not isinstance(spec, WorkSpec):
-            return updated, False
-
-        ss = self._state_services.get(spec.artifact) if self._state_services is not None else None
-        if ss is None:
-            return updated, False
-
-        work_output = response.output if isinstance(response.output, WorkOutput) else None
-        if work_output is None:
-            return (
-                current.with_response(
-                    AgentResponse(
-                        request_id=updated.request.id,
-                        status=ResponseStatus.FAILED,
-                        error="completed without WorkOutput completion metadata",
-                    )
-                ),
-                True,
-            )
-        if not work_output.summary.strip():
-            return (
-                current.with_response(
-                    AgentResponse(
-                        request_id=updated.request.id,
-                        status=ResponseStatus.FAILED,
-                        error="completed with empty WorkOutput completion metadata",
-                    )
-                ),
-                True,
-            )
-
-        try:
-            await ss.apply_work_output(work_output, str(updated.request.id))
-        except (RuntimeError, subprocess.CalledProcessError) as e:
-            return (
-                current.with_response(
-                    AgentResponse(
-                        request_id=updated.request.id,
-                        status=ResponseStatus.FAILED,
-                        failure_kind=FailureKind.INTEGRATION_FAILED,
-                        error=f"integration failed: {e}",
-                    )
-                ),
-                True,
-            )
-
-        return updated, False
 
     def _handle_decompose(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
         spec = updated.request.spec
@@ -383,7 +302,6 @@ class Scheduler:
     def __init__(
         self,
         runner: AgentRunner,
-        state_services: dict[str, StateService] | None = None,
         callbacks: SchedulerCallbacks | None = None,
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
@@ -391,7 +309,6 @@ class Scheduler:
         self._runner = runner
         self._callbacks = callbacks or SchedulerCallbacks()
         self._consequences = SchedulerConsequenceHandler(
-            state_services=state_services,
             callbacks=self._callbacks,
             telemetry_sink=telemetry_sink,
             run_id=run_id,

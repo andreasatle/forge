@@ -61,6 +61,7 @@ def make_work_handler(
 
     async def work_handler(request: AgentRequest) -> AgentResponse:
         spec = request.spec
+        ss: StateService | None = None
         if isinstance(spec, WorkSpec):
             ss = (state_services or {}).get(spec.artifact)
             if ss is not None:
@@ -84,6 +85,7 @@ def make_work_handler(
             telemetry_sink=telemetry_sink,
             max_attempts=max_attempts,
             integration_revision=request.integration_revision,
+            state_service=ss,
         )
 
     return work_handler

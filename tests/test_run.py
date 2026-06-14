@@ -124,6 +124,7 @@ async def test_start_wires_nested_planner_and_worker_models(
         max_attempts: int = 3,
         telemetry_sink: TelemetrySink | None = None,
         integration_revision: object = None,
+        state_service: object = None,
     ) -> AgentResponse:
         assert critic_provider is not None
         assert referee_provider is not None
@@ -137,7 +138,6 @@ async def test_start_wires_nested_planner_and_worker_models(
             self,
             *,
             runner: Callable[[AgentRequest], Awaitable[AgentResponse]],
-            state_services: object | None = None,
             callbacks: SchedulerCallbacks | None = None,
             telemetry_sink: TelemetrySink | None = None,
             run_id: object | None = None,

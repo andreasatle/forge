@@ -191,7 +191,6 @@ class ForgeRuntime:
 
         final = await Scheduler(
             runner=runner,
-            state_services=state_services,
             callbacks=callbacks,
             telemetry_sink=telemetry_sink,
             run_id=run_id,

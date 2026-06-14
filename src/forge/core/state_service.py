@@ -204,8 +204,6 @@ class StateService:
             except subprocess.CalledProcessError:
                 pass
             raise RuntimeError(_format_git_error(e)) from e
-        finally:
-            self._workspace.remove_worktree(self._artifact_name, node_id)
 
     def run_tests(self) -> RunResult:
         """Run the language plugin test command and return structured result."""

@@ -326,8 +326,8 @@ async def test_apply_work_output_does_not_increment_version_on_fail(tmp_path: Pa
     assert ss.current_version == 0
 
 
-async def test_apply_work_output_removes_worktree_after_pass(tmp_path: Path) -> None:
-    """apply_work_output calls remove_worktree after a successful integration."""
+async def test_apply_work_output_does_not_remove_worktree_after_pass(tmp_path: Path) -> None:
+    """apply_work_output does not call remove_worktree; cleanup is WorkTaskExecutor's responsibility."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
@@ -348,11 +348,11 @@ async def test_apply_work_output_removes_worktree_after_pass(tmp_path: Path) -> 
                 with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
                     await ss.apply_work_output(output, "node4")
 
-    assert remove_calls == [("app", "node4")]
+    assert remove_calls == []
 
 
-async def test_apply_work_output_removes_worktree_after_fail(tmp_path: Path) -> None:
-    """apply_work_output calls remove_worktree even when tests fail (finally block)."""
+async def test_apply_work_output_does_not_remove_worktree_after_fail(tmp_path: Path) -> None:
+    """apply_work_output does not call remove_worktree on failure; cleanup is WorkTaskExecutor's responsibility."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
@@ -378,7 +378,7 @@ async def test_apply_work_output_removes_worktree_after_fail(tmp_path: Path) -> 
                     with pytest.raises(RuntimeError):
                         await ss.apply_work_output(output, "node5")
 
-    assert remove_calls == [("app", "node5")]
+    assert remove_calls == []
 
 
 # --- apply_work_output staleness check ---

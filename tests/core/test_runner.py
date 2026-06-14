@@ -551,8 +551,8 @@ async def test_make_work_handler_passes_none_providers_when_omitted(tmp_path: Pa
     assert captured["referee_provider"] is None
 
 
-async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: Path) -> None:
-    """Scheduler calls state_service.apply_work_output when a work node completes successfully."""
+async def test_work_handler_calls_state_service_apply_work_output(tmp_path: Path) -> None:
+    """make_work_handler calls state_service.apply_work_output when a work node completes."""
     provider = _mock_provider()
     provider.chat = AsyncMock(side_effect=_write_then_complete())
 
@@ -564,11 +564,15 @@ async def test_scheduler_uses_provided_state_service_for_integration(tmp_path: P
     runner.register(
         AgentType.WORK,
         make_work_handler(
-            _mock_registry(), _make_workspace(tmp_path), LanguageRegistry(), provider
+            _mock_registry(),
+            _make_workspace(tmp_path),
+            LanguageRegistry(),
+            provider,
+            state_services={"codebase": ss},
         ),
     )
 
-    await Scheduler(runner=runner, state_services={"codebase": ss}).run(state, _plan_request())
+    await Scheduler(runner=runner).run(state, _plan_request())
 
     ss.apply_work_output.assert_called_once()
 
@@ -593,9 +597,7 @@ async def test_validation_failed_work_response_does_not_call_apply_work_output(
 
     runner.register(AgentType.WORK, validation_failed_handler)
 
-    final = await Scheduler(runner=runner, state_services={"codebase": ss}).run(
-        state, _plan_request()
-    )
+    final = await Scheduler(runner=runner).run(state, _plan_request())
 
     ss.apply_work_output.assert_not_called()
     assert final.dag[work.id].node_state == NodeState.FAILED
