@@ -61,7 +61,7 @@ async def _capture_provider_payload(
     messages: list[ChatMessage] = [
         {"role": "system", "content": "System-owned instruction."},
         {"role": "user", "content": "Do the task."},
-        {"role": "assistant", "content": '{"kind": "tool_call"}'},
+        {"role": "assistant", "content": '{"kind": "tool"}'},
         {"role": "user", "content": '{"kind": "tool_response"}'},
     ]
     with patch("forge.llm.providers.httpx.AsyncClient") as mock_client:
@@ -186,7 +186,7 @@ async def test_providers_preserve_prompt_semantics_without_injection() -> None:
     messages: list[ChatMessage] = [
         {"role": "system", "content": "System-owned instruction."},
         {"role": "user", "content": "Do the task."},
-        {"role": "assistant", "content": '{"kind": "tool_call"}'},
+        {"role": "assistant", "content": '{"kind": "tool"}'},
         {"role": "user", "content": '{"kind": "tool_response"}'},
     ]
 

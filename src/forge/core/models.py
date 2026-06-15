@@ -27,7 +27,6 @@ class AgentType(Enum):
 class AgentMessageKind(StrEnum):
     """Protocol-level discriminator values for agent messages."""
 
-    TOOL_CALL = "tool_call"
     TOOL_RESPONSE = "tool_response"
     WORK_OUTPUT = "work_output"
     PLAN = "plan"
@@ -432,14 +431,6 @@ class AgentResponse(BaseModel):
     ran_tests_and_passed: bool = False
     diagnostics: list[AgentDiagnostic] = Field(default_factory=_empty_agent_diagnostics)
     revision: RevisionRequest | None = None
-
-
-class ToolCallRequest(BaseModel, frozen=True):
-    """LLM requests a tool to be executed."""
-
-    kind: Literal[AgentMessageKind.TOOL_CALL]
-    name: str
-    arguments: dict[str, Any]
 
 
 class ToolCallResponse(BaseModel, frozen=True):

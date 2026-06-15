@@ -27,7 +27,6 @@ from forge.core.models import (
     SchedulerState,
     StateView,
     TaskSpec,
-    ToolCallRequest,
     ToolCallResponse,
     ToolTurn,
     WorkOutput,
@@ -288,17 +287,6 @@ def test_task_spec_defaults_depends_on_to_empty_list():
         language=None,
     )
     assert ts.depends_on == []
-
-
-# --- ToolCallRequest ---
-
-
-def test_tool_call_request_kind_discriminator():
-    """ToolCallRequest requires kind to be 'tool_call'."""
-    req = ToolCallRequest(
-        kind=AgentMessageKind.TOOL_CALL, name="read_file", arguments={"path": "a.py"}
-    )
-    assert req.kind == "tool_call"
 
 
 # --- ToolCallResponse ---

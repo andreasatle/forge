@@ -420,7 +420,7 @@ def _failed_producer_event_with_max_iterations_diag(node_id: str) -> dict[str, o
                         "has_run_tests=False "
                         "mutating_tool_succeeded=False"
                     ),
-                    "raw_response_excerpt": '{"kind":"tool_call","name":"do_thing","arguments":{}}',
+                    "raw_response_excerpt": '{"kind":"tool","name":"do_thing","arguments":{}}',
                 }
             ],
         },
@@ -442,7 +442,7 @@ def test_render_run_max_iterations_also_shows_raw_response_excerpt() -> None:
     text = TextTraceRenderer().render_run(run)
     assert "iterations:" in text
     assert "raw_response:" in text
-    assert "tool_call" in text
+    assert '"kind":"tool"' in text
 
 
 def test_render_run_invalid_json_diagnostic_still_renders_excerpt() -> None:
