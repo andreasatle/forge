@@ -39,10 +39,8 @@ from forge.tools.file_tools import make_write_file_tool_for_root
 from forge.tools.registry import Tool, ToolRegistry
 from forge.tools.schemas import RunTestsRequest, RunTestsResponse
 
-_NONEMPTY_WORK_OUTPUT = '{"summary": "Changed files in the worktree.", "base_version": ""}'
-_MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY = (
-    '{"summary": ["not", "a", "string"], "base_version": "abc"}'
-)
+_NONEMPTY_WORK_OUTPUT = '{"kind":"final","output":{"kind":"work_output","summary":"Changed files in the worktree.","base_version":""}}'
+_MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY = '{"kind":"final","output":{"kind":"work_output","summary":["not","a","string"],"base_version":"abc"}}'
 
 
 class _DoThingRequest(BaseModel):
@@ -72,12 +70,6 @@ class _ExtendedResponse(BaseModel):
 
     alpha: str
     beta: int
-
-
-class _RequiredResponse(BaseModel):
-    """Synthetic response model used to prove parser schema rejection."""
-
-    required_value: str
 
 
 def _work_request() -> AgentRequest:
@@ -131,29 +123,12 @@ def _make_needs_content_tool() -> Tool:
 # --- ResponseParser ---
 
 
-def test_response_parser_parses_tool_call_request():
-    """ResponseParser returns ToolCallRequest when kind == 'tool_call'."""
-    raw = '{"kind": "tool_call", "name": "my_tool", "arguments": {}}'
-    result = ResponseParser(WorkOutput).parse(raw)
-    assert isinstance(result, ToolCallRequest)
-    assert result.name == "my_tool"
-    assert result.kind == AgentMessageKind.TOOL_CALL
-
-
-def test_response_parser_parses_tool_call_without_registered_tool_names():
-    """ResponseParser treats name as opaque protocol data, not a registered tool lookup."""
-    raw = '{"kind": "tool_call", "name": "not_a_registered_tool_name", "arguments": {}}'
-    result = ResponseParser(WorkOutput).parse(raw)
-    assert isinstance(result, ToolCallRequest)
-    assert result.name == "not_a_registered_tool_name"
-
-
 def test_response_parser_parses_valid_final_response():
-    """ResponseParser returns the configured final response model for valid JSON."""
-    raw = '{"required_value": "ok"}'
-    result = ResponseParser(_RequiredResponse).parse(raw)
-    assert isinstance(result, _RequiredResponse)
-    assert result.required_value == "ok"
+    """ResponseParser unwraps kind='final' envelope and returns the configured final response."""
+    raw = '{"kind":"final","output":{"kind":"work_output","summary":"done","base_version":"v1"}}'
+    result = ResponseParser(WorkOutput).parse(raw)
+    assert isinstance(result, WorkOutput)
+    assert result.summary == "done"
 
 
 def test_response_parser_rejects_invalid_json():
@@ -163,118 +138,96 @@ def test_response_parser_rejects_invalid_json():
 
 
 def test_response_parser_rejects_schema_invalid_final_response():
-    """ResponseParser raises ValueError with the existing schema mismatch message."""
-    with pytest.raises(ValueError, match="response does not match _RequiredResponse"):
-        ResponseParser(_RequiredResponse).parse("{}")
-
-
-def test_response_parser_correctly_parses_tool_call_request():
-    """ResponseParser returns ToolCallRequest when kind == 'tool_call'."""
-    raw = '{"kind": "tool_call", "name": "my_tool", "arguments": {}}'
-    result = ResponseParser(WorkOutput).parse(raw)
-    assert isinstance(result, ToolCallRequest)
-    assert result.name == "my_tool"
-
-
-def test_response_parser_correctly_parses_work_output_as_final_response():
-    """ResponseParser returns metadata-only WorkOutput when JSON matches the schema."""
-    raw = (
-        '{"kind": "work_output", '
-        '"summary": "Changed files in the worktree.", '
-        '"base_version": "abc123"}'
-    )
-    result = ResponseParser(WorkOutput).parse(raw)
-    assert isinstance(result, WorkOutput)
-    assert result.kind == AgentMessageKind.WORK_OUTPUT
-    assert result.summary == "Changed files in the worktree."
-    assert result.base_version == "abc123"
-
-
-def test_response_parser_rejects_tool_name_in_kind():
-    """ResponseParser rejects shorthand tool calls that put a tool name in kind."""
-    raw = '{"kind": "run_tests"}'
-    with pytest.raises(ValueError) as excinfo:
+    """ResponseParser raises ValueError for invalid FinalTurn output schema."""
+    raw = '{"kind":"final","output":{"kind":"work_output","summary":["bad"],"base_version":""}}'
+    with pytest.raises(ValueError, match="invalid final turn"):
         ResponseParser(WorkOutput).parse(raw)
-    message = str(excinfo.value)
-    assert "Tool names do not belong in `kind`" in message
-    assert '{"kind":"tool_call","name":"run_tests","arguments":{}}' in message
 
 
-def _make_replace_in_file_registry() -> ToolRegistry:
-    registry = ToolRegistry()
-    registry.register(
-        Tool(
-            name="replace_in_file",
-            description="replaces text in a file",
-            request_type=_DoThingRequest,
-            response_type=_DoThingResponse,
-            fn=AsyncMock(return_value=_DoThingResponse(result="replaced")),
-        )
-    )
-    return registry
+def test_response_parser_rejects_old_tool_call_kind():
+    """ResponseParser rejects legacy kind='tool_call' in the strict new protocol."""
+    raw = '{"kind":"tool_call","name":"my_tool","arguments":{}}'
+    with pytest.raises(ValueError, match="unknown protocol kind"):
+        ResponseParser(WorkOutput).parse(raw)
 
 
-def test_response_parser_normalizes_shorthand_tool_call_with_arguments():
-    """ResponseParser normalizes shorthand kind=<tool_name> to ToolCallRequest when tool is registered."""
-    registry = _make_replace_in_file_registry()
-    raw = '{"kind": "replace_in_file", "arguments": {"path": "foo.py", "old": "x", "new": "y"}}'
-    result = ResponseParser(WorkOutput, registry).parse(raw)
-    assert isinstance(result, ToolCallRequest)
-    assert result.kind == AgentMessageKind.TOOL_CALL
-    assert result.name == "replace_in_file"
-    assert result.arguments == {"path": "foo.py", "old": "x", "new": "y"}
+def test_response_parser_rejects_plain_work_output():
+    """ResponseParser rejects plain WorkOutput without a final envelope."""
+    raw = '{"kind":"work_output","summary":"done","base_version":""}'
+    with pytest.raises(ValueError, match="unknown protocol kind"):
+        ResponseParser(WorkOutput).parse(raw)
 
 
-def test_response_parser_normalizes_shorthand_tool_call_missing_arguments_defaults_to_empty():
-    """ResponseParser defaults arguments to {} when shorthand tool call has no arguments key."""
-    registry = _make_replace_in_file_registry()
-    raw = '{"kind": "replace_in_file"}'
-    result = ResponseParser(WorkOutput, registry).parse(raw)
-    assert isinstance(result, ToolCallRequest)
-    assert result.name == "replace_in_file"
-    assert result.arguments == {}
-
-
-def test_response_parser_rejects_unknown_kind_even_with_tools_configured():
-    """ResponseParser rejects unknown kind values even when tools are configured."""
-    registry = _make_replace_in_file_registry()
-    raw = '{"kind": "unknown_tool"}'
-    with pytest.raises(ValueError):
-        ResponseParser(WorkOutput, registry).parse(raw)
-
-
-def test_response_parser_correct_tool_call_protocol_unchanged_with_tools_configured():
-    """ResponseParser correctly parses the standard tool_call protocol when tools are configured."""
-    registry = _make_replace_in_file_registry()
-    raw = '{"kind": "tool_call", "name": "replace_in_file", "arguments": {}}'
-    result = ResponseParser(WorkOutput, registry).parse(raw)
-    assert isinstance(result, ToolCallRequest)
-    assert result.kind == AgentMessageKind.TOOL_CALL
-    assert result.name == "replace_in_file"
-
-
-def test_response_parser_final_work_output_parsing_unchanged_with_tools_configured():
-    """ResponseParser returns WorkOutput for valid final JSON even when tools are configured."""
-    registry = _make_replace_in_file_registry()
-    raw = '{"kind": "work_output", "summary": "edits applied", "base_version": "abc123"}'
-    result = ResponseParser(WorkOutput, registry).parse(raw)
-    assert isinstance(result, WorkOutput)
-    assert result.summary == "edits applied"
-    assert result.base_version == "abc123"
-
-
-def test_response_parser_correctly_parses_plan_response_as_final_response():
-    """ResponseParser returns PlanResponse when final_response_type is PlanResponse."""
-    raw = '{"kind": "plan", "tasks": []}'
-    result = ResponseParser(PlanResponse).parse(raw)
-    assert isinstance(result, PlanResponse)
-    assert result.tasks == []
+def test_response_parser_rejects_missing_kind():
+    """ResponseParser rejects JSON with no kind field."""
+    raw = '{"summary":"done","base_version":""}'
+    with pytest.raises(ValueError, match="unknown protocol kind"):
+        ResponseParser(WorkOutput).parse(raw)
 
 
 def test_response_parser_raises_value_error_on_unknown_format():
     """ResponseParser raises ValueError when the response is not valid JSON."""
     with pytest.raises(ValueError, match="not valid JSON"):
         ResponseParser(WorkOutput).parse("not json at all")
+
+
+# --- ResponseParser — new two-shape protocol ---
+
+
+def test_response_parser_parses_new_tool_turn():
+    """ResponseParser accepts kind='tool' and returns ToolCallRequest for ToolLoop compatibility."""
+    raw = '{"kind":"tool","name":"write_file","arguments":{"path":"src/main.py","content":"x=1"}}'
+    result = ResponseParser(WorkOutput).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.name == "write_file"
+    assert result.arguments == {"path": "src/main.py", "content": "x=1"}
+
+
+def test_response_parser_parses_new_tool_turn_empty_arguments():
+    """ResponseParser accepts kind='tool' with no arguments field and defaults to {}."""
+    raw = '{"kind":"tool","name":"run_tests"}'
+    result = ResponseParser(WorkOutput).parse(raw)
+    assert isinstance(result, ToolCallRequest)
+    assert result.name == "run_tests"
+    assert result.arguments == {}
+
+
+def test_response_parser_parses_new_final_work_turn():
+    """ResponseParser unwraps kind='final' envelope and returns WorkOutput directly."""
+    raw = '{"kind":"final","output":{"kind":"work_output","summary":"Wrote main.py","base_version":"abc123"}}'
+    result = ResponseParser(WorkOutput).parse(raw)
+    assert isinstance(result, WorkOutput)
+    assert result.summary == "Wrote main.py"
+    assert result.base_version == "abc123"
+
+
+def test_response_parser_parses_new_final_plan_turn():
+    """ResponseParser unwraps kind='final' envelope and returns PlanResponse directly."""
+    raw = '{"kind":"final","output":{"kind":"plan","tasks":[]}}'
+    result = ResponseParser(PlanResponse).parse(raw)
+    assert isinstance(result, PlanResponse)
+    assert result.tasks == []
+
+
+def test_response_parser_new_tool_turn_missing_name_raises():
+    """ResponseParser raises ValueError with 'invalid tool turn' when kind='tool' but name is absent."""
+    raw = '{"kind":"tool","arguments":{}}'
+    with pytest.raises(ValueError, match="invalid tool turn"):
+        ResponseParser(WorkOutput).parse(raw)
+
+
+def test_response_parser_new_final_turn_missing_output_raises():
+    """ResponseParser raises ValueError with 'invalid final turn' when kind='final' but output is absent."""
+    raw = '{"kind":"final"}'
+    with pytest.raises(ValueError, match="invalid final turn"):
+        ResponseParser(WorkOutput).parse(raw)
+
+
+def test_response_parser_new_final_turn_unknown_output_kind_raises():
+    """ResponseParser raises ValueError with 'invalid final turn' for unrecognized nested kind."""
+    raw = '{"kind":"final","output":{"kind":"unknown_type"}}'
+    with pytest.raises(ValueError, match="invalid final turn"):
+        ResponseParser(WorkOutput).parse(raw)
 
 
 # --- TrackedToolExecutor ---
@@ -375,7 +328,7 @@ async def test_tool_loop_runs_tool_call_then_final_response():
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -404,13 +357,12 @@ async def test_tool_loop_accepts_metadata_only_work_output_after_write_file(
     provider.chat = AsyncMock(
         side_effect=[
             (
-                '{"kind": "tool_call", "name": "write_file", '
+                '{"kind": "tool", "name": "write_file", '
                 '"arguments": {"path": "src/main.py", "content": "print(42)\\n"}}'
             ),
             (
-                '{"kind": "work_output", '
-                '"summary": "Wrote src/main.py in the worktree.", '
-                '"base_version": "abc123"}'
+                '{"kind":"final","output":{"kind":"work_output",'
+                '"summary":"Wrote src/main.py in the worktree.","base_version":"abc123"}}'
             ),
         ]
     )
@@ -455,7 +407,9 @@ async def test_tool_loop_retries_invalid_json():
 async def test_tool_loop_rejects_empty_work_output_for_work_agent():
     """ToolLoop rejects empty WorkOutput for WORK agents when nonempty output is required."""
     request = _work_request()
-    provider = _mock_provider('{"files": [], "dependencies": []}')
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work_output","summary":"","base_version":""}}'
+    )
 
     response = await ToolLoop(
         request=request,
@@ -478,7 +432,7 @@ async def test_run_agent_routes_tool_calls_correctly():
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -519,7 +473,7 @@ async def test_run_agent_returns_failed_after_max_iterations():
     """run_agent returns FAILED when the tool iteration limit is exhausted."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+    provider = _mock_provider('{"kind": "tool", "name": "do_thing", "arguments": {}}')
 
     response = await run_agent(
         request,
@@ -589,7 +543,7 @@ async def test_run_agent_sets_failure_kind_max_iterations_on_loop_exhaustion():
     """run_agent sets failure_kind=MAX_ITERATIONS when the tool loop is exhausted."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+    provider = _mock_provider('{"kind": "tool", "name": "do_thing", "arguments": {}}')
 
     response = await run_agent(
         request,
@@ -646,7 +600,7 @@ async def test_run_agent_never_calls_chat_with_tools_tool_loop_path():
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -779,7 +733,9 @@ async def test_run_agent_rejects_premature_empty_work_output_when_no_tool_calls_
     """With tools and no prior tool calls, an empty WorkOutput asks for tool use."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"files": [], "dependencies": []}')
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work_output","summary":"","base_version":""}}'
+    )
 
     response = await run_agent(
         request,
@@ -791,7 +747,7 @@ async def test_run_agent_rejects_premature_empty_work_output_when_no_tool_calls_
     )
 
     assert response.status == ResponseStatus.FAILED
-    assert "tool_call" in (response.error or "")
+    assert '"kind":"tool"' in (response.error or "")
     assert "do_thing" in (response.error or "")
     assert "list_files" not in (response.error or "")
 
@@ -799,7 +755,9 @@ async def test_run_agent_rejects_premature_empty_work_output_when_no_tool_calls_
 async def test_run_agent_rejects_empty_work_output_for_work_agent_with_no_tools():
     """run_agent rejects empty WorkOutput for WORK agents even when no tools are configured."""
     request = _work_request()
-    provider = _mock_provider('{"files": [], "dependencies": []}')
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work_output","summary":"","base_version":""}}'
+    )
 
     response = await run_agent(request, WorkSpec, provider, "prompt", max_retries=0)
 
@@ -814,8 +772,8 @@ async def test_run_agent_rejects_empty_work_output_after_read_only_tool_call():
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-            '{"files": [], "dependencies": []}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
+            '{"kind":"final","output":{"kind":"work_output","summary":"","base_version":""}}',
         ]
     )
 
@@ -853,8 +811,8 @@ async def test_run_agent_allows_empty_work_output_after_tool_call_when_adapter_a
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
-            '{"files": [], "dependencies": []}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
+            '{"kind":"final","output":{"kind":"work_output","summary":"","base_version":""}}',
         ]
     )
 
@@ -942,14 +900,14 @@ async def test_tool_loop_retry_preserves_original_prompt_plus_json_repair_block(
     assert second_call_messages[1]["role"] == "user"
     assert second_call_messages[1]["content"] == original_prompt
     assert second_call_messages[-1]["role"] == "user"
-    assert "Invalid response:" in second_call_messages[-1]["content"]
-    assert "kind = tool_call" in second_call_messages[-1]["content"]
-    assert "name = tool name" in second_call_messages[-1]["content"]
-    assert "arguments = object" in second_call_messages[-1]["content"]
+    repair_content = second_call_messages[-1]["content"]
+    assert "Invalid response:" in repair_content
+    assert '"kind":"tool"' in repair_content
+    assert '"kind":"final"' in repair_content
 
 
-async def test_tool_loop_repair_prompt_explains_shorthand_tool_call_shape():
-    """Malformed shorthand tool calls get protocol-specific repair guidance."""
+async def test_tool_loop_repair_prompt_explains_two_shape_protocol():
+    """Repair prompt for unknown kind explains the two-shape protocol."""
     request = _work_request()
     provider = _mock_provider()
     provider.chat = AsyncMock(
@@ -970,15 +928,17 @@ async def test_tool_loop_repair_prompt_explains_shorthand_tool_call_shape():
 
     second_call_messages = provider.chat.call_args_list[1][0][0]
     repair_prompt = second_call_messages[-1]["content"]
-    assert "Tool names do not belong in `kind`" in repair_prompt
-    assert '{"kind":"tool_call","name":"run_tests","arguments":{}}' in repair_prompt
+    assert '"kind":"tool"' in repair_prompt
+    assert '"kind":"final"' in repair_prompt
 
 
 async def test_run_agent_allows_empty_work_output_without_tool_calls_when_adapter_allows_it():
     """run_agent accepts empty WorkOutput with no tool calls when adapter allows empty output."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"files": [], "dependencies": []}')
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work_output","summary":"","base_version":""}}'
+    )
 
     response = await run_agent(
         request,
@@ -1019,8 +979,8 @@ async def test_tool_loop_disables_tools_after_successful_tests(tmp_path: Path) -
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "f.py", "content": "x=1"}}',
-            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "f.py", "content": "x=1"}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -1055,8 +1015,8 @@ async def test_tool_loop_rejects_tool_call_after_successful_tests() -> None:
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
-            '{"kind": "tool_call", "name": "do_thing", "arguments": {}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -1088,7 +1048,7 @@ async def test_tool_loop_no_test_write_file_triggers_final_response_only(
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "f.txt", "content": "hello"}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "f.txt", "content": "hello"}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -1123,8 +1083,8 @@ async def test_tool_loop_no_test_rejects_tool_call_after_write(
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "a.txt", "content": "first"}}',
-            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "b.txt", "content": "second"}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "a.txt", "content": "first"}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "b.txt", "content": "second"}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -1154,8 +1114,8 @@ async def test_tool_loop_with_tests_write_file_alone_does_not_finalize(
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "f.txt", "content": "hello"}}',
-            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "f.txt", "content": "hello"}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )
@@ -1178,7 +1138,7 @@ async def test_tool_loop_max_iterations_preserves_bounded_tool_call_history():
     """ToolLoop max-iteration failure records bounded recent tool call names in diagnostics."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+    provider = _mock_provider('{"kind": "tool", "name": "do_thing", "arguments": {}}')
 
     response = await ToolLoop(
         request=request,
@@ -1203,7 +1163,7 @@ async def test_tool_loop_max_iterations_preserves_last_raw_response_excerpt():
     """ToolLoop max-iteration failure captures the last raw assistant response in the diagnostic."""
     registry, _ = _make_registry()
     request = _work_request()
-    tool_call_raw = '{"kind": "tool_call", "name": "do_thing", "arguments": {}}'
+    tool_call_raw = '{"kind": "tool", "name": "do_thing", "arguments": {}}'
     provider = _mock_provider(tool_call_raw)
 
     response = await ToolLoop(
@@ -1219,14 +1179,14 @@ async def test_tool_loop_max_iterations_preserves_last_raw_response_excerpt():
     assert response.diagnostics
     diag = response.diagnostics[0]
     assert diag.raw_response_excerpt is not None
-    assert "tool_call" in diag.raw_response_excerpt
+    assert "do_thing" in diag.raw_response_excerpt
 
 
 async def test_tool_loop_max_iterations_records_loop_state_flags():
     """Max-iteration diagnostic includes ran_tests_and_passed, final_response_only, has_run_tests, mutating_tool_succeeded."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+    provider = _mock_provider('{"kind": "tool", "name": "do_thing", "arguments": {}}')
 
     response = await ToolLoop(
         request=request,
@@ -1250,7 +1210,7 @@ async def test_tool_loop_max_iterations_bounded_to_five_most_recent():
     """Max-iteration diagnostic tool call list is bounded to the 5 most recent calls."""
     registry, _ = _make_registry()
     request = _work_request()
-    provider = _mock_provider('{"kind": "tool_call", "name": "do_thing", "arguments": {}}')
+    provider = _mock_provider('{"kind": "tool", "name": "do_thing", "arguments": {}}')
 
     response = await ToolLoop(
         request=request,
@@ -1311,8 +1271,8 @@ async def test_tool_loop_with_tests_failed_tests_do_not_finalize(
     provider = _mock_provider()
     provider.chat = AsyncMock(
         side_effect=[
-            '{"kind": "tool_call", "name": "run_tests", "arguments": {}}',
-            '{"kind": "tool_call", "name": "write_file", "arguments": {"path": "fix.txt", "content": "fix"}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "fix.txt", "content": "fix"}}',
             _NONEMPTY_WORK_OUTPUT,
         ]
     )

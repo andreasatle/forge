@@ -82,10 +82,10 @@ def _mock_registry() -> AdapterRegistry:
 def _write_then_complete() -> list[str]:
     return [
         (
-            '{"kind": "tool_call", "name": "write_file", '
+            '{"kind": "tool", "name": "write_file", '
             '"arguments": {"path": "src/main.py", "content": "x = 1"}}'
         ),
-        '{"summary": "Wrote src/main.py", "base_version": ""}',
+        '{"kind":"final","output":{"kind":"work_output","summary":"Wrote src/main.py","base_version":""}}',
     ]
 
 
@@ -420,7 +420,7 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     """make_plan_handler uses provider.chat only, never chat_with_tools."""
     provider = MagicMock()
     provider.max_tokens = 8192
-    provider.chat = AsyncMock(return_value='{"kind": "plan", "tasks": []}')
+    provider.chat = AsyncMock(return_value='{"kind":"final","output":{"kind":"plan","tasks":[]}}')
     provider.chat_with_tools = AsyncMock(
         side_effect=AssertionError("chat_with_tools must not be called")
     )

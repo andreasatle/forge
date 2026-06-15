@@ -116,7 +116,8 @@ def _rendered_empty() -> str:
 
 def _provider(response_json: str) -> MagicMock:
     provider = MagicMock()
-    provider.chat = AsyncMock(return_value=response_json)
+    wrapped = f'{{"kind":"final","output":{response_json}}}'
+    provider.chat = AsyncMock(return_value=wrapped)
     return provider
 
 
@@ -257,7 +258,12 @@ async def test_critic_prompt_treats_plugin_guidance_as_binding_contract() -> Non
 
 async def test_critic_agent_retries_on_invalid_json() -> None:
     """critic_agent retries when the provider returns invalid JSON, then succeeds."""
-    good_json = json.dumps({"disposition": "accept", "rationale": "Looks good.", "hints": []})
+    good_json = json.dumps(
+        {
+            "kind": "final",
+            "output": {"disposition": "accept", "rationale": "Looks good.", "hints": []},
+        }
+    )
     provider = MagicMock()
     provider.chat = AsyncMock(side_effect=["not valid json", good_json])
     result = await critic_agent(

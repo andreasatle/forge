@@ -169,13 +169,12 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
     provider.chat = AsyncMock(
         side_effect=[
             (
-                '{"kind": "tool_call", "name": "write_file", '
+                '{"kind": "tool", "name": "write_file", '
                 '"arguments": {"path": "src/main.py", "content": "print(42)\\n"}}'
             ),
             (
-                '{"kind": "work_output", '
-                '"summary": "Wrote src/main.py in the worktree.", '
-                '"base_version": "0"}'
+                '{"kind":"final","output":{"kind":"work_output",'
+                '"summary":"Wrote src/main.py in the worktree.","base_version":"0"}}'
             ),
         ]
     )
@@ -1132,13 +1131,12 @@ async def test_document_adapter_writes_file_then_returns_metadata_only_work_outp
     provider.chat = AsyncMock(
         side_effect=[
             (
-                '{"kind": "tool_call", "name": "write_file", '
+                '{"kind": "tool", "name": "write_file", '
                 '"arguments": {"path": "README.md", "content": "# API Docs\\n\\nThis is the API documentation.\\n"}}'
             ),
             (
-                '{"kind": "work_output", '
-                '"summary": "Created README.md with API documentation.", '
-                '"base_version": "0"}'
+                '{"kind":"final","output":{"kind":"work_output",'
+                '"summary":"Created README.md with API documentation.","base_version":"0"}}'
             ),
         ]
     )

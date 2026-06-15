@@ -26,7 +26,9 @@ def _make_request() -> AgentRequest:
     )
 
 
-def _mock_provider(chat_return: str = '{"kind": "plan", "tasks": []}') -> MagicMock:
+def _mock_provider(
+    chat_return: str = '{"kind":"final","output":{"kind":"plan","tasks":[]}}',
+) -> MagicMock:
     provider = MagicMock()
     provider.max_tokens = 8192
     provider.chat = AsyncMock(return_value=chat_return)
@@ -48,10 +50,10 @@ async def test_planner_task_executor_returns_typed_plan_output() -> None:
     """PlannerTaskExecutor preserves PlanResponse as typed producer output."""
     request = _make_request()
     provider = _mock_provider(
-        '{"kind": "plan", "tasks": ['
-        '{"objective": "Fetch pages", "success_condition": "tests pass", '
-        '"adapter": "coding", "artifact": "codebase", "language": "python"}'
-        "]}"
+        '{"kind":"final","output":{"kind":"plan","tasks":['
+        '{"objective":"Fetch pages","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase","language":"python"}'
+        "]}}"
     )
     executor = PlannerTaskExecutor(
         provider=provider,
@@ -245,7 +247,7 @@ async def test_planner_format_failure_triggers_retry() -> None:
     provider.chat = AsyncMock(
         side_effect=[
             "not valid json",
-            '{"kind": "plan", "tasks": []}',
+            '{"kind":"final","output":{"kind":"plan","tasks":[]}}',
         ]
     )
 
@@ -293,7 +295,7 @@ async def test_planner_logs_warning_on_retry(caplog: pytest.LogCaptureFixture) -
     provider.chat = AsyncMock(
         side_effect=[
             "not valid json",
-            '{"kind": "plan", "tasks": []}',
+            '{"kind":"final","output":{"kind":"plan","tasks":[]}}',
         ]
     )
 
@@ -337,10 +339,10 @@ async def test_planner_output_contains_tasks_not_scheduler_nodes() -> None:
     """plan_agent returns PlanResponse tasks, not scheduler AgentRequests."""
     request = _make_request()
     provider = _mock_provider(
-        '{"kind": "plan", "tasks": ['
-        '{"objective": "A", "success_condition": "done", '
-        '"adapter": "coding", "artifact": "codebase"}'
-        "]}"
+        '{"kind":"final","output":{"kind":"plan","tasks":['
+        '{"objective":"A","success_condition":"done",'
+        '"adapter":"coding","artifact":"codebase"}'
+        "]}}"
     )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
@@ -355,12 +357,12 @@ async def test_planner_preserves_task_dependency_indices() -> None:
     """PlanResponse keeps planner task dependency indices for scheduler conversion."""
     request = _make_request()
     provider = _mock_provider(
-        '{"kind": "plan", "tasks": ['
-        '{"objective": "A", "success_condition": "done", '
-        '"adapter": "coding", "artifact": "codebase"},'
-        '{"objective": "B", "success_condition": "done", '
-        '"adapter": "coding", "artifact": "codebase", "depends_on": [0]}'
-        "]}"
+        '{"kind":"final","output":{"kind":"plan","tasks":['
+        '{"objective":"A","success_condition":"done",'
+        '"adapter":"coding","artifact":"codebase"},'
+        '{"objective":"B","success_condition":"done",'
+        '"adapter":"coding","artifact":"codebase","depends_on":[0]}'
+        "]}}"
     )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)

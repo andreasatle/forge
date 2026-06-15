@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 from collections.abc import Callable
 from typing import cast
 
@@ -22,6 +21,7 @@ from forge.core.models import (
     ResponseStatus,
     ToolCallRequest,
     ToolCallResponse,
+    ToolTurn,
     WorkOutput,
 )
 from forge.llm.providers import ChatMessage, LLMProvider, ProviderError
@@ -37,17 +37,7 @@ class ToolError(Exception):
 _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS = 4000
 _MAX_BAD_VALUE_CHARS = 300
 _MAX_RECENT_TOOL_CALLS = 5
-_KNOWN_PROTOCOL_KINDS = {kind.value for kind in AgentMessageKind}
 _MUTATING_TOOL_NAMES = frozenset({"write_file", "replace_in_file"})
-_TOOL_CALL_PROTOCOL_REMINDER = "\n".join(
-    [
-        "Tool-call protocol:",
-        "  - kind = tool_call (literal message type for every tool call)",
-        "  - name = tool name (one of the listed tools)",
-        "  - arguments = object (must match that tool's input schema; use {} when empty)",
-        "  - Tool names never appear in kind.",
-    ]
-)
 
 
 def _classify_failure(exc: Exception) -> FailureKind:
@@ -146,24 +136,14 @@ def _max_iterations_diagnostic(
     )
 
 
-def _malformed_tool_call_guidance(kind: object) -> str:
-    """Return guidance for common shorthand tool-call mistakes."""
-    if not isinstance(kind, str) or kind in _KNOWN_PROTOCOL_KINDS:
-        return ""
-    return (
-        " Tool names do not belong in `kind`. Use: "
-        f'{{"kind":"tool_call","name":"{kind}","arguments":{{}}}}'
-    )
-
-
 def _default_correction_prompt(error: Exception) -> str:
     """Return generic structured-output repair guidance for the next model turn."""
     return "\n".join(
         [
             f"Invalid response: {error}.",
             "Respond with valid JSON only.",
-            _TOOL_CALL_PROTOCOL_REMINDER,
-            'Tool-call shape: {"kind":"tool_call","name":"<tool_name>","arguments":{}}',
+            'Tool-call shape: {"kind":"tool","name":"<tool_name>","arguments":{}}',
+            'Final-answer shape: {"kind":"final","output":{<output object>}}',
         ]
     )
 
@@ -295,51 +275,36 @@ class ResponseParser:
     ) -> None:
         self.final_response_type = final_response_type
         self.tools = tools
-        self._registered_tool_names: frozenset[str] = (
-            frozenset(t.name for t in tools) if tools is not None else frozenset()
-        )
 
     def parse(self, raw: str) -> ToolCallRequest | BaseModel:
         """Parse raw LLM text into a ToolCallRequest or the final response model."""
-        text = raw.strip()
-        match = re.search(r"```(?:json)?\s*(.*?)```", text, re.DOTALL)
-        if match:
-            text = match.group(1).strip()
         try:
-            data: object = json.loads(text)
+            data: object = json.loads(raw.strip())
         except json.JSONDecodeError as e:
             raise ValueError(f"response is not valid JSON: {e}") from e
         data_dict = cast(dict[str, object], data) if isinstance(data, dict) else None
-        if data_dict is not None and data_dict.get("kind") == AgentMessageKind.TOOL_CALL:
+        kind = data_dict.get("kind") if data_dict is not None else None
+
+        if kind == "tool":
             try:
-                return ToolCallRequest.model_validate(data_dict)
+                turn = ToolTurn.model_validate(data_dict)
+                return ToolCallRequest(
+                    kind=AgentMessageKind.TOOL_CALL,
+                    name=turn.name,
+                    arguments=turn.arguments,
+                )
             except Exception as e:
-                raise ValueError(f"invalid tool_call format: {e}") from e
-        # Tolerant normalization: {"kind": "<tool_name>", ...} → ToolCallRequest
-        if (
-            data_dict is not None
-            and self.tools is not None
-            and isinstance(data_dict.get("kind"), str)
-            and cast(str, data_dict["kind"]) in self._registered_tool_names
-            and "name" not in data_dict
-        ):
-            shorthand_name = cast(str, data_dict["kind"])
-            raw_args = data_dict.get("arguments", {})
-            arguments = cast(dict[str, object], raw_args) if isinstance(raw_args, dict) else {}
-            return ToolCallRequest(
-                kind=AgentMessageKind.TOOL_CALL,
-                name=shorthand_name,
-                arguments=arguments,
-            )
-        try:
-            return self.final_response_type.model_validate(data)
-        except Exception as e:
-            guidance = _malformed_tool_call_guidance(
-                data_dict.get("kind") if data_dict is not None else None
-            )
-            raise ValueError(
-                f"response does not match {self.final_response_type.__name__}: {e}{guidance}"
-            ) from e
+                raise ValueError(f"invalid tool turn: {e}") from e
+
+        if kind == "final":
+            try:
+                if data_dict is None or "output" not in data_dict:
+                    raise ValueError("missing output field")
+                return self.final_response_type.model_validate(data_dict["output"])
+            except Exception as e:
+                raise ValueError(f"invalid final turn: {e}") from e
+
+        raise ValueError(f"unknown protocol kind: {kind!r}; expected 'tool' or 'final'")
 
 
 def parse_response(
@@ -492,7 +457,7 @@ class ToolLoop:
                         "You must call tools before returning a final response. "
                         f"Available tools: {available_tools}. "
                         "Call one of the available tools using this format: "
-                        '{"kind": "tool_call", "name": "<tool_name>", "arguments": {}}'
+                        '{"kind":"tool","name":"<tool_name>","arguments":{}}'
                     )
                 if (
                     isinstance(parsed, WorkOutput)

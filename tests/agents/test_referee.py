@@ -145,7 +145,8 @@ def _critic_contract_violating_revise() -> CriticFinding:
 
 def _provider(response_json: str) -> MagicMock:
     provider = MagicMock()
-    provider.chat = AsyncMock(return_value=response_json)
+    wrapped = f'{{"kind":"final","output":{response_json}}}'
+    provider.chat = AsyncMock(return_value=wrapped)
     return provider
 
 
@@ -330,7 +331,10 @@ async def test_referee_can_override_critic_revision_items_that_contradict_plugin
 async def test_referee_agent_retries_on_invalid_json() -> None:
     """referee_agent retries when the provider returns invalid JSON, then succeeds."""
     good_json = json.dumps(
-        {"disposition": "revise", "rationale": "Needs minor fix.", "override": False}
+        {
+            "kind": "final",
+            "output": {"disposition": "revise", "rationale": "Needs minor fix.", "override": False},
+        }
     )
     provider = MagicMock()
     provider.chat = AsyncMock(side_effect=["bad json", good_json])
