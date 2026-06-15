@@ -17,13 +17,16 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     CriticDisposition,
+    DependentSplitDecision,
     FailureKind,
+    OrthogonalSplitDecision,
     PlanResponse,
     ResponseStatus,
     ReviewContext,
     RevisionItem,
     RevisionRequest,
     StateView,
+    WorkDecision,
     WorkOutput,
 )
 from forge.core.telemetry import TelemetrySink
@@ -254,6 +257,88 @@ class PlanResponseValidator:
                 "Return valid JSON only matching PlanResponse.",
                 '- Top-level kind must be "plan".',
                 "- tasks must be an array of task objects satisfying the AgentRequest contract.",
+            ]
+        )
+
+
+_PlannerOutput = PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision
+
+
+class PlannerOutputValidator:
+    """OutputValidator for planner output — PlanResponse (legacy) or DecompositionDecision."""
+
+    def extract_from_response(self, response: AgentResponse) -> _PlannerOutput | None:
+        """Return typed planner output from the response."""
+        if isinstance(
+            response.output,
+            (PlanResponse, WorkDecision, DependentSplitDecision, OrthogonalSplitDecision),
+        ):
+            return response.output
+        return None
+
+    def is_empty(self, output: _PlannerOutput) -> bool:
+        """Always returns False — planners never trigger ALREADY_DONE."""
+        return False
+
+    def render_for_critic(self, output: _PlannerOutput) -> str:
+        """Render planner output as a human-readable string for the critic."""
+        if isinstance(output, PlanResponse):
+            if not output.tasks:
+                return "(no tasks)"
+            lines: list[str] = []
+            for i, task in enumerate(output.tasks):
+                lines.append(f"Task {i}: {task.objective}")
+                lines.append(f"  Success condition: {task.success_condition}")
+                if task.artifact:
+                    lines.append(f"  Artifact: {task.artifact}")
+            return "\n".join(lines)
+        if isinstance(output, WorkDecision):
+            return (
+                f"Decision: work\n"
+                f"Objective: {output.task.objective}\n"
+                f"Success condition: {output.task.success_condition}\n"
+                f"Artifact: {output.task.artifact}"
+            )
+        kind_label = (
+            "split_dependent (ordered)"
+            if isinstance(output, DependentSplitDecision)
+            else "split_orthogonal (independent)"
+        )
+        lines = [f"Decision: {kind_label}"]
+        for i, task in enumerate(output.tasks):
+            lines.append(f"Task {i}: {task.objective}")
+            lines.append(f"  Success condition: {task.success_condition}")
+            if task.artifact:
+                lines.append(f"  Artifact: {task.artifact}")
+        return "\n".join(lines)
+
+    def work_noun(self) -> str:
+        """Return 'plan'."""
+        return "plan"
+
+    def requires_nonempty(self) -> bool:
+        """Return True — planners must always produce output."""
+        return True
+
+    def review_context(self) -> ReviewContext:
+        """Return planner-output review language."""
+        return ReviewContext(
+            output_noun="plan",
+            review_focus="whether the decomposition decision satisfies the planning contract",
+            empty_output_guidance="If the decision contains no tasks, reject it.",
+        )
+
+    def final_output_reminder(self) -> str:
+        """Return a compact planner output-format reminder."""
+        return "\n".join(
+            [
+                "FINAL OUTPUT FORMAT REMINDER",
+                "Return one of these decision kinds:",
+                '  {"kind":"work","task":{...WorkSpec...}}',
+                '  {"kind":"split_dependent","tasks":[...TaskSpec...]}',
+                '  {"kind":"split_orthogonal","tasks":[...TaskSpec...]}',
+                "Legacy (still accepted):",
+                '  {"kind":"plan","tasks":[...TaskSpec...]}',
             ]
         )
 

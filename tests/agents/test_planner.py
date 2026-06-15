@@ -10,10 +10,14 @@ from forge.core.models import (
     AgentContract,
     AgentRequest,
     AgentType,
+    DependentSplitDecision,
+    OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
     RequestSource,
     ResponseStatus,
+    WorkDecision,
+    WorkSpec,
     render_agent_contract,
 )
 
@@ -329,7 +333,7 @@ async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
     messages = provider.chat.call_args.args[0]
     system_prompt = messages[0]["content"]
     user_prompt = messages[1]["content"]
-    assert "Output object model: PlanResponse" in system_prompt
+    assert "Output object model: PlannerOutputModel" in system_prompt
     assert '"tasks": [' not in user_prompt
     assert '"kind": "plan"' not in user_prompt
     assert "Respond with ONLY a JSON object" not in user_prompt
@@ -452,3 +456,119 @@ async def test_planner_prompt_omits_python_packaging_policy() -> None:
     assert "setup.py" not in user_prompt
     assert "legacy Python packaging" not in user_prompt
     assert "observable outcomes" in user_prompt
+
+
+# --- DecompositionDecision parsing ---
+
+
+def _mock_provider_with_response(json_str: str) -> MagicMock:
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    provider.chat = AsyncMock(return_value=json_str)
+    return provider
+
+
+async def test_planner_final_output_parses_work_decision() -> None:
+    """Planner accepts kind='work' and returns a WorkDecision as producer output."""
+    request = _make_request()
+    provider = _mock_provider_with_response(
+        '{"kind":"final","output":{"kind":"work","task":{'
+        '"objective":"implement parser","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase"}}}'
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert isinstance(response.output, WorkDecision)
+    assert isinstance(response.output.task, WorkSpec)
+    assert response.output.task.objective == "implement parser"
+
+
+async def test_planner_final_output_parses_split_dependent_decision() -> None:
+    """Planner accepts kind='split_dependent' and returns a DependentSplitDecision."""
+    request = _make_request()
+    provider = _mock_provider_with_response(
+        '{"kind":"final","output":{"kind":"split_dependent","tasks":['
+        '{"objective":"setup","success_condition":"done","adapter":"coding","artifact":"codebase"},'
+        '{"objective":"implement","success_condition":"tests pass","adapter":"coding","artifact":"codebase"}'
+        "]}}"
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert isinstance(response.output, DependentSplitDecision)
+    assert len(response.output.tasks) == 2
+    assert response.output.tasks[0].objective == "setup"
+    assert response.output.tasks[1].objective == "implement"
+
+
+async def test_planner_final_output_parses_split_orthogonal_decision() -> None:
+    """Planner accepts kind='split_orthogonal' and returns an OrthogonalSplitDecision."""
+    request = _make_request()
+    provider = _mock_provider_with_response(
+        '{"kind":"final","output":{"kind":"split_orthogonal","tasks":['
+        '{"objective":"write tests","success_condition":"tests pass","adapter":"coding","artifact":"codebase"},'
+        '{"objective":"write docs","success_condition":"docs exist","adapter":"document","artifact":"codebase"}'
+        "]}}"
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert isinstance(response.output, OrthogonalSplitDecision)
+    assert len(response.output.tasks) == 2
+
+
+async def test_planner_prompt_includes_decision_kind_semantics() -> None:
+    """PLAN_PROMPT advertises work/split_dependent/split_orthogonal and their semantics."""
+    request = _make_request()
+    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert 'kind="work"' in user_prompt
+    assert 'kind="split_dependent"' in user_prompt
+    assert 'kind="split_orthogonal"' in user_prompt
+    assert "task is small enough to execute directly" in user_prompt
+    assert "children must run in order" in user_prompt
+    assert "children are independent" in user_prompt
+
+
+async def test_planner_legacy_plan_response_still_works() -> None:
+    """Legacy kind='plan' output is still accepted during migration."""
+    request = _make_request()
+    provider = _mock_provider_with_response(
+        '{"kind":"final","output":{"kind":"plan","tasks":['
+        '{"objective":"A","success_condition":"done","adapter":"coding","artifact":"codebase"}'
+        "]}}"
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert isinstance(response.output, PlanResponse)
+    assert len(response.output.tasks) == 1

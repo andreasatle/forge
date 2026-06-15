@@ -14,14 +14,17 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DependentSplitDecision,
     FailureKind,
     NodeState,
+    OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
     RequestId,
     RequestSource,
     ResponseStatus,
     SchedulerState,
+    WorkDecision,
     WorkSpec,
 )
 from forge.core.plan_expansion import PlanExpansionBuilder
@@ -137,12 +140,18 @@ class SchedulerConsequenceHandler:
         if (
             node.request.agent_type == AgentType.PLAN
             and response.status == ResponseStatus.COMPLETED
-            and isinstance(response.output, PlanResponse)
         ):
-            return [
-                DAGNode(request=request)
-                for request in PlanExpansionBuilder(node.request).build(response.output)
-            ]
+            output = response.output
+            if isinstance(output, PlanResponse):
+                return [
+                    DAGNode(request=request)
+                    for request in PlanExpansionBuilder(node.request).build(output)
+                ]
+            if isinstance(output, (WorkDecision, DependentSplitDecision, OrthogonalSplitDecision)):
+                return [
+                    DAGNode(request=request)
+                    for request in PlanExpansionBuilder(node.request).build_from_decision(output)
+                ]
         return []
 
     def _handle_accepted_plan(

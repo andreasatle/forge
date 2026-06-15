@@ -11,8 +11,10 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DependentSplitDecision,
     FailureKind,
     NodeState,
+    OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
     RequestId,
@@ -20,6 +22,7 @@ from forge.core.models import (
     ResponseStatus,
     SchedulerState,
     TaskSpec,
+    WorkDecision,
     WorkOutput,
     WorkSpec,
 )
@@ -1156,3 +1159,126 @@ async def test_runner_exception_cancels_dependents() -> None:
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+
+
+# --- DecompositionDecision expansion via scheduler ---
+
+
+def _task_spec(objective: str) -> TaskSpec:
+    return TaskSpec(
+        objective=objective,
+        success_condition="done",
+        adapter="coding",
+        artifact="codebase",
+    )
+
+
+async def test_scheduler_expands_work_decision_via_build_from_decision() -> None:
+    """Planner returning WorkDecision creates exactly one WORK node via build_from_decision."""
+    planner = _plan_request()
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 1
+    assert isinstance(work_nodes[0].request.spec, WorkSpec)
+    assert work_nodes[0].request.spec.objective == "implement parser"
+    assert work_nodes[0].node_state == NodeState.INTEGRATED
+
+
+async def test_scheduler_expands_dependent_split_decision_into_chained_work_nodes() -> None:
+    """Planner returning DependentSplitDecision creates chained WORK nodes."""
+    planner = _plan_request()
+    decision = DependentSplitDecision(tasks=[_task_spec("A"), _task_spec("B"), _task_spec("C")])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state(max_concurrency=3).add_nodes([DAGNode(request=planner)])
+    )
+
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 3
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+
+    def objective(n: DAGNode) -> str:
+        assert isinstance(n.request.spec, WorkSpec)
+        return n.request.spec.objective
+
+    node_a = next(n for n in work_nodes if objective(n) == "A")
+    node_b = next(n for n in work_nodes if objective(n) == "B")
+    node_c = next(n for n in work_nodes if objective(n) == "C")
+    assert node_a.request.dependencies == frozenset()
+    assert node_a.request.id in node_b.request.dependencies
+    assert node_b.request.id in node_c.request.dependencies
+
+
+async def test_scheduler_expands_orthogonal_split_decision_into_independent_work_nodes() -> None:
+    """Planner returning OrthogonalSplitDecision creates independent WORK nodes."""
+    planner = _plan_request()
+    decision = OrthogonalSplitDecision(tasks=[_task_spec("X"), _task_spec("Y")])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state(max_concurrency=2).add_nodes([DAGNode(request=planner)])
+    )
+
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 2
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+    assert all(n.request.dependencies == frozenset() for n in work_nodes)
+
+
+async def test_scheduler_legacy_plan_response_still_expands_correctly() -> None:
+    """Legacy PlanResponse still expands to work nodes after DecompositionDecision support added."""
+    planner = _plan_request()
+    plan = PlanResponse(tasks=[_task_spec("legacy-task")])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=plan,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 1
+    assert work_nodes[0].node_state == NodeState.INTEGRATED
+    assert isinstance(work_nodes[0].request.spec, WorkSpec)
+    assert work_nodes[0].request.spec.objective == "legacy-task"

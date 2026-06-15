@@ -4,7 +4,7 @@ from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 RequestId = UUID
 
@@ -409,7 +409,22 @@ DecompositionDecision = Annotated[
     Field(discriminator="kind"),
 ]
 
-ProducerOutput = PlanResponse | WorkOutput
+
+class PlannerOutputModel(
+    RootModel[
+        Annotated[
+            PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision,
+            Field(discriminator="kind"),
+        ]
+    ],
+    frozen=True,
+):
+    """Planner final response type — PlanResponse (legacy) or a DecompositionDecision."""
+
+
+ProducerOutput = (
+    PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision | WorkOutput
+)
 
 
 class ToolTurn(BaseModel, frozen=True):
@@ -424,7 +439,10 @@ class FinalTurn(BaseModel, frozen=True):
     """Strict protocol envelope for one LLM final-answer turn."""
 
     kind: Literal["final"] = "final"
-    output: Annotated[WorkOutput | PlanResponse, Field(discriminator="kind")]
+    output: Annotated[
+        WorkOutput | PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision,
+        Field(discriminator="kind"),
+    ]
 
 
 VALIDATION_EXHAUSTED_DIAGNOSTIC = "validation_exhausted"

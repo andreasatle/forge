@@ -1,12 +1,12 @@
 """Planning agent that decomposes a northstar goal into concrete work tasks."""
 
 from forge.adapters.registry import AdapterRegistry
-from forge.agents.attempt import AttemptLifecycle, PlanResponseValidator, RunAgentFailed
+from forge.agents.attempt import AttemptLifecycle, PlannerOutputValidator, RunAgentFailed
 from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
-    PlanResponse,
+    PlannerOutputModel,
     PlanSpec,
     ResponseStatus,
     StateView,
@@ -28,7 +28,7 @@ Fix the error and return corrected JSON only — no explanation, no markdown.
 """
 
 PLAN_PROMPT = """
-You are a planning agent. Given a goal, decompose it into at most 5 concrete tasks.
+You are a planning agent. Given a goal, choose a decomposition decision.
 
 Available artifacts:
 {artifact_details}
@@ -38,15 +38,32 @@ Each coding task must declare the correct language for its artifact.
 Rules:
 - EVERY task MUST include the "artifact" field — omitting it is an error
 - artifact must be one of: {artifact_names}
-- depends_on contains indices (0-based) of tasks this task depends on
 - adapter must be one of: coding, document, audit
-- No more than 5 tasks
+- No more than 5 tasks per decision
 - Success conditions must describe observable outcomes
   (tests pass, output matches, endpoint returns X)
 - Every coding task success condition must be verifiable by running tests
   — phrase it as an observable test outcome, not as a description of the implementation
 - Task objectives, success conditions, acceptance criteria, constraints, and non-goals
   must not contradict artifact-specific language guidance
+
+Decomposition decision kinds (choose one):
+
+  kind="work" — task is small enough to execute directly.
+    Use when the goal fits in one focused implementation session.
+    {{"kind":"work","task":{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}}}}
+
+  kind="split_dependent" — children must run in order; Forge creates dependencies automatically.
+    Use when tasks must be completed sequentially (each builds on the previous).
+    {{"kind":"split_dependent","tasks":[{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},...] }}
+
+  kind="split_orthogonal" — children are independent; Forge creates no sibling dependencies.
+    Use when tasks can run in parallel with no ordering requirement.
+    {{"kind":"split_orthogonal","tasks":[{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},...] }}
+
+Legacy (still accepted):
+  kind="plan" — list tasks with explicit depends_on indices.
+    {{"kind":"plan","tasks":[{{"objective":"...","depends_on":[0],...}},...] }}
 {decomposition_context}
 Goal: {northstar}
 
@@ -133,14 +150,14 @@ class PlannerTaskExecutor:
                 provider,
                 current_prompt,
                 correction_prompt_fn=correction_fn,
-                final_response_type=PlanResponse,
+                final_response_type=PlannerOutputModel,
                 max_retries=max_retries,
             )
 
         lifecycle = AttemptLifecycle(
             request=request,
             state_view=_DUMMY_STATE_VIEW,
-            validator=PlanResponseValidator(),
+            validator=PlannerOutputValidator(),
             run_fn=_run_fn,
             registry=self.registry,
             critic_provider=self.critic_provider,

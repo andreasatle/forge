@@ -16,6 +16,7 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     FailureKind,
+    PlannerOutputModel,
     PlanResponse,
     ProducerOutput,
     ResponseStatus,
@@ -174,6 +175,9 @@ class PromptBuilder:
             compact["required"] = schema["required"]
         if "$defs" in schema:
             compact["$defs"] = schema["$defs"]
+        for key in ("oneOf", "anyOf", "discriminator"):
+            if key in schema:
+                compact[key] = schema[key]
         return compact
 
     @classmethod
@@ -541,6 +545,8 @@ class ToolLoop:
                 output = parsed
             elif isinstance(parsed, WorkOutput):
                 output = parsed
+            elif isinstance(parsed, PlannerOutputModel):
+                output = parsed.root
             return AgentResponse(
                 request_id=self.request.id,
                 status=ResponseStatus.COMPLETED,
