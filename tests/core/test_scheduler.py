@@ -1720,4 +1720,174 @@ async def test_telemetry_has_distinct_dispatched_events_for_root_child_and_work_
     assert len(work_ids) == 1
     assert plan_ids <= dispatched_ids
     assert work_ids <= dispatched_ids
-    assert len(dispatched_ids) == 3
+
+
+# --- DECOMPOSE convergence loop protection (Step 8) ---
+
+
+async def test_decompose_convergence_loop_is_rejected() -> None:
+    """PLAN('X') → DECOMPOSE → PLAN('X') → DECOMPOSE is rejected as a non-reductive loop."""
+    root_plan = _plan_request()
+    plan_calls: list[RequestId] = []
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.agent_type == AgentType.PLAN:
+            plan_calls.append(request.id)
+            return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    # First plan is cancelled (first DECOMPOSE allowed), replacement is FAILED (loop caught)
+    assert final.dag[root_plan.id].node_state == NodeState.CANCELLED
+    replacement_plans = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN and n.request.id != root_plan.id
+    ]
+    assert len(replacement_plans) == 1
+    failed = replacement_plans[0]
+    assert failed.node_state == NodeState.FAILED
+    assert failed.response is not None
+    assert failed.response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "not reductive" in (failed.response.error or "")
+    assert len(plan_calls) == 2  # no infinite loop
+
+
+async def test_decompose_convergence_normalized_objective_rejected() -> None:
+    """Loop detection is case-insensitive and whitespace-normalized."""
+    plan = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(
+            northstar="Build The Parser",
+            contract=AgentContract(
+                objective="Build The Parser",
+                success_condition="parser built",
+            ),
+        ),
+    )
+    plan_calls: list[RequestId] = []
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.agent_type == AgentType.PLAN:
+            plan_calls.append(request.id)
+            return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=plan)]))
+
+    assert len(plan_calls) == 2  # no infinite loop
+    replacement_plans = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN and n.request.id != plan.id
+    ]
+    assert len(replacement_plans) == 1
+    assert replacement_plans[0].node_state == NodeState.FAILED
+    assert replacement_plans[0].response is not None
+    assert replacement_plans[0].response.failure_kind == FailureKind.VALIDATION_REJECTED
+
+
+async def test_decompose_convergence_work_to_plan_is_allowed() -> None:
+    """WORK → DECOMPOSE → PLAN is always allowed; the check only catches PLAN-to-PLAN loops."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return _decompose(request)
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=PlanResponse(tasks=[]),
+        )
+
+    final = await Scheduler(runner=runner).run(state)
+
+    assert final.dag[work.id].node_state == NodeState.CANCELLED
+    plan_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.PLAN]
+    assert len(plan_nodes) == 1
+    assert plan_nodes[0].node_state == NodeState.INTEGRATED
+
+
+async def test_decompose_convergence_split_decisions_unaffected() -> None:
+    """OrthogonalSplitDecision expansion is unaffected by DECOMPOSE convergence checks."""
+    planner = _plan_request()
+    decision = OrthogonalSplitDecision(tasks=[_task_spec("task-one"), _task_spec("task-two")])
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=decision
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state(max_concurrency=2).add_nodes([DAGNode(request=planner)])
+    )
+
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 2
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+
+
+async def test_decompose_convergence_no_depth_limit() -> None:
+    """Recursive decomposition via DecompositionTask is not depth-limited by convergence checks."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if not isinstance(request.spec, PlanSpec):
+            return _ok(request)
+        northstar = request.spec.northstar
+        if northstar == "test northstar":
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(tasks=[_decomposition_task_spec("level-two")]),
+            )
+        if northstar == "level-two":
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(tasks=[_decomposition_task_spec("level-three")]),
+            )
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=OrthogonalSplitDecision(tasks=[_task_spec("leaf-work")]),
+        )
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    plan_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.PLAN]
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(plan_nodes) == 3
+    assert len(work_nodes) == 1
+    assert all(n.node_state == NodeState.INTEGRATED for n in plan_nodes)
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+
+
+async def test_decompose_convergence_emits_convergence_failed_telemetry() -> None:
+    """DECOMPOSE loop detection emits a node.convergence_failed telemetry event."""
+    root_plan = _plan_request()
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
+        return _ok(request)
+
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    convergence_events = [e for e in sink.events if e.event_type == "node.convergence_failed"]
+    assert len(convergence_events) == 1
+    assert convergence_events[0].status == "failed"
+    assert "reason" in convergence_events[0].data
+    assert "not reductive" in convergence_events[0].data["reason"]

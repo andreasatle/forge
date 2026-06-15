@@ -192,6 +192,28 @@ class SchedulerConsequenceHandler:
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
 
+    @staticmethod
+    def _normalize_objective(text: str) -> str:
+        return " ".join(text.lower().strip().split())
+
+    def _prior_decompose_plan_exists(
+        self,
+        state: SchedulerState,
+        current_id: RequestId,
+        objective: str,
+    ) -> bool:
+        """True if another cancelled PLAN already returned DECOMPOSE for this objective."""
+        norm = self._normalize_objective(objective)
+        return any(
+            node.request.id != current_id
+            and node.request.agent_type == AgentType.PLAN
+            and node.node_state == NodeState.CANCELLED
+            and node.response is not None
+            and node.response.status == ResponseStatus.DECOMPOSE
+            and self._normalize_objective(node.request.spec.contract.objective) == norm
+            for node in state.dag.values()
+        )
+
     def _handle_decompose(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
         spec = updated.request.spec
         if isinstance(spec, WorkSpec):
@@ -199,13 +221,32 @@ class SchedulerConsequenceHandler:
         else:
             northstar = spec.northstar
 
+        replacement_objective = spec.contract.objective
+        if self._prior_decompose_plan_exists(state, updated.request.id, replacement_objective):
+            error = (
+                "DECOMPOSE is not reductive: replacement objective repeats the current objective. "
+                "Return WorkDecision if the task is already atomic or propose a narrower decomposition."
+            )
+            self._emit_convergence_failure(updated, error)
+            failed_response = AgentResponse(
+                request_id=updated.request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                error=error,
+            )
+            failed_node = updated.model_copy(
+                update={"response": failed_response, "node_state": NodeState.FAILED}
+            )
+            state = state.update_node(failed_node)
+            return self._handle_failed(state, failed_node, TerminalOutcomeKind.TERMINAL_FAILURE)
+
         new_plan_request = AgentRequest(
             agent_type=AgentType.PLAN,
             source=RequestSource.USER,
             spec=PlanSpec(
                 northstar=northstar,
                 contract=AgentContract(
-                    objective=spec.contract.objective,
+                    objective=replacement_objective,
                     success_condition=spec.contract.success_condition,
                     acceptance_criteria=spec.contract.acceptance_criteria,
                     constraints=[
