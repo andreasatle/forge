@@ -11,6 +11,7 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DecompositionTask,
     DependentSplitDecision,
     FailureKind,
     NodeState,
@@ -1426,3 +1427,297 @@ async def test_scheduler_valid_split_not_affected_by_convergence_check() -> None
     work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
     assert len(work_nodes) == 2
     assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+
+
+# --- Recursive PWC symmetry (Step 7) ---
+
+
+def _decomposition_task_spec(objective: str) -> DecompositionTask:
+    return DecompositionTask(objective=objective, success_condition="planned")
+
+
+async def test_root_plan_emits_decomposition_task_child_plan_is_dispatched() -> None:
+    """Root PLAN emitting a DecompositionTask results in a child PLAN node that is dispatched."""
+    root_plan = _plan_request()
+    dispatched_ids: list[RequestId] = []
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        dispatched_ids.append(request.id)
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[_decomposition_task_spec("implement sub-system")]
+                ),
+            )
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=PlanResponse(tasks=[]),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    plan_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.PLAN]
+    assert len(plan_nodes) == 2
+    child_plan = next(n for n in plan_nodes if n.request.id != root_plan.id)
+    assert child_plan.request.id in dispatched_ids
+    assert isinstance(child_plan.request.spec, PlanSpec)
+    assert child_plan.request.spec.northstar == "implement sub-system"
+    assert child_plan.request.source == RequestSource.PLANNER
+
+
+async def test_two_level_decomposition_grandchild_work_node_completes() -> None:
+    """Root PLAN → child PLAN (via DecompositionTask) → grandchild WORK: all reach terminal state."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[_decomposition_task_spec("implement sub-system")]
+                ),
+            )
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[
+                        TaskSpec(
+                            objective="write the implementation",
+                            success_condition="tests pass",
+                            adapter="coding",
+                            artifact="codebase",
+                        )
+                    ]
+                ),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    plan_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.PLAN]
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(plan_nodes) == 2
+    assert len(work_nodes) == 1
+    assert all(n.node_state == NodeState.INTEGRATED for n in plan_nodes)
+    assert work_nodes[0].node_state == NodeState.INTEGRATED
+    assert isinstance(work_nodes[0].request.spec, WorkSpec)
+    assert work_nodes[0].request.spec.objective == "write the implementation"
+
+
+async def test_child_plan_node_uses_same_acceptance_path_as_root() -> None:
+    """Child PLAN node accepted via OrthogonalSplitDecision expands children identically to root."""
+    root_plan = _plan_request()
+    plan_nodes_seen: list[RequestId] = []
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.agent_type == AgentType.PLAN:
+            plan_nodes_seen.append(request.id)
+            if request.id == root_plan.id:
+                return AgentResponse(
+                    request_id=request.id,
+                    status=ResponseStatus.COMPLETED,
+                    output=DependentSplitDecision(
+                        tasks=[
+                            _decomposition_task_spec("plan phase-one"),
+                            _task_spec("finalize"),
+                        ]
+                    ),
+                )
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkDecision(
+                    task=WorkSpec(
+                        objective="phase-one work",
+                        success_condition="done",
+                        adapter="coding",
+                        artifact="codebase",
+                    )
+                ),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    assert len(plan_nodes_seen) == 2
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 2
+    objectives = {
+        n.request.spec.objective for n in work_nodes if isinstance(n.request.spec, WorkSpec)
+    }
+    assert objectives == {"phase-one work", "finalize"}
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+
+
+async def test_plan_node_decompose_disposition_creates_new_plan_node_not_failure() -> None:
+    """A PLAN node returning DECOMPOSE creates a replacement PLAN node — not a failure."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == root_plan.id:
+            return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=PlanResponse(tasks=[]),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    assert final.dag[root_plan.id].node_state == NodeState.CANCELLED
+    replacement_plans = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN and n.request.id != root_plan.id
+    ]
+    assert len(replacement_plans) == 1
+    assert replacement_plans[0].node_state == NodeState.INTEGRATED
+    assert isinstance(replacement_plans[0].request.spec, PlanSpec)
+    assert replacement_plans[0].request.spec.northstar == "test northstar"
+
+
+async def test_child_plan_decompose_disposition_creates_new_plan_node() -> None:
+    """A child PLAN node returning DECOMPOSE behaves symmetrically with root: creates new PLAN."""
+    root_plan = _plan_request()
+    # Guard so the replacement plan does not also DECOMPOSE, which would loop forever.
+    child_decomposed_once = False
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        nonlocal child_decomposed_once
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[_decomposition_task_spec("implement sub-system")]
+                ),
+            )
+        spec = request.spec
+        if (
+            request.agent_type == AgentType.PLAN
+            and isinstance(spec, PlanSpec)
+            and spec.northstar == "implement sub-system"
+            and not child_decomposed_once
+        ):
+            child_decomposed_once = True
+            return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=PlanResponse(tasks=[]),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    plan_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.PLAN]
+    cancelled_plans = [n for n in plan_nodes if n.node_state == NodeState.CANCELLED]
+    assert len(cancelled_plans) == 1
+    assert isinstance(cancelled_plans[0].request.spec, PlanSpec)
+    assert cancelled_plans[0].request.spec.northstar == "implement sub-system"
+    integrated_plans = [n for n in plan_nodes if n.node_state == NodeState.INTEGRATED]
+    assert len(integrated_plans) >= 2
+
+
+async def test_child_plan_failure_marks_failed_like_root_plan_failure() -> None:
+    """Child PLAN node failure marks it FAILED, symmetrically with root PLAN failure."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[_decomposition_task_spec("implement sub-system")]
+                ),
+            )
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                error="child plan rejected after exhausting revisions",
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    child_plans = [
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN and n.request.id != root_plan.id
+    ]
+    assert len(child_plans) == 1
+    assert child_plans[0].node_state == NodeState.FAILED
+    assert child_plans[0].response is not None
+    assert child_plans[0].response.failure_kind == FailureKind.VALIDATION_REJECTED
+
+
+async def test_telemetry_has_distinct_dispatched_events_for_root_child_and_work_nodes() -> None:
+    """Telemetry node.dispatched events are emitted for root PLAN, child PLAN, and WORK nodes."""
+    root_plan = _plan_request()
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[_decomposition_task_spec("implement sub-system")]
+                ),
+            )
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=OrthogonalSplitDecision(
+                    tasks=[
+                        TaskSpec(
+                            objective="write the code",
+                            success_condition="tests pass",
+                            adapter="coding",
+                            artifact="codebase",
+                        )
+                    ]
+                ),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    dispatched = [e for e in sink.events if e.event_type == "node.dispatched"]
+    dispatched_ids = {e.node_id for e in dispatched}
+    plan_ids = {n.request.id for n in final.dag.values() if n.request.agent_type == AgentType.PLAN}
+    work_ids = {n.request.id for n in final.dag.values() if n.request.agent_type == AgentType.WORK}
+    assert len(plan_ids) == 2
+    assert len(work_ids) == 1
+    assert plan_ids <= dispatched_ids
+    assert work_ids <= dispatched_ids
+    assert len(dispatched_ids) == 3

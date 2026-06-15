@@ -194,14 +194,16 @@ class SchedulerConsequenceHandler:
 
     def _handle_decompose(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
         spec = updated.request.spec
-        if not isinstance(spec, WorkSpec):
-            return self._handle_failed(state, updated, TerminalOutcomeKind.TERMINAL_FAILURE)
+        if isinstance(spec, WorkSpec):
+            northstar = spec.objective
+        else:
+            northstar = spec.northstar
 
         new_plan_request = AgentRequest(
             agent_type=AgentType.PLAN,
             source=RequestSource.USER,
             spec=PlanSpec(
-                northstar=spec.objective,
+                northstar=northstar,
                 contract=AgentContract(
                     objective=spec.contract.objective,
                     success_condition=spec.contract.success_condition,
@@ -330,7 +332,7 @@ class SchedulerConsequenceHandler:
                 event_type="node.dispatched",
                 status="dispatched",
                 summary=spec.contract.objective,
-                data={"contract": contract_data},
+                data={"contract": contract_data, "source": node.request.source.value},
             ),
         )
 
