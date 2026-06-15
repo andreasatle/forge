@@ -124,6 +124,16 @@ def test_python_supplement_contains_packaging_guidance() -> None:
     assert "setup.py" in supplement
 
 
+def test_python_supplement_distinguishes_uv_as_package_manager() -> None:
+    """Python supplement must clarify uv is the package manager, not a project dependency."""
+    data = yaml.safe_load((LANGUAGES_DIR / "python.yaml").read_text())
+    supplement = data["prompt_supplement"]
+    assert "uv is the package manager" in supplement
+    assert "Do not add uv itself as a dependency" in supplement
+    assert "Do not put uv in [project].dependencies" in supplement
+    assert "Do not put uv in [build-system].requires" in supplement
+
+
 def test_language_work_output_examples_are_str_format_safe() -> None:
     """work_output_example must be safe to call str.format(base_version=N) on — all literal braces escaped."""
     for path in LANGUAGES_DIR.glob("*.yaml"):

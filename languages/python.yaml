@@ -17,8 +17,8 @@ prompt_supplement: |
     pythonpath = ["src"]
 
   Import modules directly by name, not with src. prefix:
-    correct:   from scraper import WebScraper
-    incorrect: from src.scraper import WebScraper
+    correct:   from mymodule import MyClass
+    incorrect: from src.mymodule import MyClass
   Never add Python stdlib modules as dependencies — csv, json, os,
   re, pathlib, sys, and similar built-in modules are always available
   without installation.
@@ -29,16 +29,22 @@ prompt_supplement: |
   - If pytest fails, the task is NOT done — fix the failures.
 
   Package rules:
-  - Add required runtime packages with uv so pyproject.toml and the lockfile
-    are changed in the worktree.
+  - Add required runtime packages with uv so pyproject.toml and uv.lock
+    are changed in the worktree:
+      uv add <package-name>
+      uv add <package-one> <package-two>
+  - uv is the package manager, not a package used by the project.
+    Do not add uv itself as a dependency.
+    Do not put uv in [project].dependencies.
+    Do not put uv in [build-system].requires.
   - Do not list dependencies in WorkOutput; dependency changes are captured by git.
 work_output_example: |
   Example of valid worktree changes plus WorkOutput completion metadata:
-  - write src/scraper.py and tests/test_scraper.py in the worktree
-  - add requests with uv so pyproject.toml/uv.lock change in the worktree
+  - write src/example.py and tests/test_example.py in the worktree
+  - add required runtime packages with uv so pyproject.toml/uv.lock change in the worktree
   Final response:
   {{
     "kind": "work_output",
-    "summary": "Implemented scraper module, added tests, and added requests dependency.",
+    "summary": "Implemented Python module, added tests, and added required runtime dependencies.",
     "base_version": "{base_version}"
   }}
