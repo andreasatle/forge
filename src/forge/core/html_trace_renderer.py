@@ -154,6 +154,7 @@ class HtmlTraceRenderer:
     li {{ margin-bottom: 8px; }}
     .empty {{ color: var(--muted); margin: 0; }}
     .warning {{ color: var(--warn); }}
+    .node-objective {{ font-size: 14px; font-weight: 600; color: var(--text); margin: 8px 0 0; overflow-wrap: anywhere; }}
   </style>
 </head>
 <body>
@@ -202,6 +203,10 @@ class HtmlTraceRenderer:
         last_failure = last_event(evts, {"node.failed", "pwc.exhausted"})
         last_revision = last_event(evts, {"pwc.revision.appended"})
         summary = event_summary(last_failure or last_revision) or "No failure or revision summary."
+        objective = self._card_objective(evts)
+        objective_html = (
+            f'<p class="node-objective">{self._e(fit(objective, 120))}</p>' if objective else ""
+        )
         return f"""<a class="node-card" href="#node-{self._e(self._anchor_id(node_id))}">
   <div class="node-top">
     <h3>{self._e(node_id[:8])}</h3>
@@ -211,7 +216,7 @@ class HtmlTraceRenderer:
     <div class="meta-item"><span>agent</span><strong>{self._e(agent_type)}</strong></div>
     <div class="meta-item"><span>attempts</span><strong>{len(attempts)}</strong></div>
   </div>
-  <p class="summary">{self._e(summary)}</p>
+  {objective_html}<p class="summary">{self._e(summary)}</p>
 </a>"""
 
     def _node_detail(self, node_id: str, evts: list[TraceEvent]) -> str:
@@ -250,6 +255,16 @@ class HtmlTraceRenderer:
     {attempt_cards}
   </div>
 </section>"""
+
+    def _card_objective(self, evts: list[TraceEvent]) -> str | None:
+        for event in evts:
+            if event.data.get("event_type") == "node.dispatched":
+                data = dict_value(event.data.get("data"))
+                contract = dict_value(data.get("contract"))
+                objective = str_value(contract.get("objective"))
+                if objective:
+                    return objective
+        return None
 
     def _node_contract(self, evts: list[TraceEvent]) -> str:
         for event in evts:

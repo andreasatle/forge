@@ -584,3 +584,100 @@ def test_max_iterations_diagnostics_block(tmp_path: Path) -> None:
     assert "last_tool_calls=" in result
     assert "ran_tests_and_passed=False" in result
     assert "here is my partial response..." in result
+
+
+# ---------------------------------------------------------------------------
+# Node overview objective tests
+# ---------------------------------------------------------------------------
+
+
+def _dispatched_event_with_objective(node_id: str, agent_type: str, objective: str) -> TraceEvent:
+    return TraceEvent(
+        line_number=10,
+        data={
+            "schema_version": 1,
+            "event_id": f"event-{node_id[:4]}-dispatched",
+            "run_id": RUN_ID,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "node_id": node_id,
+            "request_id": node_id,
+            "agent_type": agent_type,
+            "attempt_number": None,
+            "role": "scheduler",
+            "phase": "scheduler",
+            "event_type": "node.dispatched",
+            "status": "dispatched",
+            "summary": objective,
+            "data": {
+                "contract": {
+                    "objective": objective,
+                    "success_condition": "done",
+                    "artifact": "codebase",
+                    "adapter": "coding",
+                    "acceptance_criteria": [],
+                }
+            },
+        },
+    )
+
+
+def test_work_node_overview_card_includes_objective(tmp_path: Path) -> None:
+    """Work node overview card shows the contract objective prominently."""
+    run = _run(
+        events=[
+            _dispatched_event_with_objective(NODE_1, "work", "Set up Python web scraper"),
+            _event(NODE_1, "work", "producer.response.parsed", attempt=1),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "node-objective" in result
+    assert "Set up Python web scraper" in result
+
+
+def test_plan_node_overview_card_includes_objective(tmp_path: Path) -> None:
+    """Plan node overview card shows the contract objective when available."""
+    run = _run(
+        events=[
+            _dispatched_event_with_objective(NODE_1, "plan", "Plan the project structure"),
+            _plan_producer_event(NODE_1),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "node-objective" in result
+    assert "Plan the project structure" in result
+
+
+def test_overview_card_renders_without_objective(tmp_path: Path) -> None:
+    """Overview card renders correctly when no node.dispatched event is present."""
+    run = _run(
+        events=[_event(NODE_1, "work", "producer.response.parsed", attempt=1)],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert NODE_1[:8] in result
+    assert '<p class="node-objective">' not in result
+
+
+def test_long_objective_truncated_in_overview(tmp_path: Path) -> None:
+    """Objectives longer than 120 chars are truncated in the overview card (117 chars + '...')."""
+    long_objective = "A" * 130
+    run = _run(
+        events=[
+            _dispatched_event_with_objective(NODE_1, "work", long_objective),
+            _event(NODE_1, "work", "producer.response.parsed", attempt=1),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "node-objective" in result
+    assert "A" * 117 + "..." in result
