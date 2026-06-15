@@ -266,6 +266,23 @@ def build_system_prompt(
     return PromptBuilder(tools, final_response_type).build()
 
 
+def _strip_json_fence(text: str) -> str:
+    """Return inner JSON if the entire response is one fenced block; otherwise return stripped text."""
+    stripped = text.strip()
+    if stripped.startswith("```json\n"):
+        inner_start = stripped.index("\n") + 1
+    elif stripped.startswith("```\n"):
+        inner_start = 4
+    else:
+        return stripped
+    if not stripped.endswith("\n```"):
+        return stripped
+    inner = stripped[inner_start:-4]
+    if "```" in inner:
+        return stripped
+    return inner
+
+
 class ResponseParser:
     """Parse raw model text into either a tool call or the final response model."""
 
@@ -278,7 +295,7 @@ class ResponseParser:
     def parse(self, raw: str) -> ToolTurn | BaseModel:
         """Parse raw LLM text into a ToolTurn or the final response model."""
         try:
-            data: object = json.loads(raw.strip())
+            data: object = json.loads(_strip_json_fence(raw))
         except json.JSONDecodeError as e:
             raise ValueError(f"response is not valid JSON: {e}") from e
         data_dict = cast(dict[str, object], data) if isinstance(data, dict) else None

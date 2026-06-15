@@ -230,6 +230,58 @@ def test_response_parser_new_final_turn_unknown_output_kind_raises():
         ResponseParser(WorkOutput).parse(raw)
 
 
+# --- ResponseParser — JSON fence normalization ---
+
+
+def test_response_parser_parses_fenced_json_final_turn():
+    """ResponseParser accepts a final turn wrapped in a JSON code fence."""
+    raw = '```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```'
+    result = ResponseParser(PlanResponse).parse(raw)
+    assert isinstance(result, PlanResponse)
+    assert result.tasks == []
+
+
+def test_response_parser_parses_fenced_json_tool_turn():
+    """ResponseParser accepts a tool turn wrapped in a JSON code fence."""
+    raw = '```json\n{"kind":"tool","name":"run_tests","arguments":{}}\n```'
+    result = ResponseParser(WorkOutput).parse(raw)
+    assert isinstance(result, ToolTurn)
+    assert result.name == "run_tests"
+
+
+def test_response_parser_rejects_fenced_json_with_prose_before():
+    """ResponseParser rejects a fenced block preceded by prose text."""
+    raw = 'Here is the result:\n```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```'
+    with pytest.raises(ValueError, match="not valid JSON"):
+        ResponseParser(PlanResponse).parse(raw)
+
+
+def test_response_parser_rejects_fenced_json_with_prose_after():
+    """ResponseParser rejects a fenced block followed by prose text."""
+    raw = '```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```\nDone!'
+    with pytest.raises(ValueError, match="not valid JSON"):
+        ResponseParser(PlanResponse).parse(raw)
+
+
+def test_response_parser_rejects_multiple_fenced_blocks():
+    """ResponseParser rejects a response containing multiple JSON fenced blocks."""
+    raw = (
+        '```json\n{"kind":"tool","name":"read_file","arguments":{}}\n```'
+        "\n\n"
+        '```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```'
+    )
+    with pytest.raises(ValueError, match="not valid JSON"):
+        ResponseParser(PlanResponse).parse(raw)
+
+
+def test_response_parser_parses_unfenced_valid_json_unchanged():
+    """ResponseParser continues to accept valid unfenced JSON without modification."""
+    raw = '{"kind":"final","output":{"kind":"plan","tasks":[]}}'
+    result = ResponseParser(PlanResponse).parse(raw)
+    assert isinstance(result, PlanResponse)
+    assert result.tasks == []
+
+
 # --- TrackedToolExecutor ---
 
 
