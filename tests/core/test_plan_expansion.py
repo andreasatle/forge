@@ -5,10 +5,13 @@ from forge.core.models import (
     AgentMessageKind,
     AgentRequest,
     AgentType,
+    DependentSplitDecision,
+    OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
     RequestSource,
     TaskSpec,
+    WorkDecision,
     WorkSpec,
 )
 from forge.core.plan_expansion import PlanExpansionBuilder
@@ -149,3 +152,65 @@ def test_plan_expansion_builder_empty_plan_returns_no_work_requests() -> None:
     plan = PlanResponse(kind=AgentMessageKind.PLAN, tasks=[])
 
     assert PlanExpansionBuilder(_plan_request()).build(plan) == []
+
+
+# --- DecompositionDecision expansion ---
+
+
+def _make_task_spec(objective: str = "task") -> TaskSpec:
+    return TaskSpec(
+        objective=objective,
+        success_condition="done",
+        adapter="coding",
+        artifact="codebase",
+    )
+
+
+def test_work_decision_expands_to_one_work_node() -> None:
+    """WorkDecision produces exactly one WORK request carrying the provided WorkSpec."""
+    work_spec = WorkSpec(
+        objective="implement parser",
+        success_condition="parser passes tests",
+        adapter="coding",
+        artifact="codebase",
+    )
+    decision = WorkDecision(task=work_spec)
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert len(requests) == 1
+    assert requests[0].agent_type == AgentType.WORK
+    assert requests[0].source == RequestSource.PLANNER
+    assert requests[0].spec == work_spec
+    assert requests[0].dependencies == frozenset()
+
+
+def test_dependent_split_decision_expands_to_chained_work_nodes() -> None:
+    """DependentSplitDecision with three tasks produces three WORK nodes chained a->b->c."""
+    decision = DependentSplitDecision(
+        tasks=[_make_task_spec("a"), _make_task_spec("b"), _make_task_spec("c")]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    node_a, node_b, node_c = requests
+
+    assert len(requests) == 3
+    assert all(r.agent_type == AgentType.WORK for r in requests)
+    assert node_a.dependencies == frozenset()
+    assert node_a.id in node_b.dependencies
+    assert len(node_b.dependencies) == 1
+    assert node_b.id in node_c.dependencies
+    assert len(node_c.dependencies) == 1
+
+
+def test_orthogonal_split_decision_expands_to_independent_work_nodes() -> None:
+    """OrthogonalSplitDecision with three tasks produces three WORK nodes with no sibling deps."""
+    decision = OrthogonalSplitDecision(
+        tasks=[_make_task_spec("a"), _make_task_spec("b"), _make_task_spec("c")]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert len(requests) == 3
+    assert all(r.agent_type == AgentType.WORK for r in requests)
+    assert all(r.dependencies == frozenset() for r in requests)
