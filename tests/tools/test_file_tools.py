@@ -8,16 +8,22 @@ import pytest
 from forge.core.workspace import Workspace
 from forge.tools.file_tools import (
     list_files,
+    list_files_from_root,
     make_list_files_tool,
+    make_read_file_tool_for_root,
     make_replace_in_file_tool_for_root,
+    make_write_file_tool_for_root,
     read_file,
+    read_file_from_root,
     write_file_to_root,
 )
 from forge.tools.schemas import (
     ListFilesRequest,
     ListFilesResponse,
+    ReadFileRequest,
     ReplaceInFileRequest,
     ReplaceInFileResponse,
+    WriteFileRequest,
 )
 
 _ARTIFACT = "test-artifact"
@@ -120,3 +126,66 @@ async def test_replace_in_file_tool_replaces_exact_text(tmp_path: Path) -> None:
 
     assert (tmp_path / "main.py").read_text() == "x = 2\n"
     assert result.replacements == 1
+
+
+# --- Artifact-prefix rejection tests ---
+
+
+@pytest.fixture
+def artifact_root(tmp_path: Path) -> Path:
+    """Return a root directory named 'codebase', matching the failing scenario."""
+    root = tmp_path / "codebase"
+    root.mkdir()
+    return root
+
+
+async def test_write_file_rejects_artifact_prefixed_path(artifact_root: Path) -> None:
+    """write_file_to_root raises when the path starts with the artifact name."""
+    with pytest.raises(ValueError, match="Paths are relative to the artifact root"):
+        await write_file_to_root("codebase/src/scraper.py", "x = 1", artifact_root)
+
+
+async def test_write_file_error_includes_corrected_path(artifact_root: Path) -> None:
+    """write_file_to_root error message shows the corrected path."""
+    with pytest.raises(ValueError, match="src/scraper.py"):
+        await write_file_to_root("codebase/src/scraper.py", "x = 1", artifact_root)
+
+
+async def test_read_file_rejects_artifact_prefixed_path(artifact_root: Path) -> None:
+    """read_file_from_root raises when the path starts with the artifact name."""
+    with pytest.raises(ValueError, match="Paths are relative to the artifact root"):
+        await read_file_from_root("codebase/src/scraper.py", artifact_root)
+
+
+async def test_list_files_rejects_artifact_prefixed_directory(artifact_root: Path) -> None:
+    """list_files_from_root raises when the directory starts with the artifact name."""
+    with pytest.raises(ValueError, match="Paths are relative to the artifact root"):
+        await list_files_from_root("codebase/src", artifact_root)
+
+
+async def test_replace_in_file_tool_rejects_artifact_prefixed_path(artifact_root: Path) -> None:
+    """replace_in_file tool raises when the path starts with the artifact name."""
+    (artifact_root / "main.py").write_text("x = 1\n")
+    tool = make_replace_in_file_tool_for_root(artifact_root)
+    with pytest.raises(ValueError, match="Paths are relative to the artifact root"):
+        await tool.fn(ReplaceInFileRequest(path="codebase/main.py", old="1", new="2"))
+
+
+async def test_write_file_tool_rejects_artifact_prefixed_path(artifact_root: Path) -> None:
+    """make_write_file_tool_for_root raises when the path starts with the artifact name."""
+    tool = make_write_file_tool_for_root(artifact_root)
+    with pytest.raises(ValueError, match="Paths are relative to the artifact root"):
+        await tool.fn(WriteFileRequest(path="codebase/src/main.py", content="x = 1"))
+
+
+async def test_read_file_tool_rejects_artifact_prefixed_path(artifact_root: Path) -> None:
+    """make_read_file_tool_for_root raises when the path starts with the artifact name."""
+    tool = make_read_file_tool_for_root(artifact_root)
+    with pytest.raises(ValueError, match="Paths are relative to the artifact root"):
+        await tool.fn(ReadFileRequest(path="codebase/src/main.py"))
+
+
+async def test_valid_paths_are_still_accepted(artifact_root: Path) -> None:
+    """write_file_to_root accepts ordinary relative paths without artifact prefix."""
+    await write_file_to_root("src/scraper.py", "x = 1", artifact_root)
+    assert (artifact_root / "src" / "scraper.py").read_text() == "x = 1"

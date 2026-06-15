@@ -17,9 +17,18 @@ from forge.tools.schemas import (
 
 
 def _safe_path(root: Path, path: str) -> Path:
+    resolved_root = root.resolve()
+    artifact_name = resolved_root.name
+    if path == artifact_name or path.startswith(artifact_name + "/"):
+        corrected = path[len(artifact_name) + 1 :] if path.startswith(artifact_name + "/") else ""
+        hint = (
+            f"\n\nUse:\n\n{corrected}\n\nnot:\n\n{path}"
+            if corrected
+            else f"\n\nUse the artifact root directly, not: {path}"
+        )
+        raise ValueError(f"Paths are relative to the artifact root.{hint}")
     candidate = (root / path).resolve()
-    root = root.resolve()
-    if candidate != root and root not in candidate.parents:
+    if candidate != resolved_root and resolved_root not in candidate.parents:
         raise ValueError(f"path escapes artifact root: {path}")
     return candidate
 
