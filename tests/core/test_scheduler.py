@@ -97,7 +97,7 @@ async def test_single_work_node_completes() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -132,7 +132,7 @@ async def test_scheduler_derives_work_nodes_from_accepted_plan_output() -> None:
             )
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(_base_state(), planner)
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
 
     work_nodes = [
         n
@@ -174,7 +174,7 @@ async def test_scheduler_does_not_derive_work_nodes_from_failed_plan_output() ->
             error="bad plan",
         )
 
-    final = await Scheduler(runner=runner).run(_base_state(), planner)
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
 
     assert final.dag[planner.id].node_state == NodeState.FAILED
     assert all(n.request.agent_type != AgentType.WORK for n in final.dag.values())
@@ -202,7 +202,7 @@ async def test_validation_rejected_planner_does_not_spawn_unbounded_planner_node
             ],
         )
 
-    final = await asyncio.wait_for(Scheduler(runner=runner).run(state, _plan_request()), timeout=1)
+    final = await asyncio.wait_for(Scheduler(runner=runner).run(state), timeout=1)
 
     plan_nodes = [node for node in final.dag.values() if node.request.agent_type == AgentType.PLAN]
     assert len(plan_nodes) == 1
@@ -221,7 +221,7 @@ async def test_failed_node_cancels_dependents() -> None:
         return _ok(request)
 
     state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
@@ -241,9 +241,7 @@ async def test_scheduler_emits_node_failed_telemetry() -> None:
             error="not accepted",
         )
 
-    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
-        state, _plan_request()
-    )
+    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     events = [event for event in sink.events if event.event_type == "node.failed"]
@@ -271,7 +269,7 @@ async def test_cancelled_nodes_never_dispatched() -> None:
         return _ok(request)
 
     state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
-    await Scheduler(runner=runner).run(state, _plan_request())
+    await Scheduler(runner=runner).run(state)
 
     assert work_b.id not in dispatched
 
@@ -292,7 +290,7 @@ async def test_max_concurrency_respected() -> None:
         return _ok(request)
 
     state = _base_state(max_concurrency=2).add_nodes([DAGNode(request=w) for w in works])
-    await Scheduler(runner=runner).run(state, _plan_request())
+    await Scheduler(runner=runner).run(state)
 
     assert max_running <= 2
     assert max_running == 2
@@ -309,7 +307,7 @@ async def test_on_node_completed_fires() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
+    await Scheduler(runner=runner, callbacks=callbacks).run(state)
 
     assert any(n.request.id == work.id for n in completed)
 
@@ -327,7 +325,7 @@ async def test_on_node_failed_fires() -> None:
             return _fail(request)
         return _ok(request)
 
-    await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
+    await Scheduler(runner=runner, callbacks=callbacks).run(state)
 
     assert any(n.request.id == work.id for n in failed)
 
@@ -340,7 +338,10 @@ async def test_on_idle_fires() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    await Scheduler(runner=runner, callbacks=callbacks).run(_base_state(), _plan_request())
+    plan = _plan_request()
+    await Scheduler(runner=runner, callbacks=callbacks).run(
+        _base_state().add_nodes([DAGNode(request=plan)])
+    )
 
     assert len(idle_calls) >= 1
 
@@ -351,7 +352,8 @@ async def test_terminates_cleanly() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(_base_state(), _plan_request())
+    plan = _plan_request()
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=plan)]))
 
     assert final is not None
 
@@ -367,7 +369,10 @@ async def test_callback_exceptions_do_not_crash() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner, callbacks=callbacks).run(_base_state(), _plan_request())
+    plan = _plan_request()
+    final = await Scheduler(runner=runner, callbacks=callbacks).run(
+        _base_state().add_nodes([DAGNode(request=plan)])
+    )
 
     assert final is not None
 
@@ -386,7 +391,7 @@ async def test_final_state_reflects_all_node_updates() -> None:
     state = _base_state(max_concurrency=2).add_nodes(
         [DAGNode(request=work_a), DAGNode(request=work_b), DAGNode(request=work_c)]
     )
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.INTEGRATED
     assert final.dag[work_b.id].node_state == NodeState.FAILED
@@ -401,7 +406,7 @@ async def test_completed_work_node_is_integrated() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -420,7 +425,7 @@ async def test_transitive_cancellation_propagates_through_chain() -> None:
     state = _base_state().add_nodes(
         [DAGNode(request=work_a), DAGNode(request=work_b), DAGNode(request=work_c)]
     )
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
@@ -435,7 +440,7 @@ async def test_terminates_when_no_pending_or_running_nodes() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert all(
         n.node_state not in (NodeState.PENDING, NodeState.RUNNING) for n in final.dag.values()
@@ -455,7 +460,7 @@ async def test_integration_failure_marks_node_failed() -> None:
             error="integration failed: tests failed",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     response = final.dag[work.id].response
@@ -476,7 +481,7 @@ async def test_integration_failure_preserves_integration_response() -> None:
             error="integration failed: tests failed after work output: assertion failed",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     response = final.dag[work.id].response
     assert final.dag[work.id].node_state == NodeState.FAILED
@@ -499,7 +504,7 @@ async def test_integration_called_process_error_becomes_integration_failed() -> 
             error="integration failed: git command failed with exit code 1: git merge",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     response = final.dag[work.id].response
     assert final.dag[work.id].node_state == NodeState.FAILED
@@ -528,7 +533,7 @@ async def test_integration_failure_cancels_transitive_dependents() -> None:
             )
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
@@ -548,7 +553,7 @@ async def test_validation_failed_work_does_not_apply_work_output() -> None:
             error="validation rejected work",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -561,7 +566,7 @@ async def test_integration_success_marks_node_integrated() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -579,7 +584,7 @@ async def test_stale_work_output_requeues_not_failed() -> None:
             error="integration failed: stale base_version: ...",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -597,7 +602,7 @@ async def test_stale_work_output_fails_after_3_retries() -> None:
             error="integration failed: stale base_version: ...",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     response = final.dag[work.id].response
@@ -619,7 +624,7 @@ async def test_non_stale_integration_failure_marks_failed_immediately() -> None:
             error="integration failed: integration error",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -632,7 +637,7 @@ async def test_already_done_node_skips_integration() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -645,7 +650,7 @@ async def test_already_done_state_version_unchanged() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -660,7 +665,7 @@ async def test_already_done_fires_on_node_completed() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
+    await Scheduler(runner=runner, callbacks=callbacks).run(state)
 
     assert any(n.request.id == work.id for n in completed)
 
@@ -677,7 +682,7 @@ async def test_work_node_missing_work_output_marked_failed() -> None:
             error="completed without WorkOutput completion metadata",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -694,7 +699,7 @@ async def test_work_node_empty_work_output_marked_failed() -> None:
             error="completed with empty WorkOutput completion metadata",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -707,7 +712,7 @@ async def test_work_node_already_done_empty_work_output_skips_guard() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         return _already_done(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -724,7 +729,7 @@ async def test_work_node_non_empty_work_output_integrates_normally() -> None:
             output=WorkOutput(summary="Completed worktree changes."),
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
@@ -742,7 +747,7 @@ async def test_work_node_integrates_typed_work_output() -> None:
             output=work_output,
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.INTEGRATED
     node_response = final.dag[work.id].response
@@ -763,7 +768,7 @@ async def test_integration_failure_with_revision_requeues_node() -> None:
             error="integration failed: tests failed after work output: error",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -781,7 +786,7 @@ async def test_integration_failure_without_revision_marks_failed() -> None:
             error="integration failed: integration error",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
 
@@ -799,7 +804,7 @@ async def test_integration_revision_exhaustion_marks_failed() -> None:
             error="integration failed: tests failed after work output: error",
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     response = final.dag[work.id].response
@@ -827,7 +832,7 @@ async def test_dependents_not_cancelled_on_integration_revision_requeue() -> Non
             )
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
@@ -850,7 +855,7 @@ async def test_decompose_status_creates_new_plan_node() -> None:
             output=PlanResponse(tasks=[]),
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     decompose_plan_nodes = [
         n
@@ -877,7 +882,7 @@ async def test_decompose_work_node_is_cancelled_not_failed() -> None:
             output=PlanResponse(tasks=[]),
         )
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.CANCELLED
     assert final.dag[work.id].node_state != NodeState.FAILED
@@ -900,7 +905,7 @@ async def test_decompose_transfers_dependents_to_new_plan_node() -> None:
             )
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.CANCELLED
     # work_b ran successfully — its dep was transferred to the new plan node
@@ -938,7 +943,7 @@ async def test_decompose_does_not_fire_on_node_failed() -> None:
             output=PlanResponse(tasks=[]),
         )
 
-    await Scheduler(runner=runner, callbacks=callbacks).run(state, _plan_request())
+    await Scheduler(runner=runner, callbacks=callbacks).run(state)
 
     assert not any(n.request.id == work.id for n in failed_nodes)
 
@@ -982,7 +987,7 @@ async def test_decompose_end_to_end_plan_produces_two_subtasks() -> None:
             )
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.CANCELLED
 
@@ -1026,9 +1031,7 @@ async def test_decompose_emits_node_decomposed_telemetry() -> None:
             output=PlanResponse(tasks=[]),
         )
 
-    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
-        state, _plan_request()
-    )
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(state)
 
     decompose_events = [e for e in sink.events if e.event_type == "node.decomposed"]
     assert len(decompose_events) == 1
@@ -1052,7 +1055,7 @@ async def test_runner_exception_stores_failed_response_not_none() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         raise AttributeError("'AttemptEngine' object has no attribute '_emit'")
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     response = final.dag[work.id].response
@@ -1068,7 +1071,7 @@ async def test_runner_exception_response_has_internal_error_kind() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         raise RuntimeError("unexpected executor crash")
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     response = final.dag[work.id].response
     assert response is not None
@@ -1085,9 +1088,7 @@ async def test_runner_exception_telemetry_node_failed_has_error_summary() -> Non
     async def runner(request: AgentRequest) -> AgentResponse:
         raise AttributeError("'AttemptEngine' object has no attribute '_emit'")
 
-    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
-        state, _plan_request()
-    )
+    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(state)
 
     assert final.dag[work.id].node_state == NodeState.FAILED
     events = [e for e in sink.events if e.event_type == "node.failed"]
@@ -1121,9 +1122,7 @@ async def test_scheduler_emits_node_dispatched_telemetry_for_work_node() -> None
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
-        state, _plan_request()
-    )
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(state)
 
     dispatched = [e for e in sink.events if e.event_type == "node.dispatched"]
     work_dispatched = [e for e in dispatched if e.node_id == work.id]
@@ -1153,7 +1152,7 @@ async def test_runner_exception_cancels_dependents() -> None:
             raise RuntimeError("crash before attempt")
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED

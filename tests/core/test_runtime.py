@@ -16,6 +16,11 @@ from forge.core.config import (
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
+    AgentType,
+    DAGNode,
+    NodeState,
+    PlanSpec,
+    RequestSource,
     SchedulerState,
 )
 from forge.core.runtime import ForgeRuntime, StartResult
@@ -56,7 +61,7 @@ def _minimal_config(tmp_path: Path) -> ForgeConfig:
 
 
 class _FakeScheduler:
-    """Minimal scheduler stand-in that dispatches the global planner and returns state unchanged."""
+    """Minimal scheduler stand-in that accepts pre-seeded state and returns it unchanged."""
 
     def __init__(
         self,
@@ -71,8 +76,7 @@ class _FakeScheduler:
         self.run_id = run_id
         self.telemetry_sink = telemetry_sink
 
-    async def run(self, state: SchedulerState, global_planner: AgentRequest) -> SchedulerState:
-        await self.runner(global_planner)
+    async def run(self, state: SchedulerState) -> SchedulerState:
         return state
 
 
@@ -140,7 +144,7 @@ async def test_runtime_creates_telemetry_sink(tmp_path: Path, monkeypatch: Monke
         ) -> None:
             captured_sink.append(telemetry_sink)
 
-        async def run(self, state: SchedulerState, global_planner: AgentRequest) -> SchedulerState:
+        async def run(self, state: SchedulerState) -> SchedulerState:
             return state
 
     monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
@@ -208,3 +212,89 @@ async def test_runtime_wires_adapter_and_language_registries(
 
     assert len(loaded_adapters) == 1
     assert len(loaded_languages) == 1
+
+
+async def test_runtime_seeds_root_node_into_empty_dag(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Runtime adds a root planner node to the empty DAG before calling Scheduler.run."""
+    captured_states: list[SchedulerState] = []
+
+    class _CapturingScheduler:
+        def __init__(
+            self,
+            *,
+            runner: object,
+            callbacks: object = None,
+            telemetry_sink: object = None,
+            run_id: object = None,
+        ) -> None:
+            pass
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            captured_states.append(state)
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _CapturingScheduler)
+
+    await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert len(captured_states) == 1
+    state = captured_states[0]
+    assert len(state.dag) == 1
+    root = next(iter(state.dag.values()))
+    assert root.request.agent_type == AgentType.PLAN
+    assert root.request.source == RequestSource.USER
+    assert isinstance(root.request.spec, PlanSpec)
+    assert root.node_state == NodeState.PENDING
+
+
+async def test_runtime_does_not_seed_root_node_when_resuming(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Runtime does not add a root node when the loaded SchedulerState already has nodes."""
+    existing_plan = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a tool"),
+    )
+    existing_state = SchedulerState(northstar="build a tool", max_concurrency=1).add_nodes(
+        [DAGNode(request=existing_plan)]
+    )
+    captured_states: list[SchedulerState] = []
+
+    class _CapturingScheduler:
+        def __init__(
+            self,
+            *,
+            runner: object,
+            callbacks: object = None,
+            telemetry_sink: object = None,
+            run_id: object = None,
+        ) -> None:
+            pass
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            captured_states.append(state)
+            return state
+
+    ws_path = tmp_path / "ws"
+    ws_path.mkdir(parents=True, exist_ok=True)
+    (ws_path / "state.json").write_text(existing_state.model_dump_json())
+
+    from forge.core.workspace import Workspace
+
+    def _fake_load_run(_ws: Workspace) -> SchedulerState:
+        return existing_state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _CapturingScheduler)
+    monkeypatch.setattr("forge.core.runtime.load_run", _fake_load_run)
+
+    await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert len(captured_states) == 1
+    state = captured_states[0]
+    assert len(state.dag) == 1
+    assert existing_plan.id in state.dag

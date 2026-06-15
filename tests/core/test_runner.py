@@ -284,8 +284,9 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
         ),
     )
 
-    state = SchedulerState(northstar="test northstar")
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    plan = _plan_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=plan)])
+    final = await Scheduler(runner=runner).run(state)
 
     assert final is not None
 
@@ -354,8 +355,9 @@ async def test_scripted_plan_handler_end_to_end_produces_four_completed_nodes(
         ),
     )
 
-    state = SchedulerState(northstar="test northstar")
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    plan = _plan_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=plan)])
+    final = await Scheduler(runner=runner).run(state)
 
     completed = [n for n in final.dag.values() if n.node_state.value == "integrated"]
     assert len(completed) == 4
@@ -372,8 +374,9 @@ async def test_scheduler_dispatches_global_planner_with_user_source() -> None:
     runner = Runner()
     runner.register(AgentType.PLAN, capturing_plan_handler)
 
-    state = SchedulerState(northstar="test northstar")
-    await Scheduler(runner=runner).run(state, _plan_request())
+    plan = _plan_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=plan)])
+    await Scheduler(runner=runner).run(state)
 
     assert RequestSource.USER in captured_sources
 
@@ -392,8 +395,9 @@ async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() ->
     runner.register(AgentType.PLAN, scripted_plan_handler)
     runner.register(AgentType.WORK, tracking_work_handler)
 
-    state = SchedulerState(northstar="test northstar")
-    await Scheduler(runner=runner).run(state, _plan_request())
+    plan = _plan_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=plan)])
+    await Scheduler(runner=runner).run(state)
 
     assert completion_order.index("task A") < completion_order.index("task B")
     assert completion_order.index("task B") < completion_order.index("task C")
@@ -572,7 +576,7 @@ async def test_work_handler_calls_state_service_apply_work_output(tmp_path: Path
         ),
     )
 
-    await Scheduler(runner=runner).run(state, _plan_request())
+    await Scheduler(runner=runner).run(state)
 
     ss.apply_work_output.assert_called_once()
 
@@ -597,7 +601,7 @@ async def test_validation_failed_work_response_does_not_call_apply_work_output(
 
     runner.register(AgentType.WORK, validation_failed_handler)
 
-    final = await Scheduler(runner=runner).run(state, _plan_request())
+    final = await Scheduler(runner=runner).run(state)
 
     ss.apply_work_output.assert_not_called()
     assert final.dag[work.id].node_state == NodeState.FAILED

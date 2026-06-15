@@ -144,8 +144,9 @@ async def test_start_wires_nested_planner_and_worker_models(
         ) -> None:
             self.runner = runner
 
-        async def run(self, state: SchedulerState, global_planner: AgentRequest) -> SchedulerState:
-            await self.runner(global_planner)
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            root = next(iter(state.dag.values()))
+            await self.runner(root.request)
             await self.runner(
                 AgentRequest(
                     agent_type=AgentType.WORK,

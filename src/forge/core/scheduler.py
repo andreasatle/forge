@@ -348,12 +348,8 @@ class Scheduler:
     async def run(
         self,
         state: SchedulerState,
-        global_planner: AgentRequest,
     ) -> SchedulerState:
         """Drive state forward until no PENDING or RUNNING nodes remain."""
-        if not state.dag:
-            state = state.add_nodes([DAGNode(request=global_planner)])
-
         while True:
             ready = state.ready_nodes()
 

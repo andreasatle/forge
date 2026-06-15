@@ -172,11 +172,13 @@ class ForgeRuntime:
             northstar=northstar, max_concurrency=config.concurrency
         )
 
-        global_planner = AgentRequest(
-            agent_type=AgentType.PLAN,
-            source=RequestSource.USER,
-            spec=PlanSpec(northstar=northstar),
-        )
+        if not state.dag:
+            root_node = AgentRequest(
+                agent_type=AgentType.PLAN,
+                source=RequestSource.USER,
+                spec=PlanSpec(northstar=northstar),
+            )
+            state = state.add_nodes([DAGNode(request=root_node)])
 
         callbacks = SchedulerCallbacks(
             on_node_dispatched=lambda node: print(
@@ -194,7 +196,7 @@ class ForgeRuntime:
             callbacks=callbacks,
             telemetry_sink=telemetry_sink,
             run_id=run_id,
-        ).run(state, global_planner)
+        ).run(state)
 
         save_path = save_run(final, workspace)
         print(f"run saved: {save_path}")
