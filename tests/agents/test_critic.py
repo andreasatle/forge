@@ -256,6 +256,104 @@ async def test_critic_prompt_treats_plugin_guidance_as_binding_contract() -> Non
     assert "Never request a change that contradicts any constraint" in prompt
 
 
+async def test_critic_prompt_includes_decomposition_topology_rules_for_planner_output() -> None:
+    """Critic prompt includes decomposition topology rules when reviewing planner output."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good plan.", "hints": []})
+    provider = _provider(finding_json)
+    review_ctx = PlannerOutputValidator().review_context()
+
+    await critic_agent(
+        _plan_request(),
+        _state_view(),
+        "Decision: split_dependent\nTask 0: setup\nTask 1: implement scraper\nTask 2: write docs",
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "real artifact or information flow" in prompt
+    assert "genuine ordering constraint" in prompt
+    assert "split_orthogonal" in prompt
+    assert "split_dependent" in prompt
+    assert "Maximize safe concurrency" in prompt
+    assert "not a goal" in prompt
+
+
+async def test_critic_prompt_topology_rules_cover_all_required_criteria() -> None:
+    """Critic topology rules address all required decomposition review criteria."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good.", "hints": []})
+    provider = _provider(finding_json)
+    review_ctx = PlannerOutputValidator().review_context()
+
+    await critic_agent(
+        _plan_request(),
+        _state_view(),
+        "Decision: split_dependent\nTask 0: setup\nTask 1: implement",
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    # Checks that the required criteria questions are present
+    assert "independently" in prompt
+    assert "ordering" in prompt
+    assert "convention" in prompt or "symmetry" in prompt
+    assert "concurrency" in prompt
+    assert "unnecessary ordering" in prompt
+
+
+async def test_critic_prompt_excludes_topology_rules_for_work_output() -> None:
+    """Critic prompt does not include decomposition topology rules for work output."""
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good.", "hints": []})
+    provider = _provider(finding_json)
+
+    await critic_agent(
+        _request(),
+        _state_view(),
+        _rendered_output(),
+        provider,
+        _registry(),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "Decomposition topology rules" not in prompt
+    assert "split_orthogonal" not in prompt
+
+
+async def test_critic_prompt_includes_split_graph_topology_rules() -> None:
+    """Critic topology rules include split_graph edge minimality guidance."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good plan.", "hints": []})
+    provider = _provider(finding_json)
+    review_ctx = PlannerOutputValidator().review_context()
+
+    await critic_agent(
+        _plan_request(),
+        _state_view(),
+        "Decision: split_graph\nNode setup: setup env\nNode scraper (depends_on: setup): implement scraper",
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "split_graph" in prompt
+    assert "depends_on" in prompt
+    assert "minimal" in prompt
+    assert "concurrency" in prompt
+
+
 async def test_critic_agent_retries_on_invalid_json() -> None:
     """critic_agent retries when the provider returns invalid JSON, then succeeds."""
     good_json = json.dumps(

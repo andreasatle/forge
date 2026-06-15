@@ -577,8 +577,8 @@ async def test_planner_legacy_plan_response_still_works() -> None:
 # --- Orthogonal decomposition preference policy ---
 
 
-async def test_planner_prompt_prefers_orthogonal_over_dependent() -> None:
-    """PLAN_PROMPT instructs the planner to prefer split_orthogonal when children are independent."""
+async def test_planner_prompt_prefers_split_graph_and_orthogonal_over_dependent() -> None:
+    """PLAN_PROMPT instructs the planner to prefer split_graph/split_orthogonal over split_dependent."""
     request = _make_request()
     provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
 
@@ -586,8 +586,9 @@ async def test_planner_prompt_prefers_orthogonal_over_dependent() -> None:
 
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
-    assert "Prefer split_orthogonal" in user_prompt
-    assert "can proceed independently" in user_prompt
+    assert "split_graph" in user_prompt
+    assert "split_orthogonal" in user_prompt
+    assert "independently" in user_prompt
 
 
 async def test_planner_prompt_requires_genuine_ordering_for_dependent_split() -> None:

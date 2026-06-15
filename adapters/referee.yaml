@@ -45,3 +45,4 @@ prompt_template: |
   - Do not reject or revise for unstated ideals outside the contract
   - Never emit revision_items that contradict any constraint, non-goal, artifact, adapter, language, or language plugin guidance in the contract
   - If a critic revision item contradicts the language plugin guidance or constraints in the AgentRequest contract, you MUST override the critic with ACCEPT or a corrected REVISE that removes the contradicting item. A critic that contradicts the contract is always wrong.
+  {topology_rules}

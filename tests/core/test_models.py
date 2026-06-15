@@ -17,12 +17,14 @@ from forge.core.models import (
     CriticFinding,
     DAGNode,
     DecompositionDecision,
+    DecompositionNodeSpec,
     DecompositionTask,
     DependentSplitDecision,
     FailureKind,
     FileContent,
     FileView,
     FinalTurn,
+    GraphSplitDecision,
     NodeState,
     OrthogonalSplitDecision,
     PlanResponse,
@@ -719,3 +721,133 @@ def test_final_turn_roundtrip_plan_response():
     restored = FinalTurn.model_validate(data)
     assert isinstance(restored.output, PlanResponse)
     assert len(restored.output.tasks) == 1
+
+
+# --- GraphSplitDecision ---
+
+
+def _make_graph_node(
+    node_id: str, objective: str = "task", depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id,
+        task=TaskSpec(
+            objective=objective,
+            success_condition="done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+        depends_on=depends_on or [],
+    )
+
+
+def test_graph_split_decision_validates_and_serializes():
+    """GraphSplitDecision round-trips through model_dump and model_validate."""
+    decision = GraphSplitDecision(nodes=[_make_graph_node("a"), _make_graph_node("b")])
+    data = decision.model_dump()
+    restored = GraphSplitDecision.model_validate(data)
+    assert restored.kind == "split_graph"
+    assert len(restored.nodes) == 2
+    assert restored.nodes[0].id == "a"
+    assert restored.nodes[1].id == "b"
+
+
+def test_graph_split_decision_with_dependencies():
+    """GraphSplitDecision preserves depends_on references after round-trip."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("setup"),
+            _make_graph_node("scraper", depends_on=["setup"]),
+            _make_graph_node("cli", depends_on=["scraper"]),
+        ]
+    )
+    data = decision.model_dump()
+    restored = GraphSplitDecision.model_validate(data)
+    assert restored.nodes[0].depends_on == []
+    assert restored.nodes[1].depends_on == ["setup"]
+    assert restored.nodes[2].depends_on == ["scraper"]
+
+
+def test_graph_split_decision_rejects_unknown_depends_on_ref():
+    """GraphSplitDecision raises when depends_on references a non-existent node id."""
+    with pytest.raises(Exception, match="not a known node id"):
+        GraphSplitDecision(
+            nodes=[
+                _make_graph_node("a"),
+                _make_graph_node("b", depends_on=["nonexistent"]),
+            ]
+        )
+
+
+def test_graph_split_decision_rejects_self_loop():
+    """GraphSplitDecision raises when a node depends on itself."""
+    with pytest.raises(Exception, match="depends on itself"):
+        GraphSplitDecision(nodes=[_make_graph_node("a", depends_on=["a"])])
+
+
+def test_graph_split_decision_rejects_empty_nodes():
+    """GraphSplitDecision raises when nodes list is empty."""
+    with pytest.raises(Exception):
+        GraphSplitDecision(nodes=[])
+
+
+def test_decomposition_decision_discriminates_split_graph():
+    """TypeAdapter resolves kind='split_graph' to GraphSplitDecision."""
+    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
+    result = ta.validate_python(
+        {
+            "kind": "split_graph",
+            "nodes": [
+                {
+                    "id": "a",
+                    "task": {
+                        "objective": "do a",
+                        "success_condition": "done",
+                        "adapter": "coding",
+                        "artifact": "codebase",
+                    },
+                    "depends_on": [],
+                }
+            ],
+        }
+    )
+    assert isinstance(result, GraphSplitDecision)
+
+
+def test_decomposition_node_spec_defaults_task_kind_to_work_task():
+    """DecompositionNodeSpec inserts kind='work_task' when task dict omits it."""
+    node = DecompositionNodeSpec.model_validate(
+        {
+            "id": "x",
+            "task": {
+                "objective": "do x",
+                "success_condition": "done",
+                "adapter": "coding",
+                "artifact": "codebase",
+            },
+        }
+    )
+    assert isinstance(node.task, TaskSpec)
+
+
+def test_final_turn_accepts_graph_split_decision():
+    """FinalTurn.output holds a GraphSplitDecision when nested kind is 'split_graph'."""
+    decision = GraphSplitDecision(nodes=[_make_graph_node("a")])
+    ft = FinalTurn(output=decision)
+    assert ft.kind == "final"
+    assert isinstance(ft.output, GraphSplitDecision)
+
+
+def test_final_turn_roundtrip_graph_split_decision():
+    """FinalTurn with GraphSplitDecision serializes and deserializes back equivalently."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("setup"),
+            _make_graph_node("impl", depends_on=["setup"]),
+        ]
+    )
+    ft = FinalTurn(output=decision)
+    data = ft.model_dump()
+    restored = FinalTurn.model_validate(data)
+    assert isinstance(restored.output, GraphSplitDecision)
+    assert restored.output.nodes[1].depends_on == ["setup"]

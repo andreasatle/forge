@@ -47,6 +47,7 @@ async def critic_agent(
         output_noun=review_context.output_noun,
         review_focus=review_context.review_focus,
         empty_output_guidance=review_context.empty_output_guidance,
+        topology_rules=review_context.topology_rules,
     )
     system_prompt = build_system_prompt(None, CriticFinding)
     messages: list[ChatMessage] = [

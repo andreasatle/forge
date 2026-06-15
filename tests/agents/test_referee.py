@@ -328,6 +328,137 @@ async def test_referee_can_override_critic_revision_items_that_contradict_plugin
     assert "Never emit revision_items that contradict any constraint" in prompt
 
 
+async def test_referee_prompt_includes_decomposition_topology_rules_for_planner_output() -> None:
+    """Referee prompt includes decomposition topology rules when reviewing planner output."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+    review_ctx = PlannerOutputValidator().review_context()
+
+    await referee_agent(
+        _plan_request(),
+        _state_view(),
+        "Decision: split_dependent\nTask 0: setup\nTask 1: implement scraper\nTask 2: write docs",
+        _critic_accept(),
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "real artifact or information flow" in prompt
+    assert "genuine ordering constraint" in prompt
+    assert "split_orthogonal" in prompt
+    assert "split_dependent" in prompt
+    assert "Maximize safe concurrency" in prompt
+    assert "not a goal" in prompt
+    assert "unnecessary ordering" in prompt
+
+
+async def test_referee_revises_unjustified_dependent_split() -> None:
+    """Referee issues REVISE and overrides an accepted but unjustified split_dependent chain."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    decision_json = json.dumps(
+        {
+            "disposition": "revise",
+            "rationale": (
+                "This dependent split introduces unnecessary ordering. "
+                "Several child tasks can proceed independently."
+            ),
+            "override": True,
+            "revision_items": [
+                {
+                    "required_change": (
+                        "Use split_orthogonal for independent branches. "
+                        "Apply split_dependent only where one task genuinely produces "
+                        "output that the next task must consume."
+                    ),
+                    "rationale": "Child tasks do not depend on each other's output.",
+                }
+            ],
+        }
+    )
+    provider = _provider(decision_json)
+    review_ctx = PlannerOutputValidator().review_context()
+
+    result = await referee_agent(
+        _plan_request(),
+        _state_view(),
+        "Decision: split_dependent\nTask 0: setup\nTask 1: implement\nTask 2: CLI\nTask 3: docs",
+        _critic_accept(),
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    assert result.disposition == CriticDisposition.REVISE
+    assert result.override is True
+    assert "unnecessary ordering" in result.rationale
+    assert len(result.revision_items) == 1
+    assert "split_orthogonal" in result.revision_items[0].required_change
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "Decomposition topology rules" in prompt
+    assert "split_dependent" in prompt
+    assert "unnecessary ordering" in prompt
+
+
+async def test_referee_prompt_excludes_topology_rules_for_work_output() -> None:
+    """Referee prompt does not include decomposition topology rules for work output."""
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+
+    await referee_agent(
+        _request(),
+        _state_view(),
+        _rendered_output(),
+        _critic_accept(),
+        provider,
+        _registry(),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "Decomposition topology rules" not in prompt
+    assert "split_orthogonal" not in prompt
+
+
+async def test_referee_prompt_includes_split_graph_topology_rules() -> None:
+    """Referee topology rules include split_graph edge minimality guidance."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+    review_ctx = PlannerOutputValidator().review_context()
+
+    await referee_agent(
+        _plan_request(),
+        _state_view(),
+        "Decision: split_graph\nNode setup: setup env\nNode scraper (depends_on: setup): implement scraper",
+        _critic_accept(),
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "split_graph" in prompt
+    assert "depends_on" in prompt
+    assert "minimal" in prompt
+    assert "concurrency" in prompt
+
+
 async def test_referee_agent_retries_on_invalid_json() -> None:
     """referee_agent retries when the provider returns invalid JSON, then succeeds."""
     good_json = json.dumps(

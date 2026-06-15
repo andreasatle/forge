@@ -132,6 +132,7 @@ class ReviewContext(BaseModel, frozen=True):
     output_noun: str
     review_focus: str
     empty_output_guidance: str
+    topology_rules: str = ""
 
 
 class AcceptanceCriterion(BaseModel, frozen=True):
@@ -438,8 +439,42 @@ class OrthogonalSplitDecision(BaseModel, frozen=True):
         return _default_child_task_kinds(v)
 
 
+class DecompositionNodeSpec(BaseModel, frozen=True):
+    """One node in a graph decomposition — carries a child task and its intra-graph dependencies."""
+
+    id: str
+    task: ChildTask
+    depends_on: list[str] = Field(default_factory=_empty_strings)
+
+    @field_validator("task", mode="before")
+    @classmethod
+    def _default_task_kind(cls, v: object) -> object:
+        return cast("list[object]", _default_child_task_kinds([v]))[0]
+
+
+class GraphSplitDecision(BaseModel, frozen=True):
+    """Decomposition decision for a mixed-topology DAG with explicit per-node depends_on."""
+
+    kind: Literal["split_graph"] = "split_graph"
+    nodes: list[DecompositionNodeSpec] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_depends_on_refs(self) -> "GraphSplitDecision":
+        node_ids = {node.id for node in self.nodes}
+        for node in self.nodes:
+            if node.id in node.depends_on:
+                raise ValueError(f"Node '{node.id}' depends on itself.")
+            for ref in node.depends_on:
+                if ref not in node_ids:
+                    raise ValueError(
+                        f"Node '{node.id}' depends_on '{ref}' which is not a known node id. "
+                        f"Known ids: {sorted(node_ids)}"
+                    )
+        return self
+
+
 DecompositionDecision = Annotated[
-    WorkDecision | DependentSplitDecision | OrthogonalSplitDecision,
+    WorkDecision | DependentSplitDecision | OrthogonalSplitDecision | GraphSplitDecision,
     Field(discriminator="kind"),
 ]
 
@@ -447,7 +482,11 @@ DecompositionDecision = Annotated[
 class PlannerOutputModel(
     RootModel[
         Annotated[
-            PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision,
+            PlanResponse
+            | WorkDecision
+            | DependentSplitDecision
+            | OrthogonalSplitDecision
+            | GraphSplitDecision,
             Field(discriminator="kind"),
         ]
     ],
@@ -457,7 +496,12 @@ class PlannerOutputModel(
 
 
 ProducerOutput = (
-    PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision | WorkOutput
+    PlanResponse
+    | WorkDecision
+    | DependentSplitDecision
+    | OrthogonalSplitDecision
+    | GraphSplitDecision
+    | WorkOutput
 )
 
 
@@ -474,7 +518,12 @@ class FinalTurn(BaseModel, frozen=True):
 
     kind: Literal["final"] = "final"
     output: Annotated[
-        WorkOutput | PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision,
+        WorkOutput
+        | PlanResponse
+        | WorkDecision
+        | DependentSplitDecision
+        | OrthogonalSplitDecision
+        | GraphSplitDecision,
         Field(discriminator="kind"),
     ]
 

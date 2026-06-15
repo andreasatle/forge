@@ -19,6 +19,7 @@ from forge.core.models import (
     CriticDisposition,
     DependentSplitDecision,
     FailureKind,
+    GraphSplitDecision,
     OrthogonalSplitDecision,
     PlanResponse,
     ResponseStatus,
@@ -262,7 +263,47 @@ class PlanResponseValidator:
         )
 
 
-_PlannerOutput = PlanResponse | WorkDecision | DependentSplitDecision | OrthogonalSplitDecision
+_PlannerOutput = (
+    PlanResponse
+    | WorkDecision
+    | DependentSplitDecision
+    | OrthogonalSplitDecision
+    | GraphSplitDecision
+)
+
+_DECOMPOSITION_TOPOLOGY_RULES = """\
+Decomposition topology rules (apply when reviewing split_dependent, split_orthogonal, or split_graph decisions):
+
+For each split_graph decision, ask:
+- Are the depends_on edges minimal? Could any edge be removed without violating information flow?
+- Does the graph expose maximum safe concurrency?
+- Is any node waiting unnecessarily for another?
+- Do the dependencies represent genuine artifact or information flow?
+
+For each split_dependent decision, ask:
+- Does this split expose available independent work?
+- Are the dependent edges justified by real artifact or information flow?
+  A later child must genuinely consume output produced by an earlier child.
+- Could any children run independently? If so, split_graph or split_orthogonal is more appropriate.
+- Is split_dependent used merely because the list is naturally ordered or "feels logical"?
+  Convention, symmetry, and aesthetic balance are NOT ordering constraints.
+- Would split_graph or split_orthogonal preserve correctness while increasing safe concurrency?
+
+Policy:
+- Prefer split_graph for mixed topologies where some (not all) tasks have ordering dependencies.
+- Prefer split_orthogonal when ALL child tasks can proceed independently.
+- split_dependent requires ALL tasks to be strictly ordered in a chain — this is rarely the right choice.
+- split_dependent requires genuine ordering constraints — not caution, symmetry, or convention.
+- Balanced trees are not a goal. An uneven tree that exposes more parallel work is preferred.
+- Maximize safe concurrency.
+- Edges in split_graph must represent genuine information flow, not ordering preferences.
+
+If a split_dependent chain lacks clear ordering justification, issue REVISE with this rationale:
+  "This dependent split introduces unnecessary ordering. Several child tasks can proceed
+  independently. Use split_graph for mixed topologies, split_orthogonal for fully independent
+  branches, and use split_dependent only when every task genuinely produces output that the
+  next task must consume."\
+"""
 
 
 class PlannerOutputValidator:
@@ -272,7 +313,13 @@ class PlannerOutputValidator:
         """Return typed planner output from the response."""
         if isinstance(
             response.output,
-            (PlanResponse, WorkDecision, DependentSplitDecision, OrthogonalSplitDecision),
+            (
+                PlanResponse,
+                WorkDecision,
+                DependentSplitDecision,
+                OrthogonalSplitDecision,
+                GraphSplitDecision,
+            ),
         ):
             return response.output
         return None
@@ -300,6 +347,15 @@ class PlannerOutputValidator:
                 f"Success condition: {output.task.success_condition}\n"
                 f"Artifact: {output.task.artifact}"
             )
+        if isinstance(output, GraphSplitDecision):
+            lines = ["Decision: split_graph (mixed topology)"]
+            for node in output.nodes:
+                dep_str = f" (depends_on: {', '.join(node.depends_on)})" if node.depends_on else ""
+                lines.append(f"Node {node.id}{dep_str}: {node.task.objective}")
+                lines.append(f"  Success condition: {node.task.success_condition}")
+                if isinstance(node.task, TaskSpec) and node.task.artifact:
+                    lines.append(f"  Artifact: {node.task.artifact}")
+            return "\n".join(lines)
         kind_label = (
             "split_dependent (ordered)"
             if isinstance(output, DependentSplitDecision)
@@ -322,11 +378,12 @@ class PlannerOutputValidator:
         return True
 
     def review_context(self) -> ReviewContext:
-        """Return planner-output review language."""
+        """Return planner-output review language with decomposition topology enforcement."""
         return ReviewContext(
             output_noun="plan",
             review_focus="whether the decomposition decision satisfies the planning contract",
             empty_output_guidance="If the decision contains no tasks, reject it.",
+            topology_rules=_DECOMPOSITION_TOPOLOGY_RULES,
         )
 
     def final_output_reminder(self) -> str:
@@ -336,8 +393,9 @@ class PlannerOutputValidator:
                 "FINAL OUTPUT FORMAT REMINDER",
                 "Return one of these decision kinds:",
                 '  {"kind":"work","task":{...WorkSpec...}}',
-                '  {"kind":"split_dependent","tasks":[...TaskSpec...]}',
+                '  {"kind":"split_graph","nodes":[{"id":"a","task":{...TaskSpec...},"depends_on":[]},{"id":"b","task":{...},"depends_on":["a"]}]}',
                 '  {"kind":"split_orthogonal","tasks":[...TaskSpec...]}',
+                '  {"kind":"split_dependent","tasks":[...TaskSpec...]}',
                 "Legacy (still accepted):",
                 '  {"kind":"plan","tasks":[...TaskSpec...]}',
             ]

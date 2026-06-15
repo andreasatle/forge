@@ -30,3 +30,4 @@ prompt_template: |
   - Never request a change that contradicts any constraint, non-goal, artifact, adapter, language, or language plugin guidance in the contract
   - Before issuing any revision item, check it against the language plugin guidance and constraints in the AgentRequest contract. Never request a change that contradicts the contract constraints or language plugin guidance. If the implementation follows the contract constraints, do not flag it as a violation even if you would personally prefer a different approach.
   - hints must be an empty list [] when disposition is "accept"
+  {topology_rules}

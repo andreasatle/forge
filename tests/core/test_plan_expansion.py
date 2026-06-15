@@ -7,8 +7,10 @@ from forge.core.models import (
     AgentMessageKind,
     AgentRequest,
     AgentType,
+    DecompositionNodeSpec,
     DecompositionTask,
     DependentSplitDecision,
+    GraphSplitDecision,
     OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
@@ -414,3 +416,121 @@ def test_build_from_decision_work_decision_not_rejected_by_convergence() -> None
 
     assert len(requests) == 1
     assert requests[0].agent_type == AgentType.WORK
+
+
+# --- GraphSplitDecision expansion ---
+
+
+def _make_graph_node(
+    node_id: str, objective: str = "task", depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id,
+        task=_make_task_spec(objective),
+        depends_on=depends_on or [],
+    )
+
+
+def test_graph_split_no_edges_expands_to_independent_nodes() -> None:
+    """GraphSplitDecision with no depends_on edges produces nodes with empty dependencies."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b"),
+            _make_graph_node("c", "task-c"),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert len(requests) == 3
+    assert all(r.agent_type == AgentType.WORK for r in requests)
+    assert all(r.dependencies == frozenset() for r in requests)
+
+
+def test_graph_split_chain_expands_to_chained_nodes() -> None:
+    """GraphSplitDecision a→b→c produces dependencies matching the chain."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b", depends_on=["a"]),
+            _make_graph_node("c", "task-c", depends_on=["b"]),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    node_a, node_b, node_c = requests
+
+    assert node_a.dependencies == frozenset()
+    assert node_a.id in node_b.dependencies
+    assert len(node_b.dependencies) == 1
+    assert node_b.id in node_c.dependencies
+    assert len(node_c.dependencies) == 1
+
+
+def test_graph_split_mixed_topology_exposes_concurrency() -> None:
+    """GraphSplitDecision with mixed topology: setup, docs run immediately; scraper after setup; cli after scraper."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("setup", "setup environment"),
+            _make_graph_node("docs", "write docs"),
+            _make_graph_node("scraper", "implement scraper", depends_on=["setup"]),
+            _make_graph_node("cli", "implement CLI", depends_on=["scraper"]),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    by_obj = {r.spec.objective: r for r in requests if isinstance(r.spec, WorkSpec)}
+
+    # setup and docs are immediately runnable
+    assert by_obj["setup environment"].dependencies == frozenset()
+    assert by_obj["write docs"].dependencies == frozenset()
+    # scraper waits for setup
+    assert by_obj["setup environment"].id in by_obj["implement scraper"].dependencies
+    assert len(by_obj["implement scraper"].dependencies) == 1
+    # cli waits for scraper
+    assert by_obj["implement scraper"].id in by_obj["implement CLI"].dependencies
+    assert len(by_obj["implement CLI"].dependencies) == 1
+
+
+def test_graph_split_multiple_parents() -> None:
+    """GraphSplitDecision node with two depends_on parents gets both as dependencies."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b"),
+            _make_graph_node("c", "task-c", depends_on=["a", "b"]),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    node_a, node_b, node_c = requests
+
+    assert node_a.dependencies == frozenset()
+    assert node_b.dependencies == frozenset()
+    assert node_a.id in node_c.dependencies
+    assert node_b.id in node_c.dependencies
+    assert len(node_c.dependencies) == 2
+
+
+def test_convergence_validator_validates_graph_split_nodes() -> None:
+    """DecompositionConvergenceValidator checks GraphSplitDecision node objectives."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "implement HTTP fetching"),
+            _make_graph_node("b", "implement HTML parsing"),
+        ]
+    )
+    _make_validator().validate("build web scraper", decision)  # must not raise
+
+
+def test_convergence_validator_rejects_graph_split_child_identical_to_parent() -> None:
+    """Convergence validator rejects a GraphSplitDecision node whose objective matches parent."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "build web scraper"),
+            _make_graph_node("b", "add CLI"),
+        ]
+    )
+    with pytest.raises(DecompositionConvergenceError, match="not reductive"):
+        _make_validator().validate("build web scraper", decision)

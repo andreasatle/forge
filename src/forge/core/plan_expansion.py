@@ -4,12 +4,15 @@ from forge.core.models import (
     AgentContract,
     AgentRequest,
     AgentType,
+    ChildTask,
     DecompositionDecision,
     DecompositionTask,
     DependentSplitDecision,
+    GraphSplitDecision,
     OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
+    RequestId,
     RequestSource,
     TaskSpec,
     WorkDecision,
@@ -41,7 +44,13 @@ class DecompositionConvergenceValidator:
         parent_norm = self._normalize(parent_objective)
         child_norms: list[str] = []
 
-        for task in decision.tasks:
+        child_tasks: list[ChildTask] = (
+            [node.task for node in decision.nodes]
+            if isinstance(decision, GraphSplitDecision)
+            else list(decision.tasks)
+        )
+
+        for task in child_tasks:
             obj = task.objective
             norm = self._normalize(obj)
 
@@ -150,6 +159,27 @@ class PlanExpansionBuilder:
                     nodes[i].model_copy(update={"dependencies": frozenset({nodes[i - 1].id})})
                 )
             return result
-        # OrthogonalSplitDecision — siblings are independent
-        assert isinstance(decision, OrthogonalSplitDecision)
-        return [self._child_task_to_request(task) for task in decision.tasks]
+        if isinstance(decision, OrthogonalSplitDecision):
+            return [self._child_task_to_request(task) for task in decision.tasks]
+        # GraphSplitDecision — explicit DAG with per-node depends_on string ids
+        assert isinstance(decision, GraphSplitDecision)
+        return self._build_from_graph_split(decision)
+
+    def _build_from_graph_split(self, decision: GraphSplitDecision) -> list[AgentRequest]:
+        """Expand a GraphSplitDecision into requests with RequestId dependencies."""
+        requests = [self._child_task_to_request(node.task) for node in decision.nodes]
+        str_id_to_request_id: dict[str, RequestId] = {
+            node.id: req.id for node, req in zip(decision.nodes, requests)
+        }
+        return [
+            req.model_copy(
+                update={
+                    "dependencies": frozenset(
+                        str_id_to_request_id[ref]
+                        for ref in node.depends_on
+                        if ref in str_id_to_request_id
+                    )
+                }
+            )
+            for node, req in zip(decision.nodes, requests)
+        ]
