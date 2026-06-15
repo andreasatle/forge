@@ -383,6 +383,32 @@ class PlanResponse(BaseModel, frozen=True):
     tasks: list[TaskSpec]
 
 
+class WorkDecision(BaseModel, frozen=True):
+    """Decomposition decision to execute a task directly without further splitting."""
+
+    kind: Literal["work"] = "work"
+    task: WorkSpec
+
+
+class DependentSplitDecision(BaseModel, frozen=True):
+    """Decomposition decision to split into ordered child tasks where each depends on the previous."""
+
+    kind: Literal["split_dependent"] = "split_dependent"
+    tasks: list[TaskSpec] = Field(min_length=1)
+
+
+class OrthogonalSplitDecision(BaseModel, frozen=True):
+    """Decomposition decision to split into independent child tasks with no sibling dependencies."""
+
+    kind: Literal["split_orthogonal"] = "split_orthogonal"
+    tasks: list[TaskSpec] = Field(min_length=1)
+
+
+DecompositionDecision = Annotated[
+    WorkDecision | DependentSplitDecision | OrthogonalSplitDecision,
+    Field(discriminator="kind"),
+]
+
 ProducerOutput = PlanResponse | WorkOutput
 
 

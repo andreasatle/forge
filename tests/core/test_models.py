@@ -3,6 +3,7 @@
 from uuid import UUID
 
 import pytest
+from pydantic import TypeAdapter
 
 from forge.core.models import (
     AcceptanceCriterion,
@@ -14,11 +15,14 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     DAGNode,
+    DecompositionDecision,
+    DependentSplitDecision,
     FailureKind,
     FileContent,
     FileView,
     FinalTurn,
     NodeState,
+    OrthogonalSplitDecision,
     PlanResponse,
     PlanSpec,
     RefereeDecision,
@@ -29,6 +33,7 @@ from forge.core.models import (
     TaskSpec,
     ToolCallResponse,
     ToolTurn,
+    WorkDecision,
     WorkOutput,
     WorkSpec,
     render_agent_contract,
@@ -538,6 +543,104 @@ def test_final_turn_roundtrip_work_output():
     restored = FinalTurn.model_validate(data)
     assert isinstance(restored.output, WorkOutput)
     assert restored.output.summary == "edits applied"
+
+
+# --- DecompositionDecision ---
+
+
+def _make_task_spec() -> TaskSpec:
+    return TaskSpec(
+        objective="write tests",
+        success_condition="tests pass",
+        adapter="coding",
+        artifact="codebase",
+    )
+
+
+def _make_work_spec() -> WorkSpec:
+    return WorkSpec(
+        objective="implement parser",
+        success_condition="parser passes tests",
+        adapter="coding",
+        artifact="codebase",
+    )
+
+
+def test_work_decision_validates_and_serializes():
+    """WorkDecision round-trips through model_dump and model_validate."""
+    decision = WorkDecision(task=_make_work_spec())
+    data = decision.model_dump()
+    restored = WorkDecision.model_validate(data)
+    assert restored.kind == "work"
+    assert restored.task.objective == "implement parser"
+
+
+def test_dependent_split_decision_validates_and_serializes():
+    """DependentSplitDecision round-trips through model_dump and model_validate."""
+    decision = DependentSplitDecision(tasks=[_make_task_spec(), _make_task_spec()])
+    data = decision.model_dump()
+    restored = DependentSplitDecision.model_validate(data)
+    assert restored.kind == "split_dependent"
+    assert len(restored.tasks) == 2
+
+
+def test_orthogonal_split_decision_validates_and_serializes():
+    """OrthogonalSplitDecision round-trips through model_dump and model_validate."""
+    decision = OrthogonalSplitDecision(tasks=[_make_task_spec()])
+    data = decision.model_dump()
+    restored = OrthogonalSplitDecision.model_validate(data)
+    assert restored.kind == "split_orthogonal"
+    assert len(restored.tasks) == 1
+
+
+def test_decomposition_decision_discriminates_work():
+    """TypeAdapter resolves kind='work' to WorkDecision."""
+    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
+    result = ta.validate_python({"kind": "work", "task": _make_work_spec().model_dump()})
+    assert isinstance(result, WorkDecision)
+
+
+def test_decomposition_decision_discriminates_split_dependent():
+    """TypeAdapter resolves kind='split_dependent' to DependentSplitDecision."""
+    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
+    result = ta.validate_python(
+        {"kind": "split_dependent", "tasks": [_make_task_spec().model_dump()]}
+    )
+    assert isinstance(result, DependentSplitDecision)
+
+
+def test_decomposition_decision_discriminates_split_orthogonal():
+    """TypeAdapter resolves kind='split_orthogonal' to OrthogonalSplitDecision."""
+    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
+    result = ta.validate_python(
+        {"kind": "split_orthogonal", "tasks": [_make_task_spec().model_dump()]}
+    )
+    assert isinstance(result, OrthogonalSplitDecision)
+
+
+def test_decomposition_decision_rejects_unknown_kind():
+    """TypeAdapter raises ValidationError for an unrecognized kind value."""
+    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
+    with pytest.raises(Exception):
+        ta.validate_python({"kind": "unknown_kind", "tasks": []})
+
+
+def test_dependent_split_decision_rejects_empty_tasks():
+    """DependentSplitDecision raises ValidationError when tasks list is empty."""
+    with pytest.raises(Exception):
+        DependentSplitDecision(tasks=[])
+
+
+def test_orthogonal_split_decision_rejects_empty_tasks():
+    """OrthogonalSplitDecision raises ValidationError when tasks list is empty."""
+    with pytest.raises(Exception):
+        OrthogonalSplitDecision(tasks=[])
+
+
+def test_plan_response_still_allows_empty_tasks():
+    """PlanResponse.tasks continues to accept an empty list (existing behavior unchanged)."""
+    pr = PlanResponse(tasks=[])
+    assert pr.tasks == []
 
 
 def test_final_turn_roundtrip_plan_response():
