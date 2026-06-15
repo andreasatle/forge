@@ -17,6 +17,7 @@ from forge.agents.base import (
     ResponseParser,
     ToolError,
     ToolLoop,
+    ToolLoopState,
     TrackedToolExecutor,
     _classify_failure,
     run_agent,
@@ -1330,3 +1331,294 @@ async def test_tool_loop_with_tests_failed_tests_do_not_finalize(
     assert response.ran_tests_and_passed is False
     # write_file executed after failed tests proves failed run_tests did not finalize
     assert (tmp_path / "fix.txt").exists()
+
+
+# --- ToolLoopState ---
+
+
+def test_tool_loop_state_defaults() -> None:
+    """ToolLoopState initialises all counters and flags to zero/False."""
+    state = ToolLoopState()
+    assert state.mutation_count == 0
+    assert state.verification_count == 0
+    assert state.mutating_tool_succeeded is False
+    assert state.verification_passed is False
+    assert state.final_response_only is False
+    assert state.iteration_at_last_mutation == 0
+    assert state.iteration_at_completion_pressure == 0
+
+
+# --- adapter-declared mutating tool names ---
+
+
+class _CustomWriteRequest(BaseModel):
+    """Request for the custom_write test tool."""
+
+    path: str
+    content: str
+
+
+class _CustomWriteResponse(BaseModel):
+    """Response from the custom_write test tool."""
+
+    ok: bool
+
+
+def _make_custom_write_tool(tmp_path: Path) -> Tool:
+    """Tool named 'custom_write' that writes a file, for testing custom mutating_tools."""
+
+    async def fn(req: _CustomWriteRequest) -> _CustomWriteResponse:
+        (tmp_path / req.path).write_text(req.content)
+        return _CustomWriteResponse(ok=True)
+
+    return Tool(
+        name="custom_write",
+        description="custom write",
+        request_type=_CustomWriteRequest,
+        response_type=_CustomWriteResponse,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
+    )
+
+
+async def test_tool_loop_adapter_declared_mutating_tool_triggers_finalization(
+    tmp_path: Path,
+) -> None:
+    """ToolLoop uses adapter-declared mutating_tools to decide when to set final_response_only."""
+    registry = ToolRegistry()
+    registry.register(_make_custom_write_tool(tmp_path))
+    spec = AdapterSpec(
+        name="custom",
+        description="custom adapter",
+        tools=["custom_write"],
+        prompt_template="",
+        mutating_tools=["custom_write"],
+        verification_tools=[],
+        verification_required=False,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "custom_write", "arguments": {"path": "out.txt", "content": "hi"}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert provider.chat.call_count == 2
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    last_user_content = second_call_messages[-1]["content"]
+    assert "Write complete" in last_user_content
+
+
+async def test_tool_loop_write_file_does_not_finalize_when_not_in_mutating_tools(
+    tmp_path: Path,
+) -> None:
+    """ToolLoop does not finalize when write_file is not in adapter-declared mutating_tools."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    spec = AdapterSpec(
+        name="custom",
+        description="custom adapter",
+        tools=["write_file"],
+        prompt_template="",
+        mutating_tools=[],
+        verification_tools=[],
+        verification_required=False,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "f.txt", "content": "x"}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    last_user_content = second_call_messages[-1]["content"]
+    assert "Write complete" not in last_user_content
+
+
+# --- adapter-declared verification tool names ---
+
+
+def _make_custom_check_tool(*, passed: bool) -> Tool:
+    """Tool named 'custom_check' that returns a passed result, for testing verification_tools."""
+    from forge.tools.schemas import RunTestsRequest, RunTestsResponse
+
+    async def fn(req: RunTestsRequest) -> RunTestsResponse:
+        return RunTestsResponse(passed=passed, failures=[], summary="ok", output="")
+
+    return Tool(
+        name="custom_check",
+        description="custom check",
+        request_type=RunTestsRequest,
+        response_type=RunTestsResponse,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
+    )
+
+
+async def test_tool_loop_adapter_declared_verification_tool_sets_verification_passed() -> None:
+    """ToolLoop uses adapter-declared verification_tools to set verification_passed."""
+    registry = ToolRegistry()
+    registry.register(_make_custom_check_tool(passed=True))
+    spec = AdapterSpec(
+        name="custom",
+        description="custom adapter",
+        tools=["custom_check"],
+        prompt_template="",
+        mutating_tools=[],
+        verification_tools=["custom_check"],
+        verification_required=True,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "custom_check", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is True
+    second_call_messages = provider.chat.call_args_list[1][0][0]
+    last_user_content = second_call_messages[-1]["content"]
+    assert "Tests passed" in last_user_content
+
+
+async def test_tool_loop_run_tests_does_not_finalize_when_not_in_verification_tools() -> None:
+    """ToolLoop does not treat run_tests as verification when not in adapter-declared verification_tools."""
+    registry = ToolRegistry()
+    registry.register(_make_passing_run_tests_tool())
+    spec = AdapterSpec(
+        name="custom",
+        description="custom adapter",
+        tools=["run_tests"],
+        prompt_template="",
+        mutating_tools=[],
+        verification_tools=[],
+        verification_required=False,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is False
+
+
+# --- ToolLoopState mutation and verification count tracking ---
+
+
+async def test_tool_loop_state_counts_mutations_in_diagnostic(tmp_path: Path) -> None:
+    """mutation_count increments per successful mutating tool call; reflected via mutating_tool_succeeded."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    registry.register(_make_passing_run_tests_tool())
+    # verification_required=True so write_file does not trigger finalization alone
+    spec = AdapterSpec(
+        name="test",
+        description="test",
+        tools=["write_file", "run_tests"],
+        prompt_template="",
+        mutating_tools=["write_file"],
+        verification_tools=["run_tests"],
+        verification_required=True,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "a.txt", "content": "1"}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "b.txt", "content": "2"}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "c.txt", "content": "3"}}',
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+        max_tool_iterations=3,
+        max_retries=0,
+    ).run()
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    assert "mutating_tool_succeeded=True" in response.diagnostics[0].message
+
+
+async def test_tool_loop_state_counts_verifications_in_diagnostic() -> None:
+    """verification_count increments when a verification tool passes; reflected via ran_tests_and_passed."""
+    registry = ToolRegistry()
+    registry.register(_make_passing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=['{"kind": "tool", "name": "run_tests", "arguments": {}}']
+    )
+
+    # max_tool_iterations=1 so the loop exits after the single run_tests call (which passes),
+    # without the model getting another turn to produce final JSON.
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=1,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.ran_tests_and_passed is True
+    assert response.diagnostics
+    assert "ran_tests_and_passed=True" in response.diagnostics[0].message

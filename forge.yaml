@@ -11,9 +11,9 @@ models:
     critic: claude/claude-haiku-4-5
     referee: claude/claude-haiku-4-5
   worker:
-    producer: openai/gpt-4o
-    critic: openai/gpt-4o
-    referee: openai/gpt-4o
+    producer: openai/gpt-4o-mini
+    critic: openai/gpt-4o-mini
+    referee: openai/gpt-4o-mini
     max_attempts: 5
 artifacts:
   - name: codebase

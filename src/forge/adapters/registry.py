@@ -1,6 +1,6 @@
 """Adapter registry for loading and accessing named adapter configurations."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -16,6 +16,9 @@ class AdapterSpec:
     prompt_template: str
     requires_nonempty_output: bool = True
     work_noun: str = "implementation"
+    mutating_tools: list[str] = field(default_factory=lambda: ["write_file", "replace_in_file"])
+    verification_tools: list[str] = field(default_factory=lambda: ["run_tests"])
+    verification_required: bool | None = None
 
 
 _REQUIRED_FIELDS = ("name", "description", "tools", "prompt_template")
@@ -36,9 +39,11 @@ class AdapterRegistry:
         for path in sorted(adapters_dir.glob("*.yaml")):
             with path.open() as f:
                 data = yaml.safe_load(f)
-            for field in _REQUIRED_FIELDS:
-                if field not in data:
-                    raise ValueError(f"adapter {path.name!r} missing required field: {field!r}")
+            for required_field in _REQUIRED_FIELDS:
+                if required_field not in data:
+                    raise ValueError(
+                        f"adapter {path.name!r} missing required field: {required_field!r}"
+                    )
             spec = AdapterSpec(
                 name=data["name"],
                 description=data["description"],
@@ -46,6 +51,9 @@ class AdapterRegistry:
                 prompt_template=data["prompt_template"],
                 requires_nonempty_output=data.get("requires_nonempty_output", True),
                 work_noun=data.get("work_noun", "implementation"),
+                mutating_tools=data.get("mutating_tools", ["write_file", "replace_in_file"]),
+                verification_tools=data.get("verification_tools", ["run_tests"]),
+                verification_required=data.get("verification_required"),
             )
             self._adapters[spec.name] = spec
             print(f"loaded adapter: {spec.name}")

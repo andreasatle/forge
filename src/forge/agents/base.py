@@ -3,6 +3,7 @@
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import cast
 
 import httpx
@@ -36,7 +37,19 @@ class ToolError(Exception):
 _MAX_RAW_RESPONSE_DIAGNOSTIC_CHARS = 4000
 _MAX_BAD_VALUE_CHARS = 300
 _MAX_RECENT_TOOL_CALLS = 5
-_MUTATING_TOOL_NAMES = frozenset({"write_file", "replace_in_file"})
+
+
+@dataclass
+class ToolLoopState:
+    """Iteration-level telemetry accumulated during one ToolLoop run."""
+
+    mutation_count: int = 0
+    verification_count: int = 0
+    mutating_tool_succeeded: bool = False
+    verification_passed: bool = False
+    final_response_only: bool = False
+    iteration_at_last_mutation: int = 0
+    iteration_at_completion_pressure: int = 0
 
 
 def _classify_failure(exc: Exception) -> FailureKind:
@@ -112,19 +125,17 @@ def _max_iterations_diagnostic(
     recent_tool_calls: list[str],
     last_raw: str,
     *,
-    ran_tests_and_passed: bool,
-    final_response_only: bool,
-    has_run_tests: bool,
-    mutating_tool_succeeded: bool,
+    state: ToolLoopState,
+    verification_required: bool,
 ) -> AgentDiagnostic:
     """Build a bounded diagnostic for a max-iterations failure."""
     tool_summary = ", ".join(recent_tool_calls) if recent_tool_calls else "(none)"
     message = (
         f"last_tool_calls=[{tool_summary}] "
-        f"ran_tests_and_passed={ran_tests_and_passed} "
-        f"final_response_only={final_response_only} "
-        f"has_run_tests={has_run_tests} "
-        f"mutating_tool_succeeded={mutating_tool_succeeded}"
+        f"ran_tests_and_passed={state.verification_passed} "
+        f"final_response_only={state.final_response_only} "
+        f"has_run_tests={verification_required} "
+        f"mutating_tool_succeeded={state.mutating_tool_succeeded}"
     )
     return AgentDiagnostic(
         kind="max_iterations",
@@ -408,6 +419,25 @@ class ToolLoop:
         self.max_tool_iterations = max_tool_iterations
         self.correction_prompt_fn = correction_prompt_fn
         self.adapter_spec = adapter_spec
+
+        if adapter_spec is not None:
+            self._mutating_tool_names = frozenset(adapter_spec.mutating_tools)
+            self._verification_tool_names = frozenset(adapter_spec.verification_tools)
+            self._verification_required = (
+                adapter_spec.verification_required
+                if adapter_spec.verification_required is not None
+                else (
+                    tools is not None
+                    and any(t.name in self._verification_tool_names for t in tools)
+                )
+            )
+        else:
+            self._mutating_tool_names = frozenset({"write_file", "replace_in_file"})
+            self._verification_tool_names = frozenset({"run_tests"})
+            self._verification_required = tools is not None and any(
+                t.name in self._verification_tool_names for t in tools
+            )
+
         self.prompt_builder = PromptBuilder(
             tools,
             final_response_type,
@@ -428,20 +458,17 @@ class ToolLoop:
         requires_nonempty = (
             self.adapter_spec.requires_nonempty_output if self.adapter_spec is not None else True
         )
-        has_run_tests = self.tools is not None and any(t.name == "run_tests" for t in self.tools)
         any_tool_called = False
-        ran_tests_and_passed = False
-        final_response_only = False
-        mutating_tool_succeeded = False
+        state = ToolLoopState()
         retry_count = 0
         invalid_response_diagnostics: list[AgentDiagnostic] = []
         recent_tool_calls: list[str] = []
         last_raw: str = ""
 
-        for _ in range(self.max_tool_iterations):
+        for iteration in range(self.max_tool_iterations):
             active_builder = (
                 PromptBuilder(None, self.final_response_type, always_show_final=True)
-                if final_response_only
+                if state.final_response_only
                 else self.prompt_builder
             )
             messages[0] = {
@@ -453,7 +480,7 @@ class ToolLoop:
 
             try:
                 parsed = self.response_parser.parse(raw)
-                if final_response_only and isinstance(parsed, ToolTurn):
+                if state.final_response_only and isinstance(parsed, ToolTurn):
                     raise ValueError(
                         "File changes are complete. "
                         "Return final WorkOutput JSON now instead of calling tools."
@@ -483,7 +510,7 @@ class ToolLoop:
                         status=ResponseStatus.FAILED,
                         error="empty work output: no completion summary produced",
                         failure_kind=FailureKind.VALIDATION_REJECTED,
-                        ran_tests_and_passed=ran_tests_and_passed,
+                        ran_tests_and_passed=state.verification_passed,
                     )
             except ValueError as e:
                 invalid_response_diagnostics.append(_invalid_response_diagnostic(e, raw))
@@ -511,26 +538,31 @@ class ToolLoop:
                 any_tool_called = True
                 recent_tool_calls.append(parsed.name)
                 recent_tool_calls = recent_tool_calls[-_MAX_RECENT_TOOL_CALLS:]
-                if parsed.name in _MUTATING_TOOL_NAMES and tool_response.success:
-                    mutating_tool_succeeded = True
+                if parsed.name in self._mutating_tool_names and tool_response.success:
+                    state.mutation_count += 1
+                    state.mutating_tool_succeeded = True
+                    state.iteration_at_last_mutation = iteration
                 coercion: str | None = None
                 if (
-                    tool_response.name == "run_tests"
+                    parsed.name in self._verification_tool_names
                     and tool_response.success
                     and isinstance(tool_response.result, dict)
                     and cast(dict[str, object], tool_response.result).get("passed") is True
                 ):
-                    ran_tests_and_passed = True
-                    final_response_only = True
+                    state.verification_count += 1
+                    state.verification_passed = True
+                    state.final_response_only = True
+                    state.iteration_at_completion_pressure = iteration
                     coercion = (
                         "Tests passed. Stop calling tools and return final WorkOutput JSON now."
                     )
                 elif (
-                    not has_run_tests
-                    and tool_response.name in _MUTATING_TOOL_NAMES
+                    not self._verification_required
+                    and parsed.name in self._mutating_tool_names
                     and tool_response.success
                 ):
-                    final_response_only = True
+                    state.final_response_only = True
+                    state.iteration_at_completion_pressure = iteration
                     coercion = "Write complete. Return final WorkOutput JSON now."
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
@@ -547,16 +579,14 @@ class ToolLoop:
                 request_id=self.request.id,
                 status=ResponseStatus.COMPLETED,
                 output=output,
-                ran_tests_and_passed=ran_tests_and_passed,
+                ran_tests_and_passed=state.verification_passed,
             )
 
         diagnostic = _max_iterations_diagnostic(
             recent_tool_calls,
             last_raw,
-            ran_tests_and_passed=ran_tests_and_passed,
-            final_response_only=final_response_only,
-            has_run_tests=has_run_tests,
-            mutating_tool_succeeded=mutating_tool_succeeded,
+            state=state,
+            verification_required=self._verification_required,
         )
         _logger.debug(
             "tool loop exhausted after %d iterations: %s",
@@ -568,7 +598,7 @@ class ToolLoop:
             status=ResponseStatus.FAILED,
             error=f"agent loop exceeded {self.max_tool_iterations} iterations",
             failure_kind=FailureKind.MAX_ITERATIONS,
-            ran_tests_and_passed=ran_tests_and_passed,
+            ran_tests_and_passed=state.verification_passed,
             diagnostics=[diagnostic],
         )
 
