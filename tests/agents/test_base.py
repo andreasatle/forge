@@ -1716,6 +1716,182 @@ async def test_verifying_adapter_gets_completion_pressure_after_verification_pas
     assert "Tests passed" in last_user_content
 
 
+# --- Phase 3: convergence telemetry ---
+
+
+def _make_fixed_failing_run_tests_tool() -> Tool:
+    """Tool named 'run_tests' that always fails with the same result."""
+
+    async def fn(req: RunTestsRequest) -> RunTestsResponse:
+        return RunTestsResponse(
+            passed=False,
+            failures=["AssertionError: expected 1 got 2"],
+            summary="1 failed",
+            output="FAILED test_x.py",
+        )
+
+    return Tool(
+        name="run_tests",
+        description="run tests",
+        request_type=RunTestsRequest,
+        response_type=RunTestsResponse,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
+    )
+
+
+def _make_varying_run_tests_tool() -> Tool:
+    """Tool named 'run_tests' that returns unique failures on each call."""
+    call_count = 0
+
+    async def fn(req: RunTestsRequest) -> RunTestsResponse:
+        nonlocal call_count
+        call_count += 1
+        return RunTestsResponse(
+            passed=False,
+            failures=[f"error-call-{call_count}"],
+            summary=f"failed call {call_count}",
+            output="",
+        )
+
+    return Tool(
+        name="run_tests",
+        description="run tests",
+        request_type=RunTestsRequest,
+        response_type=RunTestsResponse,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
+    )
+
+
+def _make_noop_write_file_tool() -> Tool:
+    """Tool named 'write_file' that succeeds without filesystem access."""
+
+    async def fn(req: _DoThingRequest) -> _DoThingResponse:
+        return _DoThingResponse(result="ok")
+
+    return Tool(
+        name="write_file",
+        description="write file",
+        request_type=_DoThingRequest,
+        response_type=_DoThingResponse,
+        fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], fn),
+    )
+
+
+async def test_tool_loop_identical_failing_verification_sets_verification_stable() -> None:
+    """Two identical failing run_tests results set verification_stable=True in diagnostics."""
+    registry = ToolRegistry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "run_tests", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    assert "verification_stable=True" in response.diagnostics[0].message
+
+
+async def test_tool_loop_changed_verification_result_resets_verification_stable_count() -> None:
+    """Different failing run_tests results reset verification_stable_count to 0."""
+    registry = ToolRegistry()
+    registry.register(_make_varying_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "run_tests", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=3,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    msg = response.diagnostics[0].message
+    assert "verification_stable=False" in msg
+    assert "verification_stable_count=0" in msg
+
+
+async def test_tool_loop_successful_mutation_updates_last_progress_iteration() -> None:
+    """Successful mutating tool call sets last_progress_iteration=0 in diagnostics."""
+    registry = ToolRegistry()
+    registry.register(_make_noop_write_file_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "write_file", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=1,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    assert "last_progress_iteration=0" in response.diagnostics[0].message
+
+
+async def test_tool_loop_changed_verification_fingerprint_updates_last_progress_iteration() -> None:
+    """A changed failing verification fingerprint sets last_progress_iteration in diagnostics."""
+    registry = ToolRegistry()
+    registry.register(_make_varying_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "run_tests", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    assert "last_progress_iteration=1" in response.diagnostics[0].message
+
+
+async def test_tool_loop_max_iterations_diagnostic_includes_convergence_telemetry() -> None:
+    """Max-iteration diagnostic message includes all Phase 3 convergence telemetry fields."""
+    registry, _ = _make_registry()
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "do_thing", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    msg = response.diagnostics[0].message
+    assert "verification_stable=" in msg
+    assert "verification_stable_count=" in msg
+    assert "last_progress_iteration=" in msg
+    assert "iterations_since_progress=" in msg
+
+
 async def test_coding_adapter_write_alone_does_not_finalize_unchanged(
     tmp_path: Path,
 ) -> None:

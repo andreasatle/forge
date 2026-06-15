@@ -1,5 +1,6 @@
 """Base agent runner — universal engine with plain chat loop and structured JSON parsing."""
 
+import hashlib
 import json
 import logging
 from collections.abc import Callable
@@ -50,6 +51,12 @@ class ToolLoopState:
     final_response_only: bool = False
     iteration_at_last_mutation: int = 0
     iteration_at_completion_pressure: int = 0
+    last_verification_fingerprint: str | None = None
+    previous_verification_fingerprint: str | None = None
+    verification_stable: bool = False
+    verification_stable_count: int = 0
+    last_progress_iteration: int | None = None
+    iterations_since_progress: int | None = None
 
 
 def _classify_failure(exc: Exception) -> FailureKind:
@@ -135,7 +142,11 @@ def _max_iterations_diagnostic(
         f"ran_tests_and_passed={state.verification_passed} "
         f"final_response_only={state.final_response_only} "
         f"has_run_tests={verification_required} "
-        f"mutating_tool_succeeded={state.mutating_tool_succeeded}"
+        f"mutating_tool_succeeded={state.mutating_tool_succeeded} "
+        f"verification_stable={state.verification_stable} "
+        f"verification_stable_count={state.verification_stable_count} "
+        f"last_progress_iteration={state.last_progress_iteration} "
+        f"iterations_since_progress={state.iterations_since_progress}"
     )
     return AgentDiagnostic(
         kind="max_iterations",
@@ -542,20 +553,41 @@ class ToolLoop:
                     state.mutation_count += 1
                     state.mutating_tool_succeeded = True
                     state.iteration_at_last_mutation = iteration
+                    state.last_progress_iteration = iteration
                 coercion: str | None = None
-                if (
-                    parsed.name in self._verification_tool_names
-                    and tool_response.success
-                    and isinstance(tool_response.result, dict)
-                    and cast(dict[str, object], tool_response.result).get("passed") is True
-                ):
-                    state.verification_count += 1
-                    state.verification_passed = True
-                    state.final_response_only = True
-                    state.iteration_at_completion_pressure = iteration
-                    coercion = (
-                        "Tests passed. Stop calling tools and return final WorkOutput JSON now."
+                if parsed.name in self._verification_tool_names:
+                    raw_result = tool_response.result
+                    result_for_fp: dict[str, object] = (
+                        cast(dict[str, object], raw_result) if isinstance(raw_result, dict) else {}
                     )
+                    fingerprint = hashlib.sha256(
+                        json.dumps(result_for_fp, sort_keys=True).encode()
+                    ).hexdigest()
+                    prev_fp = state.last_verification_fingerprint
+                    state.previous_verification_fingerprint = prev_fp
+                    state.last_verification_fingerprint = fingerprint
+                    if prev_fp is not None:
+                        if fingerprint == prev_fp:
+                            state.verification_stable_count += 1
+                        else:
+                            state.verification_stable_count = 0
+                            state.last_progress_iteration = iteration
+                    result_passed = (
+                        tool_response.success
+                        and isinstance(raw_result, dict)
+                        and cast(dict[str, object], raw_result).get("passed") is True
+                    )
+                    state.verification_stable = (
+                        not result_passed and state.verification_stable_count >= 1
+                    )
+                    if result_passed:
+                        state.verification_count += 1
+                        state.verification_passed = True
+                        state.final_response_only = True
+                        state.iteration_at_completion_pressure = iteration
+                        coercion = (
+                            "Tests passed. Stop calling tools and return final WorkOutput JSON now."
+                        )
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 if coercion is not None:
@@ -574,6 +606,10 @@ class ToolLoop:
                 ran_tests_and_passed=state.verification_passed,
             )
 
+        if state.last_progress_iteration is not None:
+            state.iterations_since_progress = (
+                self.max_tool_iterations - 1
+            ) - state.last_progress_iteration
         diagnostic = _max_iterations_diagnostic(
             recent_tool_calls,
             last_raw,
