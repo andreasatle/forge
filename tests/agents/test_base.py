@@ -27,10 +27,10 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     FailureKind,
-    PlanResponse,
     RequestSource,
     ResponseStatus,
     ToolTurn,
+    WorkDecision,
     WorkOutput,
     WorkSpec,
 )
@@ -41,6 +41,7 @@ from forge.tools.schemas import RunTestsRequest, RunTestsResponse
 
 _NONEMPTY_WORK_OUTPUT = '{"kind":"final","output":{"kind":"work_output","summary":"Changed files in the worktree.","base_version":""}}'
 _MALFORMED_WORK_OUTPUT_WITH_BAD_SUMMARY = '{"kind":"final","output":{"kind":"work_output","summary":["not","a","string"],"base_version":"abc"}}'
+_VALID_WORK_DECISION = '{"kind":"final","output":{"kind":"work","task":{"objective":"build it","success_condition":"tests pass","adapter":"coding","artifact":"codebase"}}}'
 
 
 class _DoThingRequest(BaseModel):
@@ -201,12 +202,12 @@ def test_response_parser_parses_new_final_work_turn():
     assert not hasattr(result, "base_version")
 
 
-def test_response_parser_parses_new_final_plan_turn():
-    """ResponseParser unwraps kind='final' envelope and returns PlanResponse directly."""
-    raw = '{"kind":"final","output":{"kind":"plan","tasks":[]}}'
-    result = ResponseParser(PlanResponse).parse(raw)
-    assert isinstance(result, PlanResponse)
-    assert result.tasks == []
+def test_response_parser_parses_new_final_work_decision_turn():
+    """ResponseParser unwraps kind='final' envelope and returns WorkDecision directly."""
+    raw = '{"kind":"final","output":{"kind":"work","task":{"objective":"build it","success_condition":"tests pass","adapter":"coding","artifact":"codebase"}}}'
+    result = ResponseParser(WorkDecision).parse(raw)
+    assert isinstance(result, WorkDecision)
+    assert result.task.objective == "build it"
 
 
 def test_response_parser_new_tool_turn_missing_name_raises():
@@ -235,10 +236,10 @@ def test_response_parser_new_final_turn_unknown_output_kind_raises():
 
 def test_response_parser_parses_fenced_json_final_turn():
     """ResponseParser accepts a final turn wrapped in a JSON code fence."""
-    raw = '```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```'
-    result = ResponseParser(PlanResponse).parse(raw)
-    assert isinstance(result, PlanResponse)
-    assert result.tasks == []
+    raw = f"```json\n{_VALID_WORK_DECISION}\n```"
+    result = ResponseParser(WorkDecision).parse(raw)
+    assert isinstance(result, WorkDecision)
+    assert result.task.objective == "build it"
 
 
 def test_response_parser_parses_fenced_json_tool_turn():
@@ -251,16 +252,16 @@ def test_response_parser_parses_fenced_json_tool_turn():
 
 def test_response_parser_rejects_fenced_json_with_prose_before():
     """ResponseParser rejects a fenced block preceded by prose text."""
-    raw = 'Here is the result:\n```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```'
+    raw = f"Here is the result:\n```json\n{_VALID_WORK_DECISION}\n```"
     with pytest.raises(ValueError, match="not valid JSON"):
-        ResponseParser(PlanResponse).parse(raw)
+        ResponseParser(WorkDecision).parse(raw)
 
 
 def test_response_parser_rejects_fenced_json_with_prose_after():
     """ResponseParser rejects a fenced block followed by prose text."""
-    raw = '```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```\nDone!'
+    raw = f"```json\n{_VALID_WORK_DECISION}\n```\nDone!"
     with pytest.raises(ValueError, match="not valid JSON"):
-        ResponseParser(PlanResponse).parse(raw)
+        ResponseParser(WorkDecision).parse(raw)
 
 
 def test_response_parser_rejects_multiple_fenced_blocks():
@@ -268,18 +269,17 @@ def test_response_parser_rejects_multiple_fenced_blocks():
     raw = (
         '```json\n{"kind":"tool","name":"read_file","arguments":{}}\n```'
         "\n\n"
-        '```json\n{"kind":"final","output":{"kind":"plan","tasks":[]}}\n```'
+        f"```json\n{_VALID_WORK_DECISION}\n```"
     )
     with pytest.raises(ValueError, match="not valid JSON"):
-        ResponseParser(PlanResponse).parse(raw)
+        ResponseParser(WorkDecision).parse(raw)
 
 
 def test_response_parser_parses_unfenced_valid_json_unchanged():
     """ResponseParser continues to accept valid unfenced JSON without modification."""
-    raw = '{"kind":"final","output":{"kind":"plan","tasks":[]}}'
-    result = ResponseParser(PlanResponse).parse(raw)
-    assert isinstance(result, PlanResponse)
-    assert result.tasks == []
+    result = ResponseParser(WorkDecision).parse(_VALID_WORK_DECISION)
+    assert isinstance(result, WorkDecision)
+    assert result.task.objective == "build it"
 
 
 # --- TrackedToolExecutor ---
@@ -719,10 +719,10 @@ def test_generated_work_output_schema_includes_all_top_level_model_fields():
         assert field_name in prompt
 
 
-def test_generated_plan_schema_includes_all_top_level_model_fields():
-    """PlanResponse schema prompt is generated from all actual top-level Pydantic fields."""
-    prompt = PromptBuilder.render_response_schema(PlanResponse)
-    for field_name in PlanResponse.model_fields:
+def test_generated_work_decision_schema_includes_all_top_level_model_fields():
+    """WorkDecision schema prompt is generated from all actual top-level Pydantic fields."""
+    prompt = PromptBuilder.render_response_schema(WorkDecision)
+    for field_name in WorkDecision.model_fields:
         assert field_name in prompt
 
 

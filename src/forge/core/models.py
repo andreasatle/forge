@@ -391,13 +391,6 @@ ChildTask = Annotated[
 ]
 
 
-class PlanResponse(BaseModel, frozen=True):
-    """The planner's final output — a list of tasks to execute."""
-
-    kind: Literal[AgentMessageKind.PLAN] = AgentMessageKind.PLAN
-    tasks: list[TaskSpec]
-
-
 class WorkDecision(BaseModel, frozen=True):
     """Decomposition decision to execute a task directly without further splitting."""
 
@@ -413,30 +406,6 @@ def _default_child_task_kinds(tasks: object) -> object:
     for t in cast("list[Any]", tasks):
         result.append({**t, "kind": "work_task"} if isinstance(t, dict) and "kind" not in t else t)
     return result
-
-
-class DependentSplitDecision(BaseModel, frozen=True):
-    """Decomposition decision to split into ordered child tasks where each depends on the previous."""
-
-    kind: Literal["split_dependent"] = "split_dependent"
-    tasks: list[ChildTask] = Field(min_length=1)
-
-    @field_validator("tasks", mode="before")
-    @classmethod
-    def _default_task_kinds(cls, v: object) -> object:
-        return _default_child_task_kinds(v)
-
-
-class OrthogonalSplitDecision(BaseModel, frozen=True):
-    """Decomposition decision to split into independent child tasks with no sibling dependencies."""
-
-    kind: Literal["split_orthogonal"] = "split_orthogonal"
-    tasks: list[ChildTask] = Field(min_length=1)
-
-    @field_validator("tasks", mode="before")
-    @classmethod
-    def _default_task_kinds(cls, v: object) -> object:
-        return _default_child_task_kinds(v)
 
 
 class DecompositionNodeSpec(BaseModel, frozen=True):
@@ -474,7 +443,7 @@ class GraphSplitDecision(BaseModel, frozen=True):
 
 
 DecompositionDecision = Annotated[
-    WorkDecision | DependentSplitDecision | OrthogonalSplitDecision | GraphSplitDecision,
+    WorkDecision | GraphSplitDecision,
     Field(discriminator="kind"),
 ]
 
@@ -482,27 +451,16 @@ DecompositionDecision = Annotated[
 class PlannerOutputModel(
     RootModel[
         Annotated[
-            PlanResponse
-            | WorkDecision
-            | DependentSplitDecision
-            | OrthogonalSplitDecision
-            | GraphSplitDecision,
+            WorkDecision | GraphSplitDecision,
             Field(discriminator="kind"),
         ]
     ],
     frozen=True,
 ):
-    """Planner final response type — PlanResponse (legacy) or a DecompositionDecision."""
+    """Planner final response type — the canonical decomposition decision."""
 
 
-ProducerOutput = (
-    PlanResponse
-    | WorkDecision
-    | DependentSplitDecision
-    | OrthogonalSplitDecision
-    | GraphSplitDecision
-    | WorkOutput
-)
+ProducerOutput = WorkDecision | GraphSplitDecision | WorkOutput
 
 
 class ToolTurn(BaseModel, frozen=True):
@@ -518,12 +476,7 @@ class FinalTurn(BaseModel, frozen=True):
 
     kind: Literal["final"] = "final"
     output: Annotated[
-        WorkOutput
-        | PlanResponse
-        | WorkDecision
-        | DependentSplitDecision
-        | OrthogonalSplitDecision
-        | GraphSplitDecision,
+        WorkOutput | WorkDecision | GraphSplitDecision,
         Field(discriminator="kind"),
     ]
 

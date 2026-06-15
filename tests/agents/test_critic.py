@@ -267,7 +267,7 @@ async def test_critic_prompt_includes_decomposition_topology_rules_for_planner_o
     await critic_agent(
         _plan_request(),
         _state_view(),
-        "Decision: split_dependent\nTask 0: setup\nTask 1: implement scraper\nTask 2: write docs",
+        "Decision: split_graph\nNode a: setup\nNode b (depends_on: a): implement scraper\nNode c (depends_on: b): write docs",
         provider,
         _registry(),
         review_context=review_ctx,
@@ -277,8 +277,7 @@ async def test_critic_prompt_includes_decomposition_topology_rules_for_planner_o
     prompt = messages[1]["content"]
     assert "real artifact or information flow" in prompt
     assert "genuine ordering constraint" in prompt
-    assert "split_orthogonal" in prompt
-    assert "split_dependent" in prompt
+    assert "split_graph" in prompt
     assert "Maximize safe concurrency" in prompt
     assert "not a goal" in prompt
 
@@ -294,7 +293,7 @@ async def test_critic_prompt_topology_rules_cover_all_required_criteria() -> Non
     await critic_agent(
         _plan_request(),
         _state_view(),
-        "Decision: split_dependent\nTask 0: setup\nTask 1: implement",
+        "Decision: split_graph\nNode a: setup\nNode b (depends_on: a): implement",
         provider,
         _registry(),
         review_context=review_ctx,
@@ -326,7 +325,6 @@ async def test_critic_prompt_excludes_topology_rules_for_work_output() -> None:
     messages = provider.chat.call_args.args[0]
     prompt = messages[1]["content"]
     assert "Decomposition topology rules" not in prompt
-    assert "split_orthogonal" not in prompt
 
 
 async def test_critic_prompt_includes_split_graph_topology_rules() -> None:

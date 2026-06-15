@@ -10,12 +10,11 @@ from forge.core.models import (
     AgentContract,
     AgentRequest,
     AgentType,
-    DependentSplitDecision,
-    OrthogonalSplitDecision,
-    PlanResponse,
+    GraphSplitDecision,
     PlanSpec,
     RequestSource,
     ResponseStatus,
+    TaskSpec,
     WorkDecision,
     WorkSpec,
     render_agent_contract,
@@ -30,8 +29,15 @@ def _make_request() -> AgentRequest:
     )
 
 
+_VALID_WORK_DECISION = (
+    '{"kind":"final","output":{"kind":"work","task":{'
+    '"objective":"implement feature","success_condition":"tests pass",'
+    '"adapter":"coding","artifact":"codebase"}}}'
+)
+
+
 def _mock_provider(
-    chat_return: str = '{"kind":"final","output":{"kind":"plan","tasks":[]}}',
+    chat_return: str = _VALID_WORK_DECISION,
 ) -> MagicMock:
     provider = MagicMock()
     provider.max_tokens = 8192
@@ -40,7 +46,7 @@ def _mock_provider(
 
 
 async def test_planner_succeeds_on_first_attempt() -> None:
-    """plan_agent returns COMPLETED when the LLM returns valid PlanResponse JSON."""
+    """plan_agent returns COMPLETED when the LLM returns valid WorkDecision JSON."""
     request = _make_request()
     provider = _mock_provider()
 
@@ -51,12 +57,12 @@ async def test_planner_succeeds_on_first_attempt() -> None:
 
 
 async def test_planner_task_executor_returns_typed_plan_output() -> None:
-    """PlannerTaskExecutor preserves PlanResponse as typed producer output."""
+    """PlannerTaskExecutor preserves GraphSplitDecision as typed producer output."""
     request = _make_request()
     provider = _mock_provider(
-        '{"kind":"final","output":{"kind":"plan","tasks":['
-        '{"objective":"Fetch pages","success_condition":"tests pass",'
-        '"adapter":"coding","artifact":"codebase","language":"python"}'
+        '{"kind":"final","output":{"kind":"split_graph","nodes":['
+        '{"id":"a","task":{"objective":"Fetch pages","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase","language":"python"},"depends_on":[]}'
         "]}}"
     )
     executor = PlannerTaskExecutor(
@@ -68,11 +74,12 @@ async def test_planner_task_executor_returns_typed_plan_output() -> None:
     response = await executor.run(request)
 
     assert response.status == ResponseStatus.COMPLETED
-    assert isinstance(response.output, PlanResponse)
-    assert len(response.output.tasks) == 1
-    task = response.output.tasks[0]
-    assert task.objective == "Fetch pages"
-    assert task.language == "python"
+    assert isinstance(response.output, GraphSplitDecision)
+    assert len(response.output.nodes) == 1
+    node = response.output.nodes[0]
+    assert isinstance(node.task, TaskSpec)
+    assert node.task.objective == "Fetch pages"
+    assert node.task.language == "python"
 
 
 async def test_planner_task_executor_preserves_artifact_language_context() -> None:
@@ -251,7 +258,7 @@ async def test_planner_format_failure_triggers_retry() -> None:
     provider.chat = AsyncMock(
         side_effect=[
             "not valid json",
-            '{"kind":"final","output":{"kind":"plan","tasks":[]}}',
+            _VALID_WORK_DECISION,
         ]
     )
 
@@ -299,7 +306,7 @@ async def test_planner_logs_warning_on_retry(caplog: pytest.LogCaptureFixture) -
     provider.chat = AsyncMock(
         side_effect=[
             "not valid json",
-            '{"kind":"final","output":{"kind":"plan","tasks":[]}}',
+            _VALID_WORK_DECISION,
         ]
     )
 
@@ -335,45 +342,43 @@ async def test_planner_user_prompt_does_not_duplicate_final_schema() -> None:
     user_prompt = messages[1]["content"]
     assert "Output object model: PlannerOutputModel" in system_prompt
     assert '"tasks": [' not in user_prompt
-    assert '"kind": "plan"' not in user_prompt
     assert "Respond with ONLY a JSON object" not in user_prompt
 
 
-async def test_planner_output_contains_tasks_not_scheduler_nodes() -> None:
-    """plan_agent returns PlanResponse tasks, not scheduler AgentRequests."""
+async def test_planner_output_contains_decisions_not_scheduler_nodes() -> None:
+    """plan_agent returns WorkDecision or GraphSplitDecision, not scheduler AgentRequests."""
     request = _make_request()
     provider = _mock_provider(
-        '{"kind":"final","output":{"kind":"plan","tasks":['
-        '{"objective":"A","success_condition":"done",'
+        '{"kind":"final","output":{"kind":"work","task":{'
+        '"objective":"implement scraper","success_condition":"tests pass",'
         '"adapter":"coding","artifact":"codebase"}'
-        "]}}"
+        "}}"
     )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
     assert response.status == ResponseStatus.COMPLETED
-    assert isinstance(response.output, PlanResponse)
-    assert len(response.output.tasks) == 1
-    assert response.output.tasks[0].objective == "A"
+    assert isinstance(response.output, WorkDecision)
+    assert response.output.task.objective == "implement scraper"
 
 
-async def test_planner_preserves_task_dependency_indices() -> None:
-    """PlanResponse keeps planner task dependency indices for scheduler conversion."""
+async def test_planner_preserves_task_dependency_ids() -> None:
+    """GraphSplitDecision keeps string depends_on IDs for scheduler conversion."""
     request = _make_request()
     provider = _mock_provider(
-        '{"kind":"final","output":{"kind":"plan","tasks":['
-        '{"objective":"A","success_condition":"done",'
-        '"adapter":"coding","artifact":"codebase"},'
-        '{"objective":"B","success_condition":"done",'
-        '"adapter":"coding","artifact":"codebase","depends_on":[0]}'
+        '{"kind":"final","output":{"kind":"split_graph","nodes":['
+        '{"id":"a","task":{"objective":"setup env","success_condition":"done",'
+        '"adapter":"coding","artifact":"codebase"},"depends_on":[]},'
+        '{"id":"b","task":{"objective":"implement scraper","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase"},"depends_on":["a"]}'
         "]}}"
     )
 
     response = await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
-    assert isinstance(response.output, PlanResponse)
-    task_b = next(task for task in response.output.tasks if task.objective == "B")
-    assert task_b.depends_on == [0]
+    assert isinstance(response.output, GraphSplitDecision)
+    node_b = next(n for n in response.output.nodes if n.id == "b")
+    assert node_b.depends_on == ["a"]
 
 
 async def test_planner_prompt_requires_testable_success_conditions() -> None:
@@ -490,13 +495,15 @@ async def test_planner_final_output_parses_work_decision() -> None:
     assert response.output.task.objective == "implement parser"
 
 
-async def test_planner_final_output_parses_split_dependent_decision() -> None:
-    """Planner accepts kind='split_dependent' and returns a DependentSplitDecision."""
+async def test_planner_final_output_parses_split_graph_decision() -> None:
+    """Planner accepts kind='split_graph' and returns a GraphSplitDecision."""
     request = _make_request()
     provider = _mock_provider_with_response(
-        '{"kind":"final","output":{"kind":"split_dependent","tasks":['
-        '{"objective":"setup","success_condition":"done","adapter":"coding","artifact":"codebase"},'
-        '{"objective":"implement","success_condition":"tests pass","adapter":"coding","artifact":"codebase"}'
+        '{"kind":"final","output":{"kind":"split_graph","nodes":['
+        '{"id":"a","task":{"objective":"setup env","success_condition":"done",'
+        '"adapter":"coding","artifact":"codebase"},"depends_on":[]},'
+        '{"id":"b","task":{"objective":"implement scraper","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase"},"depends_on":["a"]}'
         "]}}"
     )
     executor = PlannerTaskExecutor(
@@ -508,93 +515,47 @@ async def test_planner_final_output_parses_split_dependent_decision() -> None:
     response = await executor.run(request)
 
     assert response.status == ResponseStatus.COMPLETED
-    assert isinstance(response.output, DependentSplitDecision)
-    assert len(response.output.tasks) == 2
-    assert response.output.tasks[0].objective == "setup"
-    assert response.output.tasks[1].objective == "implement"
-
-
-async def test_planner_final_output_parses_split_orthogonal_decision() -> None:
-    """Planner accepts kind='split_orthogonal' and returns an OrthogonalSplitDecision."""
-    request = _make_request()
-    provider = _mock_provider_with_response(
-        '{"kind":"final","output":{"kind":"split_orthogonal","tasks":['
-        '{"objective":"write tests","success_condition":"tests pass","adapter":"coding","artifact":"codebase"},'
-        '{"objective":"write docs","success_condition":"docs exist","adapter":"document","artifact":"codebase"}'
-        "]}}"
-    )
-    executor = PlannerTaskExecutor(
-        provider=provider,
-        artifact_names=["codebase"],
-        artifact_languages={"codebase": "python"},
-    )
-
-    response = await executor.run(request)
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert isinstance(response.output, OrthogonalSplitDecision)
-    assert len(response.output.tasks) == 2
+    assert isinstance(response.output, GraphSplitDecision)
+    assert len(response.output.nodes) == 2
+    assert response.output.nodes[0].id == "a"
+    assert response.output.nodes[1].id == "b"
+    assert response.output.nodes[1].depends_on == ["a"]
 
 
 async def test_planner_prompt_includes_decision_kind_semantics() -> None:
-    """PLAN_PROMPT advertises work/split_dependent/split_orthogonal and their semantics."""
+    """PLAN_PROMPT advertises work/split_graph and their semantics."""
     request = _make_request()
-    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider = _mock_provider_with_response(_VALID_WORK_DECISION)
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
     assert 'kind="work"' in user_prompt
-    assert 'kind="split_dependent"' in user_prompt
-    assert 'kind="split_orthogonal"' in user_prompt
+    assert 'kind="split_graph"' in user_prompt
     assert "task is small enough to execute directly" in user_prompt
-    assert "children must run in order" in user_prompt
-    assert "children are independent" in user_prompt
-
-
-async def test_planner_legacy_plan_response_still_works() -> None:
-    """Legacy kind='plan' output is still accepted during migration."""
-    request = _make_request()
-    provider = _mock_provider_with_response(
-        '{"kind":"final","output":{"kind":"plan","tasks":['
-        '{"objective":"A","success_condition":"done","adapter":"coding","artifact":"codebase"}'
-        "]}}"
-    )
-    executor = PlannerTaskExecutor(
-        provider=provider,
-        artifact_names=["codebase"],
-        artifact_languages={"codebase": "python"},
-    )
-
-    response = await executor.run(request)
-
-    assert response.status == ResponseStatus.COMPLETED
-    assert isinstance(response.output, PlanResponse)
-    assert len(response.output.tasks) == 1
 
 
 # --- Orthogonal decomposition preference policy ---
 
 
-async def test_planner_prompt_prefers_split_graph_and_orthogonal_over_dependent() -> None:
-    """PLAN_PROMPT instructs the planner to prefer split_graph/split_orthogonal over split_dependent."""
+async def test_planner_prompt_prefers_split_graph_and_removes_unnecessary_edges() -> None:
+    """PLAN_PROMPT instructs the planner to use split_graph and remove unneeded edges."""
     request = _make_request()
-    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider = _mock_provider_with_response(_VALID_WORK_DECISION)
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
     assert "split_graph" in user_prompt
-    assert "split_orthogonal" in user_prompt
     assert "independently" in user_prompt
 
 
-async def test_planner_prompt_requires_genuine_ordering_for_dependent_split() -> None:
-    """PLAN_PROMPT requires a genuine ordering constraint to justify split_dependent."""
+async def test_planner_prompt_requires_genuine_ordering_for_graph_edges() -> None:
+    """PLAN_PROMPT requires a genuine ordering constraint to justify each depends_on edge."""
     request = _make_request()
-    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider = _mock_provider_with_response(_VALID_WORK_DECISION)
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
@@ -606,7 +567,7 @@ async def test_planner_prompt_requires_genuine_ordering_for_dependent_split() ->
 async def test_planner_prompt_states_balanced_trees_are_not_a_goal() -> None:
     """PLAN_PROMPT explicitly says balanced and symmetric trees are not a goal."""
     request = _make_request()
-    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider = _mock_provider_with_response(_VALID_WORK_DECISION)
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
@@ -619,7 +580,7 @@ async def test_planner_prompt_states_balanced_trees_are_not_a_goal() -> None:
 async def test_planner_prompt_instructs_maximizing_concurrency() -> None:
     """PLAN_PROMPT instructs the planner to maximize safe concurrency."""
     request = _make_request()
-    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider = _mock_provider_with_response(_VALID_WORK_DECISION)
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
@@ -629,9 +590,9 @@ async def test_planner_prompt_instructs_maximizing_concurrency() -> None:
 
 
 async def test_planner_prompt_includes_good_and_bad_decomposition_examples() -> None:
-    """PLAN_PROMPT includes concrete good and bad decomposition examples."""
+    """PLAN_PROMPT includes concrete good and bad decomposition examples using split_graph."""
     request = _make_request()
-    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider = _mock_provider_with_response(_VALID_WORK_DECISION)
 
     await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
 
@@ -639,5 +600,4 @@ async def test_planner_prompt_includes_good_and_bad_decomposition_examples() -> 
     user_prompt = messages[1]["content"]
     assert "Good decomposition" in user_prompt
     assert "Bad decomposition" in user_prompt
-    assert "split_orthogonal" in user_prompt
-    assert "split_dependent" in user_prompt
+    assert "split_graph" in user_prompt

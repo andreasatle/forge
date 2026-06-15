@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 from pydantic import TypeAdapter
 
+import forge.core.models as _models
 from forge.core.models import (
     AcceptanceCriterion,
     AgentContract,
@@ -19,15 +20,12 @@ from forge.core.models import (
     DecompositionDecision,
     DecompositionNodeSpec,
     DecompositionTask,
-    DependentSplitDecision,
     FailureKind,
     FileContent,
     FileView,
     FinalTurn,
     GraphSplitDecision,
     NodeState,
-    OrthogonalSplitDecision,
-    PlanResponse,
     PlanSpec,
     RefereeDecision,
     RequestSource,
@@ -271,18 +269,6 @@ def test_state_view_stores_files_as_file_views():
     assert view.files == files
 
 
-# --- PlanResponse ---
-
-
-def test_plan_response_kind_discriminator():
-    """PlanResponse requires kind to be 'plan'."""
-    pr = PlanResponse(
-        kind=AgentMessageKind.PLAN,
-        tasks=[],
-    )
-    assert pr.kind == "plan"
-
-
 # --- TaskSpec ---
 
 
@@ -523,14 +509,6 @@ def test_final_turn_accepts_work_output():
     assert ft.output.summary == "done"
 
 
-def test_final_turn_accepts_plan_response():
-    """FinalTurn.output holds a PlanResponse when the nested kind is 'plan'."""
-    ft = FinalTurn(output=PlanResponse(tasks=[]))
-    assert ft.kind == "final"
-    assert isinstance(ft.output, PlanResponse)
-    assert ft.output.tasks == []
-
-
 def test_final_turn_rejects_unknown_output_kind():
     """FinalTurn raises ValidationError when the nested output kind is unrecognized."""
     with pytest.raises(Exception):
@@ -547,15 +525,6 @@ def test_final_turn_roundtrip_work_output():
 
 
 # --- DecompositionDecision ---
-
-
-def _make_task_spec() -> TaskSpec:
-    return TaskSpec(
-        objective="write tests",
-        success_condition="tests pass",
-        adapter="coding",
-        artifact="codebase",
-    )
 
 
 def _make_work_spec() -> WorkSpec:
@@ -576,24 +545,6 @@ def test_work_decision_validates_and_serializes():
     assert restored.task.objective == "implement parser"
 
 
-def test_dependent_split_decision_validates_and_serializes():
-    """DependentSplitDecision round-trips through model_dump and model_validate."""
-    decision = DependentSplitDecision(tasks=[_make_task_spec(), _make_task_spec()])
-    data = decision.model_dump()
-    restored = DependentSplitDecision.model_validate(data)
-    assert restored.kind == "split_dependent"
-    assert len(restored.tasks) == 2
-
-
-def test_orthogonal_split_decision_validates_and_serializes():
-    """OrthogonalSplitDecision round-trips through model_dump and model_validate."""
-    decision = OrthogonalSplitDecision(tasks=[_make_task_spec()])
-    data = decision.model_dump()
-    restored = OrthogonalSplitDecision.model_validate(data)
-    assert restored.kind == "split_orthogonal"
-    assert len(restored.tasks) == 1
-
-
 def test_decomposition_decision_discriminates_work():
     """TypeAdapter resolves kind='work' to WorkDecision."""
     ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
@@ -601,47 +552,11 @@ def test_decomposition_decision_discriminates_work():
     assert isinstance(result, WorkDecision)
 
 
-def test_decomposition_decision_discriminates_split_dependent():
-    """TypeAdapter resolves kind='split_dependent' to DependentSplitDecision."""
-    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
-    result = ta.validate_python(
-        {"kind": "split_dependent", "tasks": [_make_task_spec().model_dump()]}
-    )
-    assert isinstance(result, DependentSplitDecision)
-
-
-def test_decomposition_decision_discriminates_split_orthogonal():
-    """TypeAdapter resolves kind='split_orthogonal' to OrthogonalSplitDecision."""
-    ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
-    result = ta.validate_python(
-        {"kind": "split_orthogonal", "tasks": [_make_task_spec().model_dump()]}
-    )
-    assert isinstance(result, OrthogonalSplitDecision)
-
-
 def test_decomposition_decision_rejects_unknown_kind():
     """TypeAdapter raises ValidationError for an unrecognized kind value."""
     ta: TypeAdapter[DecompositionDecision] = TypeAdapter(DecompositionDecision)
     with pytest.raises(Exception):
         ta.validate_python({"kind": "unknown_kind", "tasks": []})
-
-
-def test_dependent_split_decision_rejects_empty_tasks():
-    """DependentSplitDecision raises ValidationError when tasks list is empty."""
-    with pytest.raises(Exception):
-        DependentSplitDecision(tasks=[])
-
-
-def test_orthogonal_split_decision_rejects_empty_tasks():
-    """OrthogonalSplitDecision raises ValidationError when tasks list is empty."""
-    with pytest.raises(Exception):
-        OrthogonalSplitDecision(tasks=[])
-
-
-def test_plan_response_still_allows_empty_tasks():
-    """PlanResponse.tasks continues to accept an empty list (existing behavior unchanged)."""
-    pr = PlanResponse(tasks=[])
-    assert pr.tasks == []
 
 
 # --- DecompositionTask ---
@@ -708,19 +623,14 @@ def test_child_task_rejects_unknown_kind():
         ta.validate_python({"kind": "unknown_kind"})
 
 
-def test_final_turn_roundtrip_plan_response():
-    """FinalTurn with PlanResponse serializes and deserializes back to an equivalent object."""
-    task = TaskSpec(
-        objective="write tests",
-        success_condition="tests pass",
-        adapter="coding",
-        artifact="codebase",
-    )
-    ft = FinalTurn(output=PlanResponse(tasks=[task]))
-    data = ft.model_dump()
-    restored = FinalTurn.model_validate(data)
-    assert isinstance(restored.output, PlanResponse)
-    assert len(restored.output.tasks) == 1
+# --- Legacy type removal ---
+
+
+def test_legacy_decomposition_types_no_longer_exist():
+    """PlanResponse, DependentSplitDecision, OrthogonalSplitDecision no longer exist in models."""
+    assert not hasattr(_models, "PlanResponse")
+    assert not hasattr(_models, "DependentSplitDecision")
+    assert not hasattr(_models, "OrthogonalSplitDecision")
 
 
 # --- GraphSplitDecision ---

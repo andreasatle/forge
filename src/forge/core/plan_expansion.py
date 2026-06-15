@@ -1,4 +1,4 @@
-"""Scheduler-owned conversion from PlanResponse to work AgentRequests."""
+"""Scheduler-owned conversion from DecompositionDecision to work AgentRequests."""
 
 from forge.core.models import (
     AgentContract,
@@ -7,10 +7,7 @@ from forge.core.models import (
     ChildTask,
     DecompositionDecision,
     DecompositionTask,
-    DependentSplitDecision,
     GraphSplitDecision,
-    OrthogonalSplitDecision,
-    PlanResponse,
     PlanSpec,
     RequestId,
     RequestSource,
@@ -41,14 +38,10 @@ class DecompositionConvergenceValidator:
         if isinstance(decision, WorkDecision):
             return
 
+        assert isinstance(decision, GraphSplitDecision)
         parent_norm = self._normalize(parent_objective)
+        child_tasks: list[ChildTask] = [node.task for node in decision.nodes]
         child_norms: list[str] = []
-
-        child_tasks: list[ChildTask] = (
-            [node.task for node in decision.nodes]
-            if isinstance(decision, GraphSplitDecision)
-            else list(decision.tasks)
-        )
 
         for task in child_tasks:
             obj = task.objective
@@ -121,24 +114,6 @@ class PlanExpansionBuilder:
             return self._decomposition_task_to_request(task)
         return self._task_spec_to_request(task)
 
-    def build(self, plan_response: PlanResponse) -> list[AgentRequest]:
-        """Convert a PlanResponse into work requests with remapped dependencies."""
-        if not plan_response.tasks:
-            return []
-
-        work_nodes = [self._task_spec_to_request(task) for task in plan_response.tasks]
-
-        return [
-            work.model_copy(
-                update={
-                    "dependencies": frozenset(
-                        work_nodes[j].id for j in task.depends_on if 0 <= j < len(work_nodes)
-                    )
-                }
-            )
-            for work, task in zip(work_nodes, plan_response.tasks)
-        ]
-
     def build_from_decision(self, decision: DecompositionDecision) -> list[AgentRequest]:
         """Convert a DecompositionDecision into agent requests."""
         parent_objective = self.request.spec.contract.objective
@@ -151,17 +126,6 @@ class PlanExpansionBuilder:
                     spec=decision.task,
                 )
             ]
-        if isinstance(decision, DependentSplitDecision):
-            nodes = [self._child_task_to_request(task) for task in decision.tasks]
-            result: list[AgentRequest] = [nodes[0]]
-            for i in range(1, len(nodes)):
-                result.append(
-                    nodes[i].model_copy(update={"dependencies": frozenset({nodes[i - 1].id})})
-                )
-            return result
-        if isinstance(decision, OrthogonalSplitDecision):
-            return [self._child_task_to_request(task) for task in decision.tasks]
-        # GraphSplitDecision — explicit DAG with per-node depends_on string ids
         assert isinstance(decision, GraphSplitDecision)
         return self._build_from_graph_split(decision)
 

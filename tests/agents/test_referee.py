@@ -341,7 +341,7 @@ async def test_referee_prompt_includes_decomposition_topology_rules_for_planner_
     await referee_agent(
         _plan_request(),
         _state_view(),
-        "Decision: split_dependent\nTask 0: setup\nTask 1: implement scraper\nTask 2: write docs",
+        "Decision: split_graph\nNode a: setup\nNode b (depends_on: a): implement scraper\nNode c (depends_on: b): write docs",
         _critic_accept(),
         provider,
         _registry(),
@@ -352,31 +352,29 @@ async def test_referee_prompt_includes_decomposition_topology_rules_for_planner_
     prompt = messages[1]["content"]
     assert "real artifact or information flow" in prompt
     assert "genuine ordering constraint" in prompt
-    assert "split_orthogonal" in prompt
-    assert "split_dependent" in prompt
+    assert "split_graph" in prompt
     assert "Maximize safe concurrency" in prompt
     assert "not a goal" in prompt
     assert "unnecessary ordering" in prompt
 
 
-async def test_referee_revises_unjustified_dependent_split() -> None:
-    """Referee issues REVISE and overrides an accepted but unjustified split_dependent chain."""
+async def test_referee_revises_split_graph_with_unnecessary_edges() -> None:
+    """Referee issues REVISE and overrides an accepted split_graph with unjustified depends_on edges."""
     from forge.agents.attempt import PlannerOutputValidator
 
     decision_json = json.dumps(
         {
             "disposition": "revise",
             "rationale": (
-                "This dependent split introduces unnecessary ordering. "
+                "This graph introduces unnecessary ordering. "
                 "Several child tasks can proceed independently."
             ),
             "override": True,
             "revision_items": [
                 {
                     "required_change": (
-                        "Use split_orthogonal for independent branches. "
-                        "Apply split_dependent only where one task genuinely produces "
-                        "output that the next task must consume."
+                        "Remove depends_on edges that lack genuine information flow justification. "
+                        "Set depends_on to [] for nodes that do not consume output from predecessors."
                     ),
                     "rationale": "Child tasks do not depend on each other's output.",
                 }
@@ -389,7 +387,7 @@ async def test_referee_revises_unjustified_dependent_split() -> None:
     result = await referee_agent(
         _plan_request(),
         _state_view(),
-        "Decision: split_dependent\nTask 0: setup\nTask 1: implement\nTask 2: CLI\nTask 3: docs",
+        "Decision: split_graph\nNode a: setup\nNode b (depends_on: a): implement\nNode c (depends_on: b): CLI\nNode d (depends_on: c): docs",
         _critic_accept(),
         provider,
         _registry(),
@@ -400,12 +398,12 @@ async def test_referee_revises_unjustified_dependent_split() -> None:
     assert result.override is True
     assert "unnecessary ordering" in result.rationale
     assert len(result.revision_items) == 1
-    assert "split_orthogonal" in result.revision_items[0].required_change
+    assert "depends_on" in result.revision_items[0].required_change
 
     messages = provider.chat.call_args.args[0]
     prompt = messages[1]["content"]
     assert "Decomposition topology rules" in prompt
-    assert "split_dependent" in prompt
+    assert "split_graph" in prompt
     assert "unnecessary ordering" in prompt
 
 
@@ -428,7 +426,6 @@ async def test_referee_prompt_excludes_topology_rules_for_work_output() -> None:
     messages = provider.chat.call_args.args[0]
     prompt = messages[1]["content"]
     assert "Decomposition topology rules" not in prompt
-    assert "split_orthogonal" not in prompt
 
 
 async def test_referee_prompt_includes_split_graph_topology_rules() -> None:

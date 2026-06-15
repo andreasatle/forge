@@ -1,4 +1,4 @@
-"""Tests for AttemptLifecycle, WorkOutputValidator, and PlanResponseValidator."""
+"""Tests for AttemptLifecycle, WorkOutputValidator, and PlannerOutputValidator."""
 
 import subprocess
 from collections.abc import Awaitable, Callable
@@ -11,7 +11,7 @@ import pytest
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.attempt import (
     AttemptLifecycle,
-    PlanResponseValidator,
+    PlannerOutputValidator,
     RunAgentFailed,
     WorkOutputValidator,
 )
@@ -25,14 +25,13 @@ from forge.core.models import (
     CriticDisposition,
     CriticFinding,
     FailureKind,
-    PlanResponse,
     PlanSpec,
     RefereeDecision,
     RequestSource,
     ResponseStatus,
     RevisionItem,
     StateView,
-    TaskSpec,
+    WorkDecision,
     WorkOutput,
     WorkSpec,
     render_agent_contract,
@@ -1178,97 +1177,60 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
     assert "Revise your implementation" not in prompts[1]
 
 
-# ── PlanResponseValidator tests ──────────────────────────────────────────────
+# ── PlannerOutputValidator tests ─────────────────────────────────────────────
 
 
-async def test_plan_response_validator_is_empty_always_false() -> None:
-    """PlanResponseValidator.is_empty returns False regardless of task count."""
-    v = PlanResponseValidator()
-    assert v.is_empty(PlanResponse(tasks=[])) is False
-    assert (
-        v.is_empty(
-            PlanResponse(
-                tasks=[
-                    TaskSpec(objective="x", success_condition="y", adapter="coding", artifact="a")
-                ]
-            )
-        )
-        is False
-    )
+async def test_planner_output_validator_work_noun_is_plan() -> None:
+    """PlannerOutputValidator.work_noun returns 'plan'."""
+    assert PlannerOutputValidator().work_noun() == "plan"
 
 
-async def test_plan_response_validator_work_noun_is_plan() -> None:
-    """PlanResponseValidator.work_noun returns 'plan'."""
-    assert PlanResponseValidator().work_noun() == "plan"
+async def test_planner_output_validator_requires_nonempty() -> None:
+    """PlannerOutputValidator.requires_nonempty returns True."""
+    assert PlannerOutputValidator().requires_nonempty() is True
 
 
-async def test_plan_response_validator_requires_nonempty() -> None:
-    """PlanResponseValidator.requires_nonempty returns True."""
-    assert PlanResponseValidator().requires_nonempty() is True
-
-
-async def test_plan_response_validator_review_context_is_contract_bounded() -> None:
+async def test_planner_output_validator_review_context_is_contract_bounded() -> None:
     """Planner validation wording is bounded to the planning contract."""
-    context = PlanResponseValidator().review_context()
+    context = PlannerOutputValidator().review_context()
 
-    assert context.review_focus == "whether the task decomposition satisfies the planning contract"
+    assert (
+        context.review_focus == "whether the decomposition decision satisfies the planning contract"
+    )
     assert "fully covers" not in context.review_focus
     assert "northstar goal" not in context.review_focus
 
 
-async def test_plan_response_validator_render_for_critic_includes_tasks() -> None:
-    """PlanResponseValidator.render_for_critic renders objectives and success conditions."""
-    v = PlanResponseValidator()
-    plan = PlanResponse(
-        tasks=[
-            TaskSpec(
-                objective="write tests",
-                success_condition="all tests pass",
-                adapter="coding",
-                artifact="codebase",
-                language="python",
-            )
-        ]
-    )
-    text = v.render_for_critic(plan)
-    assert "write tests" in text
-    assert "all tests pass" in text
-    assert "codebase" in text
-    assert "python" in text
-
-
-async def test_plan_response_validator_extracts_only_typed_output() -> None:
-    """PlanResponseValidator returns None when response has no PlanResponse output."""
+async def test_planner_output_validator_extracts_only_typed_output() -> None:
+    """PlannerOutputValidator returns None when response has no WorkDecision/GraphSplitDecision."""
     request = _plan_request()
     response = AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
     )
 
-    assert PlanResponseValidator().extract_from_response(response) is None
+    assert PlannerOutputValidator().extract_from_response(response) is None
 
 
 async def test_plan_engine_goes_through_full_pwc_loop() -> None:
-    """AttemptLifecycle with PlanResponseValidator calls critic and referee for plan output."""
+    """AttemptLifecycle with PlannerOutputValidator calls critic and referee for plan output."""
     request = _plan_request()
-    plan = PlanResponse(
-        tasks=[
-            TaskSpec(
-                objective="scrape pages",
-                success_condition="tests pass",
-                adapter="coding",
-                artifact="codebase",
-            )
-        ]
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="scrape pages",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
     )
     run_fn, _ = _make_run_fn(
-        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan)]
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=decision)]
     )
     registry = _registry_with()
     engine = AttemptLifecycle(
         request=request,
         state_view=_state_view(),
-        validator=PlanResponseValidator(),
+        validator=PlannerOutputValidator(),
         run_fn=run_fn,
         registry=registry,
         critic_provider=MagicMock(),
@@ -1288,10 +1250,10 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
         result = await engine.run("base prompt")
 
     assert result.status == ResponseStatus.COMPLETED
-    assert result.output == plan
+    assert result.output == decision
     mock_critic.assert_called_once()
     mock_referee.assert_called_once()
-    assert mock_critic.call_args.args[2].startswith("Task 0: scrape pages")
+    assert mock_critic.call_args.args[2].startswith("Decision: work")
     assert mock_critic.call_args.kwargs["review_context"].output_noun == "plan"
     assert mock_referee.call_args.kwargs["review_context"].output_noun == "plan"
 
@@ -1377,27 +1339,25 @@ async def test_decompose_disposition_does_not_retry() -> None:
 async def test_plan_engine_revise_injects_feedback_and_retries() -> None:
     """AttemptLifecycle retries plans with the same structured RevisionRequest mechanism."""
     request = _plan_request()
-    plan = PlanResponse(
-        tasks=[
-            TaskSpec(
-                objective="scrape pages",
-                success_condition="tests pass",
-                adapter="coding",
-                artifact="codebase",
-            )
-        ]
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="scrape pages",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
     )
     run_fn, prompts = _make_run_fn(
         [
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan),
-            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=plan),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=decision),
+            AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=decision),
         ]
     )
     registry = _registry_with()
     engine = AttemptLifecycle(
         request=request,
         state_view=_state_view(),
-        validator=PlanResponseValidator(),
+        validator=PlannerOutputValidator(),
         run_fn=run_fn,
         registry=registry,
         critic_provider=MagicMock(),

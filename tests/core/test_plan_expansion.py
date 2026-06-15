@@ -4,15 +4,11 @@ import pytest
 
 from forge.core.models import (
     AcceptanceCriterion,
-    AgentMessageKind,
     AgentRequest,
     AgentType,
     DecompositionNodeSpec,
     DecompositionTask,
-    DependentSplitDecision,
     GraphSplitDecision,
-    OrthogonalSplitDecision,
-    PlanResponse,
     PlanSpec,
     RequestSource,
     TaskSpec,
@@ -34,136 +30,7 @@ def _plan_request() -> AgentRequest:
     )
 
 
-def test_plan_expansion_builder_emits_simple_work_node() -> None:
-    """A single plan task becomes a single WORK request."""
-    plan = PlanResponse(
-        kind=AgentMessageKind.PLAN,
-        tasks=[
-            TaskSpec(
-                objective="write code",
-                success_condition="tests pass",
-                adapter="coding",
-                artifact="codebase",
-            )
-        ],
-    )
-
-    work_requests = PlanExpansionBuilder(_plan_request()).build(plan)
-
-    assert len(work_requests) == 1
-    assert work_requests[0].agent_type == AgentType.WORK
-    assert work_requests[0].source == RequestSource.PLANNER
-    assert isinstance(work_requests[0].spec, WorkSpec)
-
-
-def test_plan_expansion_builder_remaps_task_dependencies_to_work_ids() -> None:
-    """depends_on indices become dependencies on the corresponding work request IDs."""
-    plan = PlanResponse(
-        kind=AgentMessageKind.PLAN,
-        tasks=[
-            TaskSpec(
-                objective="A", success_condition="done", adapter="coding", artifact="codebase"
-            ),
-            TaskSpec(
-                objective="B",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-                depends_on=[0],
-            ),
-        ],
-    )
-
-    work_requests = PlanExpansionBuilder(_plan_request()).build(plan)
-
-    work_a = next(
-        r for r in work_requests if isinstance(r.spec, WorkSpec) and r.spec.objective == "A"
-    )
-    work_b = next(
-        r for r in work_requests if isinstance(r.spec, WorkSpec) and r.spec.objective == "B"
-    )
-    assert work_a.id in work_b.dependencies
-    assert len(work_b.dependencies) == 1
-
-
-def test_plan_expansion_builder_propagates_artifact_and_language() -> None:
-    """Task artifact and language are copied into the generated WorkSpec."""
-    plan = PlanResponse(
-        kind=AgentMessageKind.PLAN,
-        tasks=[
-            TaskSpec(
-                objective="write code",
-                success_condition="tests pass",
-                adapter="coding",
-                artifact="api",
-                language="python",
-            )
-        ],
-    )
-
-    work_request = PlanExpansionBuilder(_plan_request()).build(plan)[0]
-
-    assert isinstance(work_request.spec, WorkSpec)
-    assert work_request.spec.artifact == "api"
-    assert work_request.spec.language == "python"
-
-
-def test_plan_expansion_builder_preserves_contract_fields() -> None:
-    """Planner-emitted contract fields are copied into the generated WorkSpec contract."""
-    plan = PlanResponse(
-        kind=AgentMessageKind.PLAN,
-        tasks=[
-            TaskSpec(
-                objective="write code",
-                success_condition="tests pass",
-                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="unit tests cover parser")],
-                constraints=["use stdlib"],
-                non_goals=["network UI"],
-                adapter="coding",
-                artifact="api",
-                language="python",
-            )
-        ],
-    )
-
-    work_request = PlanExpansionBuilder(_plan_request()).build(plan)[0]
-
-    assert isinstance(work_request.spec, WorkSpec)
-    assert work_request.spec.contract.acceptance_criteria == [
-        AcceptanceCriterion(id="AC1", text="unit tests cover parser")
-    ]
-    assert work_request.spec.contract.constraints == ["use stdlib"]
-    assert work_request.spec.contract.non_goals == ["network UI"]
-
-
-def test_plan_expansion_builder_ignores_out_of_range_dependency_indices() -> None:
-    """Existing manual dependency validation ignores indices outside the task list."""
-    plan = PlanResponse(
-        kind=AgentMessageKind.PLAN,
-        tasks=[
-            TaskSpec(
-                objective="A",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-                depends_on=[99],
-            )
-        ],
-    )
-
-    work_request = PlanExpansionBuilder(_plan_request()).build(plan)[0]
-
-    assert work_request.dependencies == frozenset()
-
-
-def test_plan_expansion_builder_empty_plan_returns_no_work_requests() -> None:
-    """An empty plan produces no work requests."""
-    plan = PlanResponse(kind=AgentMessageKind.PLAN, tasks=[])
-
-    assert PlanExpansionBuilder(_plan_request()).build(plan) == []
-
-
-# --- DecompositionDecision expansion ---
+# --- WorkDecision expansion ---
 
 
 def _make_task_spec(objective: str = "task") -> TaskSpec:
@@ -172,6 +39,30 @@ def _make_task_spec(objective: str = "task") -> TaskSpec:
         success_condition="done",
         adapter="coding",
         artifact="codebase",
+    )
+
+
+def _make_decomposition_task(objective: str = "sub-plan") -> DecompositionTask:
+    return DecompositionTask(objective=objective, success_condition="planned")
+
+
+def _make_graph_node(
+    node_id: str, objective: str = "task", depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id,
+        task=_make_task_spec(objective),
+        depends_on=depends_on or [],
+    )
+
+
+def _make_decomp_graph_node(
+    node_id: str, objective: str = "sub-plan", depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id,
+        task=_make_decomposition_task(objective),
+        depends_on=depends_on or [],
     )
 
 
@@ -194,10 +85,34 @@ def test_work_decision_expands_to_one_work_node() -> None:
     assert requests[0].dependencies == frozenset()
 
 
-def test_dependent_split_decision_expands_to_chained_work_nodes() -> None:
-    """DependentSplitDecision with three tasks produces three WORK nodes chained a->b->c."""
-    decision = DependentSplitDecision(
-        tasks=[_make_task_spec("task-a"), _make_task_spec("task-b"), _make_task_spec("task-c")]
+# --- GraphSplitDecision expansion ---
+
+
+def test_graph_split_no_edges_expands_to_independent_nodes() -> None:
+    """GraphSplitDecision with all depends_on [] produces nodes with empty dependencies."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b"),
+            _make_graph_node("c", "task-c"),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert len(requests) == 3
+    assert all(r.agent_type == AgentType.WORK for r in requests)
+    assert all(r.dependencies == frozenset() for r in requests)
+
+
+def test_graph_split_chain_decision_expands_to_chained_work_nodes() -> None:
+    """GraphSplitDecision a→b→c produces three WORK nodes chained a->b->c."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b", depends_on=["a"]),
+            _make_graph_node("c", "task-c", depends_on=["b"]),
+        ]
     )
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
@@ -212,29 +127,112 @@ def test_dependent_split_decision_expands_to_chained_work_nodes() -> None:
     assert len(node_c.dependencies) == 1
 
 
-def test_orthogonal_split_decision_expands_to_independent_work_nodes() -> None:
-    """OrthogonalSplitDecision with three tasks produces three WORK nodes with no sibling deps."""
-    decision = OrthogonalSplitDecision(
-        tasks=[_make_task_spec("task-a"), _make_task_spec("task-b"), _make_task_spec("task-c")]
+def test_graph_split_mixed_topology_exposes_concurrency() -> None:
+    """GraphSplitDecision: setup, docs run immediately; scraper after setup; cli after scraper."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("setup", "setup environment"),
+            _make_graph_node("docs", "write docs"),
+            _make_graph_node("scraper", "implement scraper", depends_on=["setup"]),
+            _make_graph_node("cli", "implement CLI", depends_on=["scraper"]),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    by_obj = {r.spec.objective: r for r in requests if isinstance(r.spec, WorkSpec)}
+
+    assert by_obj["setup environment"].dependencies == frozenset()
+    assert by_obj["write docs"].dependencies == frozenset()
+    assert by_obj["setup environment"].id in by_obj["implement scraper"].dependencies
+    assert len(by_obj["implement scraper"].dependencies) == 1
+    assert by_obj["implement scraper"].id in by_obj["implement CLI"].dependencies
+    assert len(by_obj["implement CLI"].dependencies) == 1
+
+
+def test_graph_split_multiple_parents() -> None:
+    """GraphSplitDecision node with two depends_on parents gets both as dependencies."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b"),
+            _make_graph_node("c", "task-c", depends_on=["a", "b"]),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    node_a, node_b, node_c = requests
+
+    assert node_a.dependencies == frozenset()
+    assert node_b.dependencies == frozenset()
+    assert node_a.id in node_c.dependencies
+    assert node_b.id in node_c.dependencies
+    assert len(node_c.dependencies) == 2
+
+
+def test_graph_split_propagates_artifact_and_language() -> None:
+    """Task artifact and language are copied into the generated WorkSpec."""
+    decision = GraphSplitDecision(
+        nodes=[
+            DecompositionNodeSpec(
+                id="a",
+                task=TaskSpec(
+                    objective="write code",
+                    success_condition="tests pass",
+                    adapter="coding",
+                    artifact="api",
+                    language="python",
+                ),
+                depends_on=[],
+            )
+        ]
     )
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
-    assert len(requests) == 3
-    assert all(r.agent_type == AgentType.WORK for r in requests)
-    assert all(r.dependencies == frozenset() for r in requests)
+    assert isinstance(requests[0].spec, WorkSpec)
+    assert requests[0].spec.artifact == "api"
+    assert requests[0].spec.language == "python"
+
+
+def test_graph_split_preserves_contract_fields() -> None:
+    """Planner-emitted contract fields are copied into the generated WorkSpec contract."""
+    decision = GraphSplitDecision(
+        nodes=[
+            DecompositionNodeSpec(
+                id="a",
+                task=TaskSpec(
+                    objective="write code",
+                    success_condition="tests pass",
+                    acceptance_criteria=[
+                        AcceptanceCriterion(id="AC1", text="unit tests cover parser")
+                    ],
+                    constraints=["use stdlib"],
+                    non_goals=["network UI"],
+                    adapter="coding",
+                    artifact="api",
+                    language="python",
+                ),
+                depends_on=[],
+            )
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert isinstance(requests[0].spec, WorkSpec)
+    assert requests[0].spec.contract.acceptance_criteria == [
+        AcceptanceCriterion(id="AC1", text="unit tests cover parser")
+    ]
+    assert requests[0].spec.contract.constraints == ["use stdlib"]
+    assert requests[0].spec.contract.non_goals == ["network UI"]
 
 
 # --- DecompositionTask expansion ---
 
 
-def _make_decomposition_task(objective: str = "sub-plan") -> DecompositionTask:
-    return DecompositionTask(objective=objective, success_condition="planned")
-
-
-def test_decomposition_task_inside_split_expands_to_plan_node() -> None:
-    """A DecompositionTask inside an orthogonal split produces an AgentType.PLAN request."""
-    decision = OrthogonalSplitDecision(tasks=[_make_decomposition_task("plan the sub-system")])
+def test_decomposition_task_inside_graph_split_expands_to_plan_node() -> None:
+    """A DecompositionTask inside a GraphSplitDecision produces an AgentType.PLAN request."""
+    decision = GraphSplitDecision(nodes=[_make_decomp_graph_node("sub", "plan the sub-system")])
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
@@ -246,13 +244,13 @@ def test_decomposition_task_inside_split_expands_to_plan_node() -> None:
     assert requests[0].dependencies == frozenset()
 
 
-def test_dependent_split_mixed_children_creates_dependency_chain() -> None:
-    """DependentSplitDecision with mixed work/decomposition children chains them in order."""
-    decision = DependentSplitDecision(
-        tasks=[
-            _make_task_spec("work-a"),
-            _make_decomposition_task("plan-b"),
-            _make_task_spec("work-c"),
+def test_graph_split_chain_mixed_children_creates_dependency_chain() -> None:
+    """GraphSplitDecision chain with mixed work/decomposition children produces chained deps."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("work-a", "work-a"),
+            _make_decomp_graph_node("plan-b", "plan-b", depends_on=["work-a"]),
+            _make_graph_node("work-c", "work-c", depends_on=["plan-b"]),
         ]
     )
 
@@ -269,12 +267,12 @@ def test_dependent_split_mixed_children_creates_dependency_chain() -> None:
     assert len(node_c.dependencies) == 1
 
 
-def test_orthogonal_split_mixed_children_creates_no_sibling_dependencies() -> None:
-    """OrthogonalSplitDecision with mixed children produces no sibling dependencies."""
-    decision = OrthogonalSplitDecision(
-        tasks=[
-            _make_task_spec("work-a"),
-            _make_decomposition_task("plan-b"),
+def test_graph_split_no_edges_mixed_children_creates_no_sibling_dependencies() -> None:
+    """GraphSplitDecision with no edges and mixed children produces no sibling dependencies."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("work-a", "work-a"),
+            _make_decomp_graph_node("plan-b", "plan-b"),
         ]
     )
 
@@ -286,9 +284,14 @@ def test_orthogonal_split_mixed_children_creates_no_sibling_dependencies() -> No
     assert all(r.dependencies == frozenset() for r in requests)
 
 
-def test_all_work_expansion_unchanged_with_task_spec() -> None:
-    """Legacy all-work expansion via TaskSpec still produces only WORK nodes."""
-    decision = DependentSplitDecision(tasks=[_make_task_spec("task-a"), _make_task_spec("task-b")])
+def test_graph_split_chain_all_work_produces_only_work_nodes() -> None:
+    """GraphSplitDecision chain with all TaskSpec nodes produces only WORK nodes."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "task-a"),
+            _make_graph_node("b", "task-b", depends_on=["a"]),
+        ]
+    )
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
@@ -305,11 +308,11 @@ def _make_validator() -> DecompositionConvergenceValidator:
 
 def test_convergence_validator_accepts_narrower_children() -> None:
     """Valid decomposition with distinct, narrower child objectives passes."""
-    decision = OrthogonalSplitDecision(
-        tasks=[
-            _make_task_spec("implement HTTP fetching"),
-            _make_task_spec("implement HTML parsing"),
-            _make_task_spec("add CLI interface"),
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "implement HTTP fetching"),
+            _make_graph_node("b", "implement HTML parsing"),
+            _make_graph_node("c", "add CLI interface"),
         ]
     )
 
@@ -318,10 +321,10 @@ def test_convergence_validator_accepts_narrower_children() -> None:
 
 def test_convergence_validator_rejects_child_identical_to_parent() -> None:
     """A child whose normalized objective matches the parent is rejected."""
-    decision = OrthogonalSplitDecision(
-        tasks=[
-            _make_task_spec("build a web scraper"),
-            _make_task_spec("add CLI interface"),
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "build a web scraper"),
+            _make_graph_node("b", "add CLI interface"),
         ]
     )
 
@@ -331,8 +334,11 @@ def test_convergence_validator_rejects_child_identical_to_parent() -> None:
 
 def test_convergence_validator_rejects_child_identical_to_parent_case_insensitive() -> None:
     """Normalization is case-insensitive — 'Build A Web Scraper' equals 'build a web scraper'."""
-    decision = OrthogonalSplitDecision(
-        tasks=[_make_task_spec("Build A Web Scraper"), _make_task_spec("add CLI")]
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "Build A Web Scraper"),
+            _make_graph_node("b", "add CLI"),
+        ]
     )
 
     with pytest.raises(DecompositionConvergenceError, match="not reductive"):
@@ -341,10 +347,10 @@ def test_convergence_validator_rejects_child_identical_to_parent_case_insensitiv
 
 def test_convergence_validator_rejects_all_identical_children() -> None:
     """All children normalizing to the same objective is rejected."""
-    decision = DependentSplitDecision(
-        tasks=[
-            _make_task_spec("write comprehensive tests"),
-            _make_task_spec("Write Comprehensive Tests"),
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "write comprehensive tests"),
+            _make_graph_node("b", "Write Comprehensive Tests"),
         ]
     )
 
@@ -354,7 +360,12 @@ def test_convergence_validator_rejects_all_identical_children() -> None:
 
 def test_convergence_validator_rejects_empty_child_objective() -> None:
     """A child with an empty or near-empty objective is rejected."""
-    decision = OrthogonalSplitDecision(tasks=[_make_task_spec("  "), _make_task_spec("add CLI")])
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "  "),
+            _make_graph_node("b", "add CLI"),
+        ]
+    )
 
     with pytest.raises(DecompositionConvergenceError, match="near-empty"):
         _make_validator().validate("build a web scraper", decision)
@@ -376,7 +387,7 @@ def test_convergence_validator_accepts_work_decision() -> None:
 
 def test_convergence_validator_single_child_not_identical_passes() -> None:
     """A single child that is distinct from the parent is accepted."""
-    decision = OrthogonalSplitDecision(tasks=[_make_task_spec("implement HTTP fetching")])
+    decision = GraphSplitDecision(nodes=[_make_graph_node("a", "implement HTTP fetching")])
 
     _make_validator().validate("implement web scraper", decision)  # must not raise
 
@@ -388,8 +399,11 @@ def test_build_from_decision_raises_on_identical_child_to_parent() -> None:
         source=RequestSource.USER,
         spec=PlanSpec(northstar="build a web scraper"),
     )
-    decision = OrthogonalSplitDecision(
-        tasks=[_make_task_spec("build a web scraper"), _make_task_spec("add CLI")]
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "build a web scraper"),
+            _make_graph_node("b", "add CLI"),
+        ]
     )
 
     with pytest.raises(DecompositionConvergenceError):
@@ -416,121 +430,3 @@ def test_build_from_decision_work_decision_not_rejected_by_convergence() -> None
 
     assert len(requests) == 1
     assert requests[0].agent_type == AgentType.WORK
-
-
-# --- GraphSplitDecision expansion ---
-
-
-def _make_graph_node(
-    node_id: str, objective: str = "task", depends_on: list[str] | None = None
-) -> DecompositionNodeSpec:
-    return DecompositionNodeSpec(
-        id=node_id,
-        task=_make_task_spec(objective),
-        depends_on=depends_on or [],
-    )
-
-
-def test_graph_split_no_edges_expands_to_independent_nodes() -> None:
-    """GraphSplitDecision with no depends_on edges produces nodes with empty dependencies."""
-    decision = GraphSplitDecision(
-        nodes=[
-            _make_graph_node("a", "task-a"),
-            _make_graph_node("b", "task-b"),
-            _make_graph_node("c", "task-c"),
-        ]
-    )
-
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
-
-    assert len(requests) == 3
-    assert all(r.agent_type == AgentType.WORK for r in requests)
-    assert all(r.dependencies == frozenset() for r in requests)
-
-
-def test_graph_split_chain_expands_to_chained_nodes() -> None:
-    """GraphSplitDecision a→b→c produces dependencies matching the chain."""
-    decision = GraphSplitDecision(
-        nodes=[
-            _make_graph_node("a", "task-a"),
-            _make_graph_node("b", "task-b", depends_on=["a"]),
-            _make_graph_node("c", "task-c", depends_on=["b"]),
-        ]
-    )
-
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
-    node_a, node_b, node_c = requests
-
-    assert node_a.dependencies == frozenset()
-    assert node_a.id in node_b.dependencies
-    assert len(node_b.dependencies) == 1
-    assert node_b.id in node_c.dependencies
-    assert len(node_c.dependencies) == 1
-
-
-def test_graph_split_mixed_topology_exposes_concurrency() -> None:
-    """GraphSplitDecision with mixed topology: setup, docs run immediately; scraper after setup; cli after scraper."""
-    decision = GraphSplitDecision(
-        nodes=[
-            _make_graph_node("setup", "setup environment"),
-            _make_graph_node("docs", "write docs"),
-            _make_graph_node("scraper", "implement scraper", depends_on=["setup"]),
-            _make_graph_node("cli", "implement CLI", depends_on=["scraper"]),
-        ]
-    )
-
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
-    by_obj = {r.spec.objective: r for r in requests if isinstance(r.spec, WorkSpec)}
-
-    # setup and docs are immediately runnable
-    assert by_obj["setup environment"].dependencies == frozenset()
-    assert by_obj["write docs"].dependencies == frozenset()
-    # scraper waits for setup
-    assert by_obj["setup environment"].id in by_obj["implement scraper"].dependencies
-    assert len(by_obj["implement scraper"].dependencies) == 1
-    # cli waits for scraper
-    assert by_obj["implement scraper"].id in by_obj["implement CLI"].dependencies
-    assert len(by_obj["implement CLI"].dependencies) == 1
-
-
-def test_graph_split_multiple_parents() -> None:
-    """GraphSplitDecision node with two depends_on parents gets both as dependencies."""
-    decision = GraphSplitDecision(
-        nodes=[
-            _make_graph_node("a", "task-a"),
-            _make_graph_node("b", "task-b"),
-            _make_graph_node("c", "task-c", depends_on=["a", "b"]),
-        ]
-    )
-
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
-    node_a, node_b, node_c = requests
-
-    assert node_a.dependencies == frozenset()
-    assert node_b.dependencies == frozenset()
-    assert node_a.id in node_c.dependencies
-    assert node_b.id in node_c.dependencies
-    assert len(node_c.dependencies) == 2
-
-
-def test_convergence_validator_validates_graph_split_nodes() -> None:
-    """DecompositionConvergenceValidator checks GraphSplitDecision node objectives."""
-    decision = GraphSplitDecision(
-        nodes=[
-            _make_graph_node("a", "implement HTTP fetching"),
-            _make_graph_node("b", "implement HTML parsing"),
-        ]
-    )
-    _make_validator().validate("build web scraper", decision)  # must not raise
-
-
-def test_convergence_validator_rejects_graph_split_child_identical_to_parent() -> None:
-    """Convergence validator rejects a GraphSplitDecision node whose objective matches parent."""
-    decision = GraphSplitDecision(
-        nodes=[
-            _make_graph_node("a", "build web scraper"),
-            _make_graph_node("b", "add CLI"),
-        ]
-    )
-    with pytest.raises(DecompositionConvergenceError, match="not reductive"):
-        _make_validator().validate("build web scraper", decision)

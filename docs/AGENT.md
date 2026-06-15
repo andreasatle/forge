@@ -78,7 +78,6 @@ Important concepts:
 * Referee
 * RevisionRequest
 * AgentResponse.output
-* PlanResponse
 * WorkOutput
 * StateService
 * Language plugin

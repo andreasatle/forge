@@ -13,12 +13,9 @@ from forge.core.models import (
     DAGNode,
     DecompositionNodeSpec,
     DecompositionTask,
-    DependentSplitDecision,
     FailureKind,
     GraphSplitDecision,
     NodeState,
-    OrthogonalSplitDecision,
-    PlanResponse,
     PlanSpec,
     RequestId,
     RequestSource,
@@ -109,23 +106,12 @@ async def test_single_work_node_completes() -> None:
 
 
 async def test_scheduler_derives_work_nodes_from_accepted_plan_output() -> None:
-    """Accepted PlanResponse output is converted to WORK nodes by the scheduler."""
+    """Accepted GraphSplitDecision output is converted to WORK nodes by the scheduler."""
     planner = _plan_request()
-    plan = PlanResponse(
-        tasks=[
-            TaskSpec(
-                objective="A",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
-            TaskSpec(
-                objective="B",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-                depends_on=[0],
-            ),
+    plan = GraphSplitDecision(
+        nodes=[
+            _graph_node("a", "task alpha"),
+            _graph_node("b", "task beta", depends_on=["a"]),
         ]
     )
 
@@ -151,8 +137,8 @@ async def test_scheduler_derives_work_nodes_from_accepted_plan_output() -> None:
         assert isinstance(node.request.spec, WorkSpec)
         return node.request.spec.objective
 
-    work_a = next(n for n in work_nodes if objective(n) == "A")
-    work_b = next(n for n in work_nodes if objective(n) == "B")
+    work_a = next(n for n in work_nodes if objective(n) == "task alpha")
+    work_b = next(n for n in work_nodes if objective(n) == "task beta")
     assert work_a.node_state == NodeState.INTEGRATED
     assert work_b.node_state == NodeState.INTEGRATED
     assert work_b.request.dependencies == frozenset({work_a.request.id})
@@ -161,16 +147,7 @@ async def test_scheduler_derives_work_nodes_from_accepted_plan_output() -> None:
 async def test_scheduler_does_not_derive_work_nodes_from_failed_plan_output() -> None:
     """Rejected planner responses do not create work nodes even when output is present."""
     planner = _plan_request()
-    plan = PlanResponse(
-        tasks=[
-            TaskSpec(
-                objective="A",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            )
-        ]
-    )
+    plan = GraphSplitDecision(nodes=[_graph_node("a", "task alpha")])
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return AgentResponse(
@@ -855,11 +832,7 @@ async def test_decompose_status_creates_new_plan_node() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == work.id:
             return _decompose(request)
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            output=PlanResponse(tasks=[]),
-        )
+        return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
 
@@ -882,11 +855,7 @@ async def test_decompose_work_node_is_cancelled_not_failed() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == work.id:
             return _decompose(request)
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            output=PlanResponse(tasks=[]),
-        )
+        return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
 
@@ -904,11 +873,7 @@ async def test_decompose_transfers_dependents_to_new_plan_node() -> None:
         if request.id == work_a.id:
             return _decompose(request)
         if request.agent_type == AgentType.PLAN:
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                output=PlanResponse(tasks=[]),
-            )
+            return _ok(request)
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
@@ -943,11 +908,7 @@ async def test_decompose_does_not_fire_on_node_failed() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == work.id:
             return _decompose(request)
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            output=PlanResponse(tasks=[]),
-        )
+        return _ok(request)
 
     await Scheduler(runner=runner, callbacks=callbacks).run(state)
 
@@ -969,28 +930,14 @@ async def test_decompose_end_to_end_plan_produces_two_subtasks() -> None:
                 return AgentResponse(
                     request_id=request.id,
                     status=ResponseStatus.COMPLETED,
-                    output=PlanResponse(
-                        tasks=[
-                            TaskSpec(
-                                objective="do thing A",
-                                success_condition="thing A done",
-                                adapter="coding",
-                                artifact="codebase",
-                            ),
-                            TaskSpec(
-                                objective="do thing B",
-                                success_condition="thing B done",
-                                adapter="coding",
-                                artifact="codebase",
-                            ),
+                    output=GraphSplitDecision(
+                        nodes=[
+                            _graph_node("a", "do thing A"),
+                            _graph_node("b", "do thing B"),
                         ]
                     ),
                 )
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                output=PlanResponse(tasks=[]),
-            )
+            return _ok(request)
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
@@ -1031,11 +978,7 @@ async def test_decompose_emits_node_decomposed_telemetry() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == work.id:
             return _decompose(request)
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            output=PlanResponse(tasks=[]),
-        )
+        return _ok(request)
 
     await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(state)
 
@@ -1207,10 +1150,14 @@ async def test_scheduler_expands_work_decision_via_build_from_decision() -> None
 
 
 async def test_scheduler_expands_dependent_split_decision_into_chained_work_nodes() -> None:
-    """Planner returning DependentSplitDecision creates chained WORK nodes."""
+    """Planner returning GraphSplitDecision chain creates chained WORK nodes."""
     planner = _plan_request()
-    decision = DependentSplitDecision(
-        tasks=[_task_spec("task-alpha"), _task_spec("task-beta"), _task_spec("task-gamma")]
+    decision = GraphSplitDecision(
+        nodes=[
+            _graph_node("a", "task-alpha"),
+            _graph_node("b", "task-beta", depends_on=["a"]),
+            _graph_node("c", "task-gamma", depends_on=["b"]),
+        ]
     )
 
     async def runner(request: AgentRequest) -> AgentResponse:
@@ -1243,9 +1190,11 @@ async def test_scheduler_expands_dependent_split_decision_into_chained_work_node
 
 
 async def test_scheduler_expands_orthogonal_split_decision_into_independent_work_nodes() -> None:
-    """Planner returning OrthogonalSplitDecision creates independent WORK nodes."""
+    """Planner returning GraphSplitDecision with no edges creates independent WORK nodes."""
     planner = _plan_request()
-    decision = OrthogonalSplitDecision(tasks=[_task_spec("task-alpha"), _task_spec("task-beta")])
+    decision = GraphSplitDecision(
+        nodes=[_graph_node("a", "task-alpha"), _graph_node("b", "task-beta")]
+    )
 
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == planner.id:
@@ -1264,29 +1213,6 @@ async def test_scheduler_expands_orthogonal_split_decision_into_independent_work
     assert len(work_nodes) == 2
     assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
     assert all(n.request.dependencies == frozenset() for n in work_nodes)
-
-
-async def test_scheduler_legacy_plan_response_still_expands_correctly() -> None:
-    """Legacy PlanResponse still expands to work nodes after DecompositionDecision support added."""
-    planner = _plan_request()
-    plan = PlanResponse(tasks=[_task_spec("legacy-task")])
-
-    async def runner(request: AgentRequest) -> AgentResponse:
-        if request.id == planner.id:
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                output=plan,
-            )
-        return _ok(request)
-
-    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
-
-    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
-    assert len(work_nodes) == 1
-    assert work_nodes[0].node_state == NodeState.INTEGRATED
-    assert isinstance(work_nodes[0].request.spec, WorkSpec)
-    assert work_nodes[0].request.spec.objective == "legacy-task"
 
 
 async def test_scheduler_expands_graph_split_decision_into_dag_work_nodes() -> None:
@@ -1339,20 +1265,10 @@ async def test_scheduler_expands_graph_split_decision_into_dag_work_nodes() -> N
 async def test_scheduler_convergence_failure_marks_plan_node_failed() -> None:
     """A split decision whose child repeats the parent objective fails the plan node."""
     planner = _plan_request()
-    decision = OrthogonalSplitDecision(
-        tasks=[
-            TaskSpec(
-                objective="test northstar",  # repeats northstar == parent contract objective
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
-            TaskSpec(
-                objective="add CLI interface",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
+    decision = GraphSplitDecision(
+        nodes=[
+            _graph_node("a", "test northstar"),  # repeats northstar == parent contract objective
+            _graph_node("b", "add CLI interface"),
         ]
     )
 
@@ -1375,16 +1291,7 @@ async def test_scheduler_convergence_failure_marks_plan_node_failed() -> None:
 async def test_scheduler_convergence_failure_adds_no_child_nodes() -> None:
     """No child nodes are added to the DAG when convergence validation rejects the decision."""
     planner = _plan_request()
-    decision = DependentSplitDecision(
-        tasks=[
-            TaskSpec(
-                objective="test northstar",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            )
-        ]
-    )
+    decision = GraphSplitDecision(nodes=[_graph_node("a", "test northstar")])
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return AgentResponse(
@@ -1402,20 +1309,10 @@ async def test_scheduler_convergence_failure_adds_no_child_nodes() -> None:
 async def test_scheduler_convergence_failure_emits_telemetry_event() -> None:
     """A convergence failure emits a node.convergence_failed telemetry event."""
     planner = _plan_request()
-    decision = OrthogonalSplitDecision(
-        tasks=[
-            TaskSpec(
-                objective="test northstar",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
-            TaskSpec(
-                objective="another task",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
+    decision = GraphSplitDecision(
+        nodes=[
+            _graph_node("a", "test northstar"),
+            _graph_node("b", "another task"),
         ]
     )
     sink = _MemoryTelemetrySink()
@@ -1440,20 +1337,10 @@ async def test_scheduler_convergence_failure_emits_telemetry_event() -> None:
 async def test_scheduler_valid_split_not_affected_by_convergence_check() -> None:
     """A valid split with distinct narrower children passes convergence and expands normally."""
     planner = _plan_request()
-    decision = OrthogonalSplitDecision(
-        tasks=[
-            TaskSpec(
-                objective="implement HTTP fetching",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
-            TaskSpec(
-                objective="implement HTML parsing",
-                success_condition="done",
-                adapter="coding",
-                artifact="codebase",
-            ),
+    decision = GraphSplitDecision(
+        nodes=[
+            _graph_node("a", "implement HTTP fetching"),
+            _graph_node("b", "implement HTML parsing"),
         ]
     )
 
@@ -1482,6 +1369,22 @@ def _decomposition_task_spec(objective: str) -> DecompositionTask:
     return DecompositionTask(objective=objective, success_condition="planned")
 
 
+def _graph_node(
+    node_id: str, objective: str, depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id, task=_task_spec(objective), depends_on=depends_on or []
+    )
+
+
+def _graph_decomp_node(
+    node_id: str, objective: str, depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id, task=_decomposition_task_spec(objective), depends_on=depends_on or []
+    )
+
+
 async def test_root_plan_emits_decomposition_task_child_plan_is_dispatched() -> None:
     """Root PLAN emitting a DecompositionTask results in a child PLAN node that is dispatched."""
     root_plan = _plan_request()
@@ -1493,16 +1396,12 @@ async def test_root_plan_emits_decomposition_task_child_plan_is_dispatched() -> 
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[_decomposition_task_spec("implement sub-system")]
+                output=GraphSplitDecision(
+                    nodes=[_graph_decomp_node("sub", "implement sub-system")]
                 ),
             )
         if request.agent_type == AgentType.PLAN:
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                output=PlanResponse(tasks=[]),
-            )
+            return _ok(request)
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(
@@ -1527,24 +1426,15 @@ async def test_two_level_decomposition_grandchild_work_node_completes() -> None:
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[_decomposition_task_spec("implement sub-system")]
+                output=GraphSplitDecision(
+                    nodes=[_graph_decomp_node("sub", "implement sub-system")]
                 ),
             )
         if request.agent_type == AgentType.PLAN:
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[
-                        TaskSpec(
-                            objective="write the implementation",
-                            success_condition="tests pass",
-                            adapter="coding",
-                            artifact="codebase",
-                        )
-                    ]
-                ),
+                output=GraphSplitDecision(nodes=[_graph_node("impl", "write the implementation")]),
             )
         return _ok(request)
 
@@ -1563,7 +1453,7 @@ async def test_two_level_decomposition_grandchild_work_node_completes() -> None:
 
 
 async def test_child_plan_node_uses_same_acceptance_path_as_root() -> None:
-    """Child PLAN node accepted via OrthogonalSplitDecision expands children identically to root."""
+    """Child PLAN node accepted via GraphSplitDecision expands children identically to root."""
     root_plan = _plan_request()
     plan_nodes_seen: list[RequestId] = []
 
@@ -1574,10 +1464,10 @@ async def test_child_plan_node_uses_same_acceptance_path_as_root() -> None:
                 return AgentResponse(
                     request_id=request.id,
                     status=ResponseStatus.COMPLETED,
-                    output=DependentSplitDecision(
-                        tasks=[
-                            _decomposition_task_spec("plan phase-one"),
-                            _task_spec("finalize"),
+                    output=GraphSplitDecision(
+                        nodes=[
+                            _graph_decomp_node("phase", "plan phase-one"),
+                            _graph_node("finalize", "finalize", depends_on=["phase"]),
                         ]
                     ),
                 )
@@ -1617,11 +1507,7 @@ async def test_plan_node_decompose_disposition_creates_new_plan_node_not_failure
         if request.id == root_plan.id:
             return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
         if request.agent_type == AgentType.PLAN:
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                output=PlanResponse(tasks=[]),
-            )
+            return _ok(request)
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(
@@ -1652,8 +1538,8 @@ async def test_child_plan_decompose_disposition_creates_new_plan_node() -> None:
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[_decomposition_task_spec("implement sub-system")]
+                output=GraphSplitDecision(
+                    nodes=[_graph_decomp_node("sub", "implement sub-system")]
                 ),
             )
         spec = request.spec
@@ -1666,11 +1552,7 @@ async def test_child_plan_decompose_disposition_creates_new_plan_node() -> None:
             child_decomposed_once = True
             return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
         if request.agent_type == AgentType.PLAN:
-            return AgentResponse(
-                request_id=request.id,
-                status=ResponseStatus.COMPLETED,
-                output=PlanResponse(tasks=[]),
-            )
+            return _ok(request)
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(
@@ -1695,8 +1577,8 @@ async def test_child_plan_failure_marks_failed_like_root_plan_failure() -> None:
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[_decomposition_task_spec("implement sub-system")]
+                output=GraphSplitDecision(
+                    nodes=[_graph_decomp_node("sub", "implement sub-system")]
                 ),
             )
         if request.agent_type == AgentType.PLAN:
@@ -1733,24 +1615,15 @@ async def test_telemetry_has_distinct_dispatched_events_for_root_child_and_work_
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[_decomposition_task_spec("implement sub-system")]
+                output=GraphSplitDecision(
+                    nodes=[_graph_decomp_node("sub", "implement sub-system")]
                 ),
             )
         if request.agent_type == AgentType.PLAN:
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(
-                    tasks=[
-                        TaskSpec(
-                            objective="write the code",
-                            success_condition="tests pass",
-                            adapter="coding",
-                            artifact="codebase",
-                        )
-                    ]
-                ),
+                output=GraphSplitDecision(nodes=[_graph_node("code", "write the code")]),
             )
         return _ok(request)
 
@@ -1845,11 +1718,7 @@ async def test_decompose_convergence_work_to_plan_is_allowed() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == work.id:
             return _decompose(request)
-        return AgentResponse(
-            request_id=request.id,
-            status=ResponseStatus.COMPLETED,
-            output=PlanResponse(tasks=[]),
-        )
+        return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
 
@@ -1860,9 +1729,11 @@ async def test_decompose_convergence_work_to_plan_is_allowed() -> None:
 
 
 async def test_decompose_convergence_split_decisions_unaffected() -> None:
-    """OrthogonalSplitDecision expansion is unaffected by DECOMPOSE convergence checks."""
+    """GraphSplitDecision expansion is unaffected by DECOMPOSE convergence checks."""
     planner = _plan_request()
-    decision = OrthogonalSplitDecision(tasks=[_task_spec("task-one"), _task_spec("task-two")])
+    decision = GraphSplitDecision(
+        nodes=[_graph_node("a", "task-one"), _graph_node("b", "task-two")]
+    )
 
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == planner.id:
@@ -1892,18 +1763,18 @@ async def test_decompose_convergence_no_depth_limit() -> None:
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(tasks=[_decomposition_task_spec("level-two")]),
+                output=GraphSplitDecision(nodes=[_graph_decomp_node("child", "level-two")]),
             )
         if northstar == "level-two":
             return AgentResponse(
                 request_id=request.id,
                 status=ResponseStatus.COMPLETED,
-                output=OrthogonalSplitDecision(tasks=[_decomposition_task_spec("level-three")]),
+                output=GraphSplitDecision(nodes=[_graph_decomp_node("child", "level-three")]),
             )
         return AgentResponse(
             request_id=request.id,
             status=ResponseStatus.COMPLETED,
-            output=OrthogonalSplitDecision(tasks=[_task_spec("leaf-work")]),
+            output=GraphSplitDecision(nodes=[_graph_node("leaf", "leaf-work")]),
         )
 
     final = await Scheduler(runner=runner).run(

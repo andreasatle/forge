@@ -53,9 +53,9 @@ Decomposition decision kinds (choose one):
     Use when the goal fits in one focused implementation session.
     {{"kind":"work","task":{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}}}}
 
-  kind="split_graph" — explicit DAG with per-node depends_on. PREFERRED for mixed topologies.
-    Use when some tasks depend on others but not all tasks need to be ordered.
-    Assign each node a short string id. List ids in depends_on that must complete first.
+  kind="split_graph" — explicit DAG with per-node depends_on. Use for all multi-task decompositions.
+    Assign each node a short string id. Set depends_on to [] for nodes that can start immediately.
+    Set depends_on to list ids that must complete first for nodes that need prior output.
     {{"kind":"split_graph","nodes":[
       {{"id":"setup","task":{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},"depends_on":[]}},
       {{"id":"readme","task":{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},"depends_on":[]}},
@@ -63,25 +63,13 @@ Decomposition decision kinds (choose one):
       {{"id":"cli","task":{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},"depends_on":["scraper"]}}
     ]}}
 
-  kind="split_orthogonal" — children are independent; Forge creates no sibling dependencies.
-    Use when ALL tasks can run in parallel with no ordering requirement.
-    {{"kind":"split_orthogonal","tasks":[{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},...] }}
-
-  kind="split_dependent" — children must run in order; Forge creates a strict chain A→B→C→D.
-    Use ONLY when EVERY task in the list must wait for the previous one to complete.
-    {{"kind":"split_dependent","tasks":[{{"objective":"...","success_condition":"...","adapter":"...","artifact":"..."}},...] }}
-
-Legacy (still accepted):
-  kind="plan" — list tasks with explicit depends_on indices.
-    {{"kind":"plan","tasks":[{{"objective":"...","depends_on":[0],...}},...] }}
-
 Decomposition policy:
-- Prefer split_graph for mixed topologies — when some tasks depend on others but not all.
-- Use split_orthogonal when ALL child tasks can proceed independently.
-- Use split_dependent ONLY when every task must wait for the previous (strict chain).
-  split_dependent requires a genuine ordering constraint — not caution, symmetry, or convention.
-  split_dependent is rarely correct — it forces unnecessary sequencing between unrelated tasks.
-- Never create dependencies for symmetry, aesthetic balance, or convention.
+- Use split_graph for any decomposition requiring more than one task.
+- For tasks that can proceed independently, set depends_on to [] for every node.
+- For a strict chain, set depends_on linearly: a→b→c.
+- For mixed topology, set depends_on only where genuine information flow requires it.
+- A genuine ordering constraint is required to justify each depends_on edge.
+  Never create dependencies for symmetry, aesthetic balance, or convention.
 - Only add a depends_on edge when one task genuinely produces output that another must consume.
 - Balanced and symmetric trees are not a goal. An uneven tree that
   exposes more parallel work is better than a balanced tree that forces
@@ -92,23 +80,26 @@ Good decomposition:
   Goal: "build scraper with CLI"
   → split_graph:
       setup (no deps)
-      readme (no deps)
+      readme (no deps, runs independently)
       scraper (depends_on: setup)
       cli (depends_on: scraper)
   This exposes maximum concurrency: setup, readme run immediately;
   scraper starts after setup; cli starts after scraper.
 
   Goal: "all tasks independent"
-  → split_orthogonal: readme, tests, config   (all independent)
+  → split_graph with all depends_on []:
+      readme (no deps)
+      tests (no deps)
+      config (no deps)
 
 Bad decomposition:
   Goal: "build scraper with CLI"
-  → split_dependent: setup → readme → scraper → cli
+  → split_graph with linear chain: setup→readme→scraper→cli
   (readme does not depend on setup — this forces unnecessary sequencing)
 
   Goal: "build scraper with CLI"
-  → split_orthogonal: setup, readme, scraper, cli
-  (cli requires scraper output — missing a required dependency)
+  → split_graph with no edges: setup, readme, scraper, cli (all independent)
+  (cli requires scraper output — missing a required depends_on edge)
 {decomposition_context}
 Goal: {northstar}
 
@@ -121,7 +112,7 @@ _DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[], depende
 
 
 class PlannerTaskExecutor:
-    """Own planner prompt construction and PlanResponse execution."""
+    """Own planner prompt construction and decomposition decision execution."""
 
     def __init__(
         self,
@@ -153,7 +144,7 @@ class PlannerTaskExecutor:
         self.telemetry_sink = telemetry_sink
 
     async def run(self, request: AgentRequest) -> AgentResponse:
-        """Send the northstar goal to the planner LLM and return a PlanResponse."""
+        """Send the northstar goal to the planner LLM and return a decomposition decision."""
         spec = request.spec
         if not isinstance(spec, PlanSpec):
             return AgentResponse(
@@ -253,7 +244,7 @@ async def plan_agent(
     telemetry_sink: TelemetrySink | None = None,
     max_attempts: int = 3,
 ) -> AgentResponse:
-    """Send the northstar goal to the planner LLM and return a PlanResponse."""
+    """Send the northstar goal to the planner LLM and return a decomposition decision."""
     return await PlannerTaskExecutor(
         provider=provider,
         artifact_names=artifact_names,

@@ -13,9 +13,10 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DecompositionNodeSpec,
     FailureKind,
+    GraphSplitDecision,
     NodeState,
-    PlanResponse,
     PlanSpec,
     RequestSource,
     ResponseStatus,
@@ -119,6 +120,18 @@ async def stub_plan_handler(request: AgentRequest) -> AgentResponse:
     )
 
 
+def _node(
+    node_id: str, objective: str, success: str, depends_on: list[str] | None = None
+) -> DecompositionNodeSpec:
+    return DecompositionNodeSpec(
+        id=node_id,
+        task=TaskSpec(
+            objective=objective, success_condition=success, adapter="coding", artifact="codebase"
+        ),
+        depends_on=depends_on or [],
+    )
+
+
 async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
     """Return a hardcoded A→B→C plan for use in integration tests."""
     if request.source == RequestSource.PLANNER:
@@ -127,28 +140,11 @@ async def scripted_plan_handler(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.COMPLETED,
-        output=PlanResponse(
-            tasks=[
-                TaskSpec(
-                    objective="task A",
-                    success_condition="A done",
-                    adapter="coding",
-                    artifact="codebase",
-                ),
-                TaskSpec(
-                    objective="task B",
-                    success_condition="B done",
-                    adapter="coding",
-                    artifact="codebase",
-                    depends_on=[0],
-                ),
-                TaskSpec(
-                    objective="task C",
-                    success_condition="C done",
-                    adapter="coding",
-                    artifact="codebase",
-                    depends_on=[1],
-                ),
+        output=GraphSplitDecision(
+            nodes=[
+                _node("a", "task A", "A done"),
+                _node("b", "task B", "B done", depends_on=["a"]),
+                _node("c", "task C", "C done", depends_on=["b"]),
             ]
         ),
     )
@@ -309,20 +305,20 @@ async def test_make_plan_handler_planner_source_returns_completed() -> None:
     assert response.status == ResponseStatus.COMPLETED
 
 
-async def test_scripted_plan_handler_user_source_emits_three_plan_tasks() -> None:
-    """scripted_plan_handler returns exactly three PlanResponse tasks for a USER source."""
+async def test_scripted_plan_handler_user_source_emits_three_graph_nodes() -> None:
+    """scripted_plan_handler returns exactly three GraphSplitDecision nodes for a USER source."""
     response = await scripted_plan_handler(_plan_request())
 
-    assert isinstance(response.output, PlanResponse)
-    assert len(response.output.tasks) == 3
+    assert isinstance(response.output, GraphSplitDecision)
+    assert len(response.output.nodes) == 3
 
 
-async def test_scripted_plan_handler_plan_tasks_form_valid_chain() -> None:
-    """scripted_plan_handler tasks form a linear A→B→C dependency chain."""
+async def test_scripted_plan_handler_graph_nodes_form_valid_chain() -> None:
+    """scripted_plan_handler nodes form a linear A→B→C dependency chain."""
     response = await scripted_plan_handler(_plan_request())
 
-    assert isinstance(response.output, PlanResponse)
-    assert [task.depends_on for task in response.output.tasks] == [[], [0], [1]]
+    assert isinstance(response.output, GraphSplitDecision)
+    assert [node.depends_on for node in response.output.nodes] == [[], ["a"], ["b"]]
 
 
 async def test_scripted_plan_handler_planner_source_emits_no_plan_output() -> None:
@@ -424,7 +420,9 @@ async def test_make_plan_handler_never_calls_chat_with_tools() -> None:
     """make_plan_handler uses provider.chat only, never chat_with_tools."""
     provider = MagicMock()
     provider.max_tokens = 8192
-    provider.chat = AsyncMock(return_value='{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+    provider.chat = AsyncMock(
+        return_value='{"kind":"final","output":{"kind":"work","task":{"objective":"do work","success_condition":"done","adapter":"coding","artifact":"codebase"}}}'
+    )
     provider.chat_with_tools = AsyncMock(
         side_effect=AssertionError("chat_with_tools must not be called")
     )

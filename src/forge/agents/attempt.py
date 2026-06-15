@@ -17,11 +17,8 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     CriticDisposition,
-    DependentSplitDecision,
     FailureKind,
     GraphSplitDecision,
-    OrthogonalSplitDecision,
-    PlanResponse,
     ResponseStatus,
     ReviewContext,
     RevisionItem,
@@ -198,129 +195,38 @@ class WorkOutputValidator:
         )
 
 
-class PlanResponseValidator:
-    """OutputValidator for PlanResponse — validates task decomposition from plan agents."""
-
-    def extract_from_response(self, response: AgentResponse) -> PlanResponse | None:
-        """Return typed PlanResponse output from the response."""
-        return response.output if isinstance(response.output, PlanResponse) else None
-
-    def is_empty(self, output: PlanResponse) -> bool:
-        """Always returns False — planners never trigger ALREADY_DONE."""
-        return False
-
-    def render_for_critic(self, output: PlanResponse) -> str:
-        """Render plan tasks as a numbered list for the critic."""
-        if not output.tasks:
-            return "(no tasks)"
-        lines: list[str] = []
-        for i, task in enumerate(output.tasks):
-            lines.append(f"Task {i}: {task.objective}")
-            lines.append(f"  Success condition: {task.success_condition}")
-            if task.acceptance_criteria:
-                lines.append("  Acceptance criteria:")
-                lines.extend(
-                    f"    - {criterion.id}: {criterion.text}"
-                    for criterion in task.acceptance_criteria
-                )
-            if task.constraints:
-                lines.append("  Constraints:")
-                lines.extend(f"    - {constraint}" for constraint in task.constraints)
-            if task.non_goals:
-                lines.append("  Non-goals:")
-                lines.extend(f"    - {non_goal}" for non_goal in task.non_goals)
-            if task.artifact:
-                lines.append(f"  Artifact: {task.artifact}")
-            if task.language:
-                lines.append(f"  Language: {task.language}")
-        return "\n".join(lines)
-
-    def work_noun(self) -> str:
-        """Return 'plan'."""
-        return "plan"
-
-    def requires_nonempty(self) -> bool:
-        """Return True — plan agents must always produce tasks."""
-        return True
-
-    def review_context(self) -> ReviewContext:
-        """Return planner-output review language."""
-        return ReviewContext(
-            output_noun="plan",
-            review_focus="whether the task decomposition satisfies the planning contract",
-            empty_output_guidance="If the plan contains no tasks, reject it.",
-        )
-
-    def final_output_reminder(self) -> str:
-        """Return a compact PlanResponse output-format reminder."""
-        return "\n".join(
-            [
-                "FINAL OUTPUT FORMAT REMINDER",
-                "Return valid JSON only matching PlanResponse.",
-                '- Top-level kind must be "plan".',
-                "- tasks must be an array of task objects satisfying the AgentRequest contract.",
-            ]
-        )
-
-
-_PlannerOutput = (
-    PlanResponse
-    | WorkDecision
-    | DependentSplitDecision
-    | OrthogonalSplitDecision
-    | GraphSplitDecision
-)
+_PlannerOutput = WorkDecision | GraphSplitDecision
 
 _DECOMPOSITION_TOPOLOGY_RULES = """\
-Decomposition topology rules (apply when reviewing split_dependent, split_orthogonal, or split_graph decisions):
+Decomposition topology rules (apply when reviewing split_graph or work decisions):
 
 For each split_graph decision, ask:
 - Are the depends_on edges minimal? Could any edge be removed without violating information flow?
+- Are the depends_on edges justified by real artifact or information flow?
+  A downstream node must genuinely consume output produced by an upstream node.
 - Does the graph expose maximum safe concurrency?
 - Is any node waiting unnecessarily for another?
-- Do the dependencies represent genuine artifact or information flow?
-
-For each split_dependent decision, ask:
-- Does this split expose available independent work?
-- Are the dependent edges justified by real artifact or information flow?
-  A later child must genuinely consume output produced by an earlier child.
-- Could any children run independently? If so, split_graph or split_orthogonal is more appropriate.
-- Is split_dependent used merely because the list is naturally ordered or "feels logical"?
-  Convention, symmetry, and aesthetic balance are NOT ordering constraints.
-- Would split_graph or split_orthogonal preserve correctness while increasing safe concurrency?
 
 Policy:
-- Prefer split_graph for mixed topologies where some (not all) tasks have ordering dependencies.
-- Prefer split_orthogonal when ALL child tasks can proceed independently.
-- split_dependent requires ALL tasks to be strictly ordered in a chain — this is rarely the right choice.
-- split_dependent requires genuine ordering constraints — not caution, symmetry, or convention.
+- Use split_graph for any multi-task decomposition — independent, dependent, or mixed topology.
+- For tasks that can proceed independently, set depends_on to [] for every node.
+- A genuine ordering constraint is required to justify each depends_on edge.
+  Convention, symmetry, and aesthetic balance are NOT ordering constraints.
 - Balanced trees are not a goal. An uneven tree that exposes more parallel work is preferred.
-- Maximize safe concurrency.
-- Edges in split_graph must represent genuine information flow, not ordering preferences.
+- Maximize safe concurrency. When in doubt, remove edges.
 
-If a split_dependent chain lacks clear ordering justification, issue REVISE with this rationale:
-  "This dependent split introduces unnecessary ordering. Several child tasks can proceed
-  independently. Use split_graph for mixed topologies, split_orthogonal for fully independent
-  branches, and use split_dependent only when every task genuinely produces output that the
-  next task must consume."\
+If a split_graph has unnecessary ordering edges, issue REVISE with this rationale:
+  "This graph introduces unnecessary ordering. Several child tasks can proceed independently.
+  Remove depends_on edges that lack genuine information flow justification."\
 """
 
 
 class PlannerOutputValidator:
-    """OutputValidator for planner output — PlanResponse (legacy) or DecompositionDecision."""
+    """OutputValidator for planner output — WorkDecision or GraphSplitDecision."""
 
     def extract_from_response(self, response: AgentResponse) -> _PlannerOutput | None:
         """Return typed planner output from the response."""
-        if isinstance(
-            response.output,
-            (
-                PlanResponse,
-                WorkDecision,
-                DependentSplitDecision,
-                OrthogonalSplitDecision,
-                GraphSplitDecision,
-            ),
-        ):
+        if isinstance(response.output, (WorkDecision, GraphSplitDecision)):
             return response.output
         return None
 
@@ -330,16 +236,6 @@ class PlannerOutputValidator:
 
     def render_for_critic(self, output: _PlannerOutput) -> str:
         """Render planner output as a human-readable string for the critic."""
-        if isinstance(output, PlanResponse):
-            if not output.tasks:
-                return "(no tasks)"
-            lines: list[str] = []
-            for i, task in enumerate(output.tasks):
-                lines.append(f"Task {i}: {task.objective}")
-                lines.append(f"  Success condition: {task.success_condition}")
-                if task.artifact:
-                    lines.append(f"  Artifact: {task.artifact}")
-            return "\n".join(lines)
         if isinstance(output, WorkDecision):
             return (
                 f"Decision: work\n"
@@ -347,26 +243,13 @@ class PlannerOutputValidator:
                 f"Success condition: {output.task.success_condition}\n"
                 f"Artifact: {output.task.artifact}"
             )
-        if isinstance(output, GraphSplitDecision):
-            lines = ["Decision: split_graph (mixed topology)"]
-            for node in output.nodes:
-                dep_str = f" (depends_on: {', '.join(node.depends_on)})" if node.depends_on else ""
-                lines.append(f"Node {node.id}{dep_str}: {node.task.objective}")
-                lines.append(f"  Success condition: {node.task.success_condition}")
-                if isinstance(node.task, TaskSpec) and node.task.artifact:
-                    lines.append(f"  Artifact: {node.task.artifact}")
-            return "\n".join(lines)
-        kind_label = (
-            "split_dependent (ordered)"
-            if isinstance(output, DependentSplitDecision)
-            else "split_orthogonal (independent)"
-        )
-        lines = [f"Decision: {kind_label}"]
-        for i, task in enumerate(output.tasks):
-            lines.append(f"Task {i}: {task.objective}")
-            lines.append(f"  Success condition: {task.success_condition}")
-            if isinstance(task, TaskSpec) and task.artifact:
-                lines.append(f"  Artifact: {task.artifact}")
+        lines = ["Decision: split_graph (mixed topology)"]
+        for node in output.nodes:
+            dep_str = f" (depends_on: {', '.join(node.depends_on)})" if node.depends_on else ""
+            lines.append(f"Node {node.id}{dep_str}: {node.task.objective}")
+            lines.append(f"  Success condition: {node.task.success_condition}")
+            if isinstance(node.task, TaskSpec) and node.task.artifact:
+                lines.append(f"  Artifact: {node.task.artifact}")
         return "\n".join(lines)
 
     def work_noun(self) -> str:
@@ -394,10 +277,6 @@ class PlannerOutputValidator:
                 "Return one of these decision kinds:",
                 '  {"kind":"work","task":{...WorkSpec...}}',
                 '  {"kind":"split_graph","nodes":[{"id":"a","task":{...TaskSpec...},"depends_on":[]},{"id":"b","task":{...},"depends_on":["a"]}]}',
-                '  {"kind":"split_orthogonal","tasks":[...TaskSpec...]}',
-                '  {"kind":"split_dependent","tasks":[...TaskSpec...]}',
-                "Legacy (still accepted):",
-                '  {"kind":"plan","tasks":[...TaskSpec...]}',
             ]
         )
 

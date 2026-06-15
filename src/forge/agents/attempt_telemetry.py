@@ -10,7 +10,6 @@ from forge.core.models import (
     AgentType,
     CriticDisposition,
     CriticFinding,
-    PlanResponse,
     RefereeDecision,
     RevisionRequest,
     WorkOutput,
@@ -38,22 +37,6 @@ def _work_output_summary(output: WorkOutput, dispatch_sha: str = "") -> dict[str
     return result
 
 
-def _plan_summary(plan: PlanResponse) -> dict[str, object]:
-    return {
-        "task_count": len(plan.tasks),
-        "tasks": [
-            {
-                "objective": task.objective,
-                "adapter": task.adapter,
-                "artifact": task.artifact,
-                "language": task.language,
-                "depends_on": list(task.depends_on),
-            }
-            for task in plan.tasks
-        ],
-    }
-
-
 def _producer_response_summary(
     response: AgentResponse, dispatch_sha: str = ""
 ) -> dict[str, object]:
@@ -67,8 +50,6 @@ def _producer_response_summary(
     }
     if isinstance(response.output, WorkOutput):
         data["work_output"] = _work_output_summary(response.output, dispatch_sha)
-    elif isinstance(response.output, PlanResponse):
-        data["plan"] = _plan_summary(response.output)
     if response.diagnostics:
         data["diagnostics"] = [_model_data(d) for d in response.diagnostics]
     return data
