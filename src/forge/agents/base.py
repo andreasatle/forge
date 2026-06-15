@@ -19,7 +19,6 @@ from forge.core.models import (
     PlanResponse,
     ProducerOutput,
     ResponseStatus,
-    ToolCallRequest,
     ToolCallResponse,
     ToolTurn,
     WorkOutput,
@@ -276,8 +275,8 @@ class ResponseParser:
         self.final_response_type = final_response_type
         self.tools = tools
 
-    def parse(self, raw: str) -> ToolCallRequest | BaseModel:
-        """Parse raw LLM text into a ToolCallRequest or the final response model."""
+    def parse(self, raw: str) -> ToolTurn | BaseModel:
+        """Parse raw LLM text into a ToolTurn or the final response model."""
         try:
             data: object = json.loads(raw.strip())
         except json.JSONDecodeError as e:
@@ -287,12 +286,7 @@ class ResponseParser:
 
         if kind == "tool":
             try:
-                turn = ToolTurn.model_validate(data_dict)
-                return ToolCallRequest(
-                    kind=AgentMessageKind.TOOL_CALL,
-                    name=turn.name,
-                    arguments=turn.arguments,
-                )
+                return ToolTurn.model_validate(data_dict)
             except Exception as e:
                 raise ValueError(f"invalid tool turn: {e}") from e
 
@@ -309,7 +303,7 @@ class ResponseParser:
 
 def parse_response(
     raw: str, tools: ToolRegistry | None, final_response_type: type[BaseModel]
-) -> ToolCallRequest | BaseModel:
+) -> ToolTurn | BaseModel:
     """Parse a raw LLM response into a tool call or final response model."""
     return ResponseParser(final_response_type, tools).parse(raw)
 
@@ -322,7 +316,7 @@ class TrackedToolExecutor:
 
     async def execute(
         self,
-        request: ToolCallRequest,
+        request: ToolTurn,
     ) -> ToolCallResponse:
         """Execute a tool call and return the response."""
         if self.tools is None:
@@ -440,7 +434,7 @@ class ToolLoop:
 
             try:
                 parsed = self.response_parser.parse(raw)
-                if final_response_only and isinstance(parsed, ToolCallRequest):
+                if final_response_only and isinstance(parsed, ToolTurn):
                     raise ValueError(
                         "File changes are complete. "
                         "Return final WorkOutput JSON now instead of calling tools."
@@ -493,7 +487,7 @@ class ToolLoop:
                 messages.append({"role": "user", "content": correction})
                 continue
 
-            if isinstance(parsed, ToolCallRequest):
+            if isinstance(parsed, ToolTurn):
                 tool_response = await self.tool_executor.execute(parsed)
                 any_tool_called = True
                 recent_tool_calls.append(parsed.name)

@@ -30,7 +30,7 @@ from forge.core.models import (
     PlanResponse,
     RequestSource,
     ResponseStatus,
-    ToolCallRequest,
+    ToolTurn,
     WorkOutput,
     WorkSpec,
 )
@@ -175,10 +175,10 @@ def test_response_parser_raises_value_error_on_unknown_format():
 
 
 def test_response_parser_parses_new_tool_turn():
-    """ResponseParser accepts kind='tool' and returns ToolCallRequest for ToolLoop compatibility."""
+    """ResponseParser accepts kind='tool' and returns ToolTurn."""
     raw = '{"kind":"tool","name":"write_file","arguments":{"path":"src/main.py","content":"x=1"}}'
     result = ResponseParser(WorkOutput).parse(raw)
-    assert isinstance(result, ToolCallRequest)
+    assert isinstance(result, ToolTurn)
     assert result.name == "write_file"
     assert result.arguments == {"path": "src/main.py", "content": "x=1"}
 
@@ -187,7 +187,7 @@ def test_response_parser_parses_new_tool_turn_empty_arguments():
     """ResponseParser accepts kind='tool' with no arguments field and defaults to {}."""
     raw = '{"kind":"tool","name":"run_tests"}'
     result = ResponseParser(WorkOutput).parse(raw)
-    assert isinstance(result, ToolCallRequest)
+    assert isinstance(result, ToolTurn)
     assert result.name == "run_tests"
     assert result.arguments == {}
 
@@ -236,7 +236,7 @@ def test_response_parser_new_final_turn_unknown_output_kind_raises():
 async def test_tracked_tool_executor_executes_valid_tool():
     """TrackedToolExecutor returns a successful tool response for a valid tool call."""
     registry, mock_fn = _make_registry()
-    request = ToolCallRequest(kind=AgentMessageKind.TOOL_CALL, name="do_thing", arguments={})
+    request = ToolTurn(name="do_thing", arguments={})
 
     response = await TrackedToolExecutor(registry).execute(request)
 
@@ -248,7 +248,7 @@ async def test_tracked_tool_executor_executes_valid_tool():
 async def test_tracked_tool_executor_rejects_unknown_tool():
     """TrackedToolExecutor returns the existing failed response for an unknown tool."""
     registry = ToolRegistry()
-    request = ToolCallRequest(kind=AgentMessageKind.TOOL_CALL, name="nonexistent", arguments={})
+    request = ToolTurn(name="nonexistent", arguments={})
 
     response = await TrackedToolExecutor(registry).execute(request)
 
@@ -260,11 +260,7 @@ async def test_tracked_tool_executor_validates_tool_arguments():
     """TrackedToolExecutor returns a failed response for invalid arguments."""
     registry = ToolRegistry()
     registry.register(_make_needs_content_tool())
-    request = ToolCallRequest(
-        kind=AgentMessageKind.TOOL_CALL,
-        name="needs_content",
-        arguments={},
-    )
+    request = ToolTurn(name="needs_content", arguments={})
 
     response = await TrackedToolExecutor(registry).execute(request)
 
@@ -288,11 +284,7 @@ async def test_tracked_tool_executor_returns_failed_response_when_tool_raises():
             fn=cast(Callable[[BaseModel], Awaitable[BaseModel]], failing_fn),
         )
     )
-    request = ToolCallRequest(
-        kind=AgentMessageKind.TOOL_CALL,
-        name="failing_tool",
-        arguments={},
-    )
+    request = ToolTurn(name="failing_tool", arguments={})
 
     response = await TrackedToolExecutor(registry).execute(request)
 
