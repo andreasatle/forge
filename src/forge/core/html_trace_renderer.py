@@ -105,12 +105,36 @@ class HtmlTraceRenderer:
     .node-heading {{ display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }}
     .attempts {{ display: grid; gap: 12px; }}
     .attempt-card {{ padding: 14px; }}
+    .attempt-card > summary {{
+      cursor: pointer; list-style: none;
+      font-size: 14px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+      padding-bottom: 4px;
+    }}
+    .attempt-card > summary::-webkit-details-marker {{ display: none; }}
+    .attempt-card[open] > summary {{ padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }}
+    .revision-block {{
+      border-left: 3px solid var(--warn); background: #fffbeb;
+      border-radius: 0 6px 6px 0; padding: 10px 14px; margin: 2px 0;
+    }}
+    .revision-block-header {{ font-weight: 700; color: var(--warn); font-size: 13px; margin-bottom: 4px; }}
+    .revision-summary {{ margin: 4px 0; font-size: 13px; }}
+    .revision-criteria {{ margin: 4px 0; color: var(--muted); font-size: 12px; }}
+    .loop-diag {{
+      border-left: 3px solid var(--bad); background: #fff1f0;
+      border-radius: 0 6px 6px 0; padding: 10px 14px; margin: 8px 0;
+    }}
+    .loop-diag-header {{ font-weight: 700; color: var(--bad); font-size: 13px; display: block; margin-bottom: 6px; }}
+    .loop-diag pre {{ margin: 0; }}
+    .plan-tasks {{ margin: 6px 0 0; padding-left: 0; list-style: none; }}
+    .plan-task {{ border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; }}
+    .task-meta {{ margin-top: 4px; color: var(--muted); font-size: 12px; }}
+    .task-deps {{ margin-left: 8px; }}
     .event {{ border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }}
     .event:first-of-type {{ border-top: 0; padding-top: 0; margin-top: 0; }}
     .event-title {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }}
     .event-body {{ margin: 0; overflow-wrap: anywhere; }}
     .contract-section {{ margin-bottom: 14px; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; background: var(--bg); }}
-    .contract-section summary {{ cursor: pointer; color: var(--accent); font-weight: 600; }}
+    .contract-section > summary {{ cursor: pointer; color: var(--accent); font-weight: 600; }}
     .contract-body dl {{ margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }}
     .contract-body dt {{ color: var(--muted); font-size: 12px; }}
     .contract-body dd {{ margin: 0; overflow-wrap: anywhere; }}
@@ -191,16 +215,28 @@ class HtmlTraceRenderer:
 </a>"""
 
     def _node_detail(self, node_id: str, evts: list[TraceEvent]) -> str:
-        attempt_cards = "\n".join(
-            self._attempt_card(number, grouped) for number, grouped in attempt_groups(evts)
-        )
+        groups = list(attempt_groups(evts))
+        final_attempt_number = groups[-1][0] if groups else None
+        attempt_parts: list[str] = []
+        for number, grouped in groups:
+            is_final = number == final_attempt_number
+            attempt_parts.append(self._attempt_card(number, grouped, is_final=is_final))
+            if not is_final:
+                revision_evt = last_event(grouped, {"pwc.revision.appended"})
+                if revision_evt:
+                    attempt_parts.append(self._revision_block(revision_evt, source_attempt=number))
+
         no_attempt_events = interesting_events(
             [event for event in evts if not isinstance(event.data.get("attempt_number"), int)]
         )
         if no_attempt_events:
-            attempt_cards += "\n" + self._attempt_card(None, no_attempt_events)
-        if not attempt_cards:
-            attempt_cards = '<p class="empty">No PWC timeline events for this node.</p>'
+            attempt_parts.append(self._attempt_card(None, no_attempt_events))
+
+        attempt_cards = (
+            "\n".join(attempt_parts)
+            if attempt_parts
+            else '<p class="empty">No PWC timeline events for this node.</p>'
+        )
 
         contract_html = self._node_contract(evts)
         return f"""<section class="node-detail panel" id="node-{self._e(self._anchor_id(node_id))}">
@@ -238,7 +274,7 @@ class HtmlTraceRenderer:
             )
             or "<li>None</li>"
         )
-        return f"""<details class="contract-section">
+        return f"""<details class="contract-section" open>
   <summary>Contract</summary>
   <div class="contract-body">
     <dl>
@@ -251,15 +287,18 @@ class HtmlTraceRenderer:
   </div>
 </details>"""
 
-    def _attempt_card(self, attempt_number: int | None, evts: list[TraceEvent]) -> str:
+    def _attempt_card(
+        self, attempt_number: int | None, evts: list[TraceEvent], *, is_final: bool = True
+    ) -> str:
         title = f"Attempt {attempt_number}" if attempt_number is not None else "Node Events"
+        open_attr = " open" if is_final else ""
         rendered_events = "\n".join(self._event(event) for event in interesting_events(evts))
         if not rendered_events:
             rendered_events = '<p class="empty">No rendered events.</p>'
-        return f"""<article class="attempt-card">
-  <h4>{self._e(title)}</h4>
+        return f"""<details class="attempt-card"{open_attr}>
+  <summary>{self._e(title)}</summary>
   {rendered_events}
-</article>"""
+</details>"""
 
     def _event(self, event: TraceEvent) -> str:
         event_type = str_value(event.data.get("event_type")) or "unknown"
@@ -290,20 +329,18 @@ class HtmlTraceRenderer:
             if work_out:
                 summary += f" work_output={work_output_text(work_out)}"
             parts = [f'<p class="event-body">{self._e(summary)}</p>']
+            if plan:
+                parts.append(self._plan_task_list(plan))
             for diag in list_value(data.get("diagnostics")):
                 diag_dict = dict_value(diag)
-                excerpt = str_value(diag_dict.get("raw_response_excerpt"))
-                if excerpt:
-                    parts.append(
-                        f"<details><summary>raw_response_excerpt</summary>"
-                        f"<pre>{self._e(excerpt)}</pre></details>"
-                    )
                 if str_value(diag_dict.get("kind")) == "max_iterations":
-                    msg = str_value(diag_dict.get("message"))
-                    if msg:
+                    parts.append(self._max_iterations_block(diag_dict))
+                else:
+                    excerpt = str_value(diag_dict.get("raw_response_excerpt"))
+                    if excerpt:
                         parts.append(
-                            f"<details><summary>max_iterations diagnostic</summary>"
-                            f"<pre>{self._e(msg)}</pre></details>"
+                            f"<details><summary>raw_response_excerpt</summary>"
+                            f"<pre>{self._e(excerpt)}</pre></details>"
                         )
             return "".join(parts)
         if event_type == "critic.finding.parsed":
@@ -353,6 +390,88 @@ class HtmlTraceRenderer:
             f"<li><strong>{self._e(label)}</strong>{self._e(required)}"
             f"<details><summary>Revision item details</summary><pre>{self._e(self._json(item_data))}</pre>"
             f"<p>{self._e(rationale)}</p></details></li>"
+        )
+
+    def _revision_block(self, event: TraceEvent, source_attempt: int) -> str:
+        """Render a between-attempt summary of a revision request."""
+        data = dict_value(event.data.get("data"))
+        revision = dict_value(data.get("revision_request"))
+        rationale = (
+            str_value(revision.get("rationale")) or str_value(event.data.get("summary")) or ""
+        )
+        items = list_value(revision.get("items"))
+        criterion_ids = [
+            cid for item in items if (cid := str_value(dict_value(item).get("criterion_id")))
+        ]
+        cid_html = (
+            f'<p class="revision-criteria">Criteria: {self._e(", ".join(criterion_ids))}</p>'
+            if criterion_ids
+            else ""
+        )
+        return (
+            f'<div class="revision-block">'
+            f'<div class="revision-block-header">Revision request after attempt {source_attempt}</div>'
+            f'<p class="revision-summary">{self._e(fit(rationale, 200))}</p>'
+            f"{cid_html}"
+            f"</div>"
+        )
+
+    def _plan_task_list(self, plan: dict[str, Any]) -> str:
+        """Render planner output as a numbered task list."""
+        tasks = list_value(plan.get("tasks"))
+        if not tasks:
+            return ""
+        rows: list[str] = []
+        for i, task in enumerate(tasks, start=1):
+            task_data = dict_value(task)
+            objective = str_value(task_data.get("objective")) or "—"
+            artifact = str_value(task_data.get("artifact")) or "—"
+            adapter = str_value(task_data.get("adapter")) or "—"
+            depends_on = list_value(task_data.get("depends_on"))
+            deps_html = (
+                f'<span class="task-deps">depends on: {self._e(", ".join(str(d) for d in depends_on))}</span>'
+                if depends_on
+                else ""
+            )
+            rows.append(
+                f'<li class="plan-task">'
+                f"<strong>Task {i}:</strong> {self._e(objective)}"
+                f'<div class="task-meta">'
+                f'<span class="task-artifact">{self._e(artifact)}</span>'
+                f' · <span class="task-adapter">{self._e(adapter)}</span>'
+                f"{deps_html}"
+                f"</div></li>"
+            )
+        task_count = len(tasks)
+        return (
+            f"<details open><summary>Plan tasks ({task_count})</summary>"
+            f'<ol class="plan-tasks">{"".join(rows)}</ol>'
+            f"</details>"
+        )
+
+    def _max_iterations_block(self, diag: dict[str, Any]) -> str:
+        """Render a compact loop-diagnostics block for max_iterations failures."""
+        message = str_value(diag.get("message")) or ""
+        excerpt = str_value(diag.get("raw_response_excerpt")) or ""
+        formatted = message
+        for key in (
+            "ran_tests_and_passed",
+            "final_response_only",
+            "has_run_tests",
+            "mutating_tool_succeeded",
+        ):
+            formatted = formatted.replace(f" {key}=", f"\n{key}=")
+        msg_html = f"<pre>{self._e(formatted)}</pre>" if formatted else ""
+        excerpt_html = (
+            f"<details><summary>Raw response excerpt</summary><pre>{self._e(excerpt)}</pre></details>"
+            if excerpt
+            else ""
+        )
+        return (
+            f'<div class="loop-diag">'
+            f'<strong class="loop-diag-header">Loop diagnostics (max_iterations)</strong>'
+            f"{msg_html}{excerpt_html}"
+            f"</div>"
         )
 
     @staticmethod

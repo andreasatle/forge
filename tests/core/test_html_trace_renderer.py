@@ -395,3 +395,192 @@ def test_renders_no_contract_section_without_dispatched_event(tmp_path: Path) ->
     result = HtmlTraceRenderer().render_run(run)
 
     assert '<details class="contract-section">' not in result
+
+
+# ---------------------------------------------------------------------------
+# New fixtures
+# ---------------------------------------------------------------------------
+
+
+def _plan_producer_event(node_id: str, *, attempt: int = 1) -> TraceEvent:
+    return TraceEvent(
+        line_number=4,
+        data={
+            "schema_version": 1,
+            "event_id": f"event-{node_id[:4]}-plan",
+            "run_id": RUN_ID,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "node_id": node_id,
+            "request_id": node_id,
+            "agent_type": "plan",
+            "attempt_number": attempt,
+            "role": "producer",
+            "phase": "producer",
+            "event_type": "producer.response.parsed",
+            "status": "completed",
+            "summary": "producer returned completed",
+            "data": {
+                "status": "completed",
+                "output_type": "PlanResponse",
+                "plan": {
+                    "task_count": 2,
+                    "tasks": [
+                        {
+                            "objective": "Implement the parser",
+                            "adapter": "coding",
+                            "artifact": "codebase",
+                            "language": "python",
+                            "depends_on": [],
+                        },
+                        {
+                            "objective": "Add unit tests",
+                            "adapter": "coding",
+                            "artifact": "codebase",
+                            "language": "python",
+                            "depends_on": [1],
+                        },
+                    ],
+                },
+            },
+        },
+    )
+
+
+def _max_iter_producer_event(node_id: str, *, attempt: int = 1) -> TraceEvent:
+    return TraceEvent(
+        line_number=5,
+        data={
+            "schema_version": 1,
+            "event_id": f"event-{node_id[:4]}-maxiter",
+            "run_id": RUN_ID,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "node_id": node_id,
+            "request_id": node_id,
+            "agent_type": "work",
+            "attempt_number": attempt,
+            "role": "producer",
+            "phase": "producer",
+            "event_type": "producer.response.parsed",
+            "status": "failed",
+            "summary": "producer returned failed",
+            "data": {
+                "status": "failed",
+                "output_type": None,
+                "failure_kind": "max_iterations",
+                "diagnostics": [
+                    {
+                        "kind": "max_iterations",
+                        "message": (
+                            "last_tool_calls=[write_file, run_tests] "
+                            "ran_tests_and_passed=False "
+                            "final_response_only=True "
+                            "has_run_tests=True "
+                            "mutating_tool_succeeded=False"
+                        ),
+                        "raw_response_excerpt": "here is my partial response...",
+                    }
+                ],
+            },
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# New tests for rendering improvements
+# ---------------------------------------------------------------------------
+
+
+def test_contract_section_open_by_default(tmp_path: Path) -> None:
+    """Contract details section has the open attribute so it shows expanded by default."""
+    run = _run(
+        events=[
+            _dispatched_event(NODE_1),
+            _event(NODE_1, "work", "producer.response.parsed"),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert '<details class="contract-section" open>' in result
+
+
+def test_attempt_cards_are_collapsible_details(tmp_path: Path) -> None:
+    """Attempt cards are rendered as <details> elements with a summary."""
+    run = _run(
+        events=[_event(NODE_1, "work", "producer.response.parsed", attempt=1)],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert 'class="attempt-card"' in result
+    assert "<summary>Attempt 1</summary>" in result
+
+
+def test_final_attempt_expanded_earlier_attempts_collapsed(tmp_path: Path) -> None:
+    """Final attempt card has open attribute; earlier attempt cards do not."""
+    run = _run(
+        events=[
+            _event(NODE_1, "work", "producer.response.parsed", attempt=1),
+            _event(NODE_1, "work", "producer.response.parsed", attempt=2),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert '<details class="attempt-card" open>' in result
+    assert result.count('<details class="attempt-card" open>') == 1
+    assert '<details class="attempt-card">' in result
+
+
+def test_revision_block_appears_between_attempts(tmp_path: Path) -> None:
+    """A revision-block div appears between attempts when a revision was appended."""
+    run = _run(
+        events=[
+            _event(NODE_1, "work", "producer.response.parsed", attempt=1),
+            _revision_event(NODE_1, attempt=1),
+            _event(NODE_1, "work", "producer.response.parsed", attempt=2),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert 'class="revision-block"' in result
+    assert "Revision request after attempt 1" in result
+    assert "missing coverage" in result
+    assert "AC1" in result
+
+
+def test_plan_task_list_rendered(tmp_path: Path) -> None:
+    """Plan tasks are rendered as a readable list for producer.response.parsed with plan data."""
+    run = _run(
+        events=[_plan_producer_event(NODE_1)],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "Plan tasks (2)" in result
+    assert "Implement the parser" in result
+    assert "Add unit tests" in result
+    assert "plan-task" in result
+    assert "depends on: 1" in result
+
+
+def test_max_iterations_diagnostics_block(tmp_path: Path) -> None:
+    """Max-iteration failures render a loop-diag block with key diagnostic fields."""
+    run = _run(
+        events=[_max_iter_producer_event(NODE_1)],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "loop-diag" in result
+    assert "Loop diagnostics (max_iterations)" in result
+    assert "last_tool_calls=" in result
+    assert "ran_tests_and_passed=False" in result
+    assert "here is my partial response..." in result
