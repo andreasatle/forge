@@ -27,9 +27,9 @@ The framework must preserve typed inputs and outputs across all boundaries.
 * Producer, critic, and referee must receive the same node contract.
 * Critic/referee judge only against the AgentRequest contract, not against imagined ideal completeness.
 * Producer output must remain typed through PWC.
-* Planner output is PlanResponse.
+* Planner output is `WorkDecision | GraphSplitDecision`, wrapped by `PlannerOutputModel` (the canonical final response type). The scheduler receives this via `AgentResponse.output` as a `PlannerOutputModel` whose `.root` is the actual decision.
 * Worker output is WorkOutput.
-* Scheduler derives work nodes from accepted PlanResponse.
+* Scheduler derives work nodes from accepted planner output (a `PlannerOutputModel` containing a `WorkDecision` or `GraphSplitDecision`).
 * Scheduler integrates accepted WorkOutput through StateService.apply_work_output.
 * Integration is deterministic and framework-owned.
 * Language-specific rules belong in language plugins, not Forge core.

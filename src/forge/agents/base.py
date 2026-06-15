@@ -17,7 +17,6 @@ from forge.core.models import (
     AgentType,
     FailureKind,
     PlannerOutputModel,
-    PlanResponse,
     ProducerOutput,
     ResponseStatus,
     ToolCallResponse,
@@ -540,9 +539,7 @@ class ToolLoop:
                 continue
 
             output: ProducerOutput | None = None
-            if isinstance(parsed, PlanResponse):
-                output = parsed
-            elif isinstance(parsed, WorkOutput):
+            if isinstance(parsed, WorkOutput):
                 output = parsed
             elif isinstance(parsed, PlannerOutputModel):
                 output = parsed.root
