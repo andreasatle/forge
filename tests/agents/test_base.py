@@ -1345,6 +1345,7 @@ def test_tool_loop_state_defaults() -> None:
     assert state.final_response_only is False
     assert state.iteration_at_last_mutation == 0
     assert state.iteration_at_completion_pressure == 0
+    assert state.iteration_at_verification_stability is None
 
 
 # --- adapter-declared mutating tool names ---
@@ -1890,6 +1891,79 @@ async def test_tool_loop_max_iterations_diagnostic_includes_convergence_telemetr
     assert "verification_stable_count=" in msg
     assert "last_progress_iteration=" in msg
     assert "iterations_since_progress=" in msg
+
+
+# --- Phase 3.5: iteration_at_verification_stability telemetry ---
+
+
+async def test_tool_loop_iteration_at_verification_stability_set_when_first_stable() -> None:
+    """iteration_at_verification_stability is set to the iteration when stability first occurs."""
+    registry = ToolRegistry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "run_tests", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    # iteration 0: first run_tests sets fingerprint; iteration 1: match → stable=True at iteration 1
+    assert "iteration_at_verification_stability=1" in response.diagnostics[0].message
+
+
+async def test_tool_loop_iteration_at_verification_stability_not_overwritten() -> None:
+    """Subsequent identical verification results do not overwrite the first stability iteration."""
+    registry = ToolRegistry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "run_tests", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=3,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    # stability first occurred at iteration 1; iteration 2 repeats but must not overwrite
+    assert "iteration_at_verification_stability=1" in response.diagnostics[0].message
+
+
+async def test_tool_loop_max_iterations_diagnostic_includes_verification_stability_iteration() -> (
+    None
+):
+    """Max-iteration diagnostic includes the iteration_at_verification_stability field."""
+    registry = ToolRegistry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider('{"kind": "tool", "name": "run_tests", "arguments": {}}')
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_tool_iterations=2,
+        max_retries=0,
+    ).run()
+
+    assert response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert response.diagnostics
+    assert "iteration_at_verification_stability=" in response.diagnostics[0].message
 
 
 async def test_coding_adapter_write_alone_does_not_finalize_unchanged(

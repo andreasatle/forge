@@ -57,6 +57,7 @@ class ToolLoopState:
     verification_stable_count: int = 0
     last_progress_iteration: int | None = None
     iterations_since_progress: int | None = None
+    iteration_at_verification_stability: int | None = None
 
 
 def _classify_failure(exc: Exception) -> FailureKind:
@@ -145,6 +146,7 @@ def _max_iterations_diagnostic(
         f"mutating_tool_succeeded={state.mutating_tool_succeeded} "
         f"verification_stable={state.verification_stable} "
         f"verification_stable_count={state.verification_stable_count} "
+        f"iteration_at_verification_stability={state.iteration_at_verification_stability} "
         f"last_progress_iteration={state.last_progress_iteration} "
         f"iterations_since_progress={state.iterations_since_progress}"
     )
@@ -577,9 +579,10 @@ class ToolLoop:
                         and isinstance(raw_result, dict)
                         and cast(dict[str, object], raw_result).get("passed") is True
                     )
-                    state.verification_stable = (
-                        not result_passed and state.verification_stable_count >= 1
-                    )
+                    newly_stable = not result_passed and state.verification_stable_count >= 1
+                    if newly_stable and not state.verification_stable:
+                        state.iteration_at_verification_stability = iteration
+                    state.verification_stable = newly_stable
                     if result_passed:
                         state.verification_count += 1
                         state.verification_passed = True
