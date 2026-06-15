@@ -134,6 +134,15 @@ def test_python_supplement_distinguishes_uv_as_package_manager() -> None:
     assert "Do not put uv in [build-system].requires" in supplement
 
 
+def test_python_supplement_import_invariant() -> None:
+    """Python supplement must state the src/-on-path invariant and show both incorrect forms."""
+    data = yaml.safe_load((LANGUAGES_DIR / "python.yaml").read_text())
+    supplement = data["prompt_supplement"]
+    assert "Imports behave as if src/ is already on the Python path" in supplement
+    assert "from src.mymodule import MyClass" in supplement
+    assert "<artifact>.src.mymodule" in supplement
+
+
 def test_language_work_output_examples_are_str_format_safe() -> None:
     """work_output_example must be safe to call str.format(base_version=N) on — all literal braces escaped."""
     for path in LANGUAGES_DIR.glob("*.yaml"):

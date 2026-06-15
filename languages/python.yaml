@@ -16,9 +16,15 @@ prompt_supplement: |
     testpaths = ["tests"]
     pythonpath = ["src"]
 
-  Import modules directly by name, not with src. prefix:
-    correct:   from mymodule import MyClass
-    incorrect: from src.mymodule import MyClass
+  Import modules directly by name, not with src. prefix.
+  Imports behave as if src/ is already on the Python path.
+
+  Correct:
+    from mymodule import MyClass
+
+  Incorrect — never use these forms:
+    from src.mymodule import MyClass
+    from <artifact>.src.mymodule import MyClass
   Never add Python stdlib modules as dependencies — csv, json, os,
   re, pathlib, sys, and similar built-in modules are always available
   without installation.

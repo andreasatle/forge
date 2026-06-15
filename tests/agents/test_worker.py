@@ -37,14 +37,10 @@ PYTHON_PROMPT_WORDS = (
     "requirements.txt",
     "setup.py",
     "pythonpath",
-    "BeautifulSoup",
-    "from scraper import",
     "pytest",
-    "requests",
-    "coverage",
-    "__init__.py",
     "Use uv",
     "Always place source code under src/.",
+    "Imports behave as if src/",
 )
 
 
