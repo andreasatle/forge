@@ -374,7 +374,7 @@ def work_output_text(output: dict[str, Any]) -> str:
         values = list_value(value)
         if values:
             pieces.append(f"{label}={len(values)}")
-    base = str_value(output.get("base_version"))
+    base = str_value(output.get("dispatch_sha"))
     if base:
         pieces.append(f"base={base}")
     return ",".join(pieces) if pieces else "none"

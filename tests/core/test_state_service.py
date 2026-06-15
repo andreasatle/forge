@@ -384,22 +384,22 @@ async def test_apply_work_output_does_not_remove_worktree_after_fail(tmp_path: P
 # --- apply_work_output staleness check ---
 
 
-async def test_apply_work_output_rejects_stale_base_version(tmp_path: Path) -> None:
-    """apply_work_output raises RuntimeError when output.base_version does not match HEAD SHA."""
+async def test_apply_work_output_rejects_stale_dispatch_sha(tmp_path: Path) -> None:
+    """apply_work_output raises RuntimeError when framework dispatch_sha does not match HEAD SHA."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
     ss = StateService(ws, "app", plugin)
 
-    output = WorkOutput(base_version="old-sha-abc")
+    output = WorkOutput(summary="done")
 
     with patch.object(ws, "get_current_sha", return_value="current-sha-xyz"):
         with pytest.raises(RuntimeError, match="stale"):
-            await ss.apply_work_output(output, "node-stale")
+            await ss.apply_work_output(output, "node-stale", dispatch_sha="old-sha-abc")
 
 
-async def test_apply_work_output_accepts_correct_base_version(tmp_path: Path) -> None:
-    """apply_work_output proceeds when output.base_version matches HEAD SHA."""
+async def test_apply_work_output_accepts_matching_dispatch_sha(tmp_path: Path) -> None:
+    """apply_work_output proceeds when framework dispatch_sha matches HEAD SHA."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
@@ -407,20 +407,20 @@ async def test_apply_work_output_accepts_correct_base_version(tmp_path: Path) ->
 
     worktree_path = tmp_path / "app-work-node-ok"
     worktree_path.mkdir()
-    output = WorkOutput(base_version="matching-sha")
+    output = WorkOutput(summary="done")
 
     with patch.object(ws, "get_current_sha", return_value="matching-sha"):
         with patch.object(ws, "worktree_path", return_value=worktree_path):
             with patch.object(ws, "remove_worktree"):
                 with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
                     with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
-                        await ss.apply_work_output(output, "node-ok")
+                        await ss.apply_work_output(output, "node-ok", dispatch_sha="matching-sha")
 
     assert ss.current_version == 1
 
 
-async def test_apply_work_output_accepts_empty_base_version(tmp_path: Path) -> None:
-    """apply_work_output skips the staleness check when output.base_version is empty."""
+async def test_apply_work_output_skips_stale_check_when_no_dispatch_sha(tmp_path: Path) -> None:
+    """apply_work_output skips staleness check when dispatch_sha is empty."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
@@ -428,7 +428,7 @@ async def test_apply_work_output_accepts_empty_base_version(tmp_path: Path) -> N
 
     worktree_path = tmp_path / "app-work-node-empty"
     worktree_path.mkdir()
-    output = WorkOutput()  # base_version defaults to ""
+    output = WorkOutput()
 
     mock_get_sha = MagicMock()
     with patch.object(ws, "get_current_sha", mock_get_sha):
@@ -440,6 +440,77 @@ async def test_apply_work_output_accepts_empty_base_version(tmp_path: Path) -> N
 
     mock_get_sha.assert_not_called()
     assert ss.current_version == 1
+
+
+async def test_model_supplied_zero_cannot_affect_integration(tmp_path: Path) -> None:
+    """Model supplying base_version='0' in JSON is silently ignored; framework dispatch_sha governs."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+
+    # Simulate model returning "0" — WorkOutput drops the field; dispatch_sha comes from framework
+    output = WorkOutput.model_validate(
+        {"kind": "work_output", "summary": "done", "base_version": "0"}
+    )
+    assert not hasattr(output, "base_version")
+
+    worktree_path = tmp_path / "app-work-node-zero"
+    worktree_path.mkdir()
+    # Framework dispatch SHA matches HEAD — integration should succeed
+    with patch.object(ws, "get_current_sha", return_value="abc123"):
+        with patch.object(ws, "worktree_path", return_value=worktree_path):
+            with patch.object(ws, "remove_worktree"):
+                with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
+                    with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                        await ss.apply_work_output(output, "node-zero", dispatch_sha="abc123")
+
+    assert ss.current_version == 1
+
+
+async def test_model_supplied_garbage_cannot_affect_integration(tmp_path: Path) -> None:
+    """Model supplying base_version='garbage' is silently dropped; only dispatch_sha matters."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+
+    output = WorkOutput.model_validate(
+        {"kind": "work_output", "summary": "done", "base_version": "garbage-sha"}
+    )
+    assert not hasattr(output, "base_version")
+
+    # Framework provides a stale dispatch_sha — integration must fail regardless of model JSON
+    with patch.object(ws, "get_current_sha", return_value="real-head-sha"):
+        with pytest.raises(RuntimeError, match="stale"):
+            await ss.apply_work_output(output, "node-garbage", dispatch_sha="wrong-sha")
+
+
+async def test_orthogonal_nodes_with_different_dispatch_shas(tmp_path: Path) -> None:
+    """Orthogonal nodes get different dispatch SHAs; the later-integrating node is stale."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+
+    output_a = WorkOutput(summary="node A work")
+    output_b = WorkOutput(summary="node B work")
+
+    worktree_path = tmp_path / "app-work-node-a"
+    worktree_path.mkdir()
+
+    sha0 = "sha-at-dispatch-time"
+    sha_after_a = "sha-after-node-a-merged"
+
+    # Node A integrates successfully (dispatched at sha0, HEAD still sha0)
+    with patch.object(ws, "get_current_sha", return_value=sha0):
+        with patch.object(ws, "worktree_path", return_value=worktree_path):
+            with patch.object(ws, "remove_worktree"):
+                with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
+                    with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                        await ss.apply_work_output(output_a, "node-a", dispatch_sha=sha0)
+
+    # Now HEAD has moved to sha_after_a; node B was also dispatched at sha0 — it is now stale
+    with patch.object(ws, "get_current_sha", return_value=sha_after_a):
+        with pytest.raises(RuntimeError, match="stale"):
+            await ss.apply_work_output(output_b, "node-b", dispatch_sha=sha0)
 
 
 async def test_apply_work_output_excludes_python_cache_files_from_commit(

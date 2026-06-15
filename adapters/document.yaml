@@ -23,7 +23,7 @@ prompt_template: |
   Your final response must be JSON only.
 
   Example final response after writing documentation files to the worktree:
-  {{"kind":"work_output","summary":"Created README.md with project overview and docs/API.md with endpoint reference.","base_version":"{base_version}"}}
+  {{"kind":"work_output","summary":"Created README.md with project overview and docs/API.md with endpoint reference."}}
 
   - summary should briefly describe the documentation files you created or updated
   - do not include document contents in the summary or anywhere in the final response

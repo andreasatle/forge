@@ -143,10 +143,14 @@ def test_python_supplement_import_invariant() -> None:
     assert "<artifact>.src.mymodule" in supplement
 
 
-def test_language_work_output_examples_are_str_format_safe() -> None:
-    """work_output_example must be safe to call str.format(base_version=N) on — all literal braces escaped."""
+def test_language_work_output_examples_contain_no_format_placeholders() -> None:
+    """work_output_example must contain no {identifier} format placeholders."""
+    import re
+
     for path in LANGUAGES_DIR.glob("*.yaml"):
         data = yaml.safe_load(path.read_text())
         example = data["work_output_example"]
         if example:
-            example.format(base_version=0)
+            assert not re.search(r"\{[a-zA-Z_]\w*\}", example), (
+                f"{path.name}: work_output_example contains format placeholder"
+            )

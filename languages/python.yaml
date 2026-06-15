@@ -51,6 +51,5 @@ work_output_example: |
   Final response:
   {{
     "kind": "work_output",
-    "summary": "Implemented Python module, added tests, and added required runtime dependencies.",
-    "base_version": "{base_version}"
+    "summary": "Implemented Python module, added tests, and added required runtime dependencies."
   }}

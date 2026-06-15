@@ -18,6 +18,5 @@ work_output_example: |
   Final response:
   {{
     "kind": "work_output",
-    "summary": "Implemented Rust changes and updated tests.",
-    "base_version": "{base_version}"
+    "summary": "Implemented Rust changes and updated tests."
   }}

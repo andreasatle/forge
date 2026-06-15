@@ -426,7 +426,9 @@ class AttemptLifecycle[T]:
             )
             response = await self._run_fn(current_prompt)
             output = self._validator.extract_from_response(response)
-            self._telemetry.producer_response_parsed(attempt_number, response)
+            self._telemetry.producer_response_parsed(
+                attempt_number, response, dispatch_sha=self._state_view.version_sha
+            )
 
             if (
                 response.status == ResponseStatus.FAILED

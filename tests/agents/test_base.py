@@ -193,12 +193,12 @@ def test_response_parser_parses_new_tool_turn_empty_arguments():
 
 
 def test_response_parser_parses_new_final_work_turn():
-    """ResponseParser unwraps kind='final' envelope and returns WorkOutput directly."""
+    """ResponseParser unwraps kind='final' envelope and ignores model-supplied base_version."""
     raw = '{"kind":"final","output":{"kind":"work_output","summary":"Wrote main.py","base_version":"abc123"}}'
     result = ResponseParser(WorkOutput).parse(raw)
     assert isinstance(result, WorkOutput)
     assert result.summary == "Wrote main.py"
-    assert result.base_version == "abc123"
+    assert not hasattr(result, "base_version")
 
 
 def test_response_parser_parses_new_final_plan_turn():
@@ -423,7 +423,6 @@ async def test_tool_loop_accepts_metadata_only_work_output_after_write_file(
     assert response.output == WorkOutput(
         kind=AgentMessageKind.WORK_OUTPUT,
         summary="Wrote src/main.py in the worktree.",
-        base_version="abc123",
     )
     assert (tmp_path / "src/main.py").read_text() == "print(42)\n"
     assert provider.chat.call_count == 2
@@ -757,18 +756,16 @@ def test_prompt_builder_includes_work_output_format_clarification():
     assert "summary: briefly describe the worktree changes" in prompt
     assert "Dependency changes must be made in package manager files" in prompt
     assert "Do not include complete file contents" in prompt
-    assert (
-        'return final JSON with kind="final" and output containing kind, summary, and base_version'
-        in prompt
-    )
-    assert "base_version set to the version value shown in your task prompt" in prompt
+    assert 'return final JSON with kind="final" and output containing kind and summary' in prompt
+    assert "base_version" not in prompt
 
 
 def test_prompt_builder_always_shows_work_output_schema_for_work_agents():
     """PromptBuilder includes WorkOutput schema on first turn when always_show_final is True."""
     registry, _ = _make_registry()
     prompt = PromptBuilder(registry, WorkOutput, always_show_final=True).build()
-    assert "Output object fields: kind, summary, base_version" in prompt
+    assert "Output object fields: kind, summary" in prompt
+    assert "base_version" not in prompt
     assert '"files"' not in prompt
     assert '"dependencies"' not in prompt
 

@@ -135,22 +135,16 @@ class WorkTaskExecutor:
                 tools.register(tool)
 
             if "{work_output_example}" in adapter.prompt_template:
-                base_version_key = state_view.version_sha or state_view.version
                 if plugin:
-                    work_output_example = plugin.work_output_example.format(
-                        base_version=base_version_key
-                    )
+                    work_output_example = plugin.work_output_example.format()
                 else:
-                    work_output_example = _FALLBACK_WORK_OUTPUT_EXAMPLE.format(
-                        base_version=base_version_key
-                    )
+                    work_output_example = _FALLBACK_WORK_OUTPUT_EXAMPLE
             else:
                 work_output_example = ""
 
             base_prompt = adapter.prompt_template.format(
                 objective=spec.objective,
                 success_condition=spec.success_condition,
-                base_version=state_view.version,
                 work_output_example=work_output_example,
             )
             contract_block = render_agent_contract(contract_request)
@@ -161,13 +155,6 @@ class WorkTaskExecutor:
             base_prompt += f"\n\nState version: {state_view.version}"
             if state_view.version_sha:
                 base_prompt += f"\nBase commit: {state_view.version_sha}"
-                base_prompt += (
-                    f"\nYou MUST set base_version to {state_view.version_sha} in your response."
-                )
-            else:
-                base_prompt += (
-                    f"\nYou MUST set base_version to {state_view.version} in your response."
-                )
             if state_view.files:
                 sections = "\n\n".join(
                     f"File: {fv.path}\n```\n{fv.content}\n```" for fv in state_view.files
@@ -183,7 +170,7 @@ class WorkTaskExecutor:
                 "\n\nModify files directly in the assigned worktree using the available write/edit tools."
                 "\nThe framework will use git status and git diff as the source of truth."
                 "\nDo not include complete file contents in your final response."
-                "\nAfter edits and tests are complete, stop calling tools and return final JSON with kind, summary, and base_version."
+                "\nAfter edits and tests are complete, stop calling tools and return final JSON with kind and summary."
             )
 
             provider = self.provider
@@ -242,7 +229,9 @@ class WorkTaskExecutor:
                                 error="completed with empty WorkOutput completion metadata",
                             )
                         try:
-                            await self.state_service.apply_work_output(work_output, node_id)
+                            await self.state_service.apply_work_output(
+                                work_output, node_id, dispatch_sha=state_view.version_sha
+                            )
                         except (RuntimeError, subprocess.CalledProcessError) as e:
                             return AgentResponse(
                                 request_id=request.id,

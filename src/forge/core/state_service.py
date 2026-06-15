@@ -155,14 +155,16 @@ class StateService:
             version_sha=version_sha,
         )
 
-    async def apply_work_output(self, output: WorkOutput, node_id: str) -> None:
+    async def apply_work_output(
+        self, output: WorkOutput, node_id: str, dispatch_sha: str = ""
+    ) -> None:
         """Apply git-native worktree changes — commit, merge to main, run tests,
         commit on pass or rollback on fail."""
-        if output.base_version != "":
+        if dispatch_sha != "":
             current_sha = self._workspace.get_current_sha(self._artifact_name)
-            if output.base_version != current_sha:
+            if dispatch_sha != current_sha:
                 raise RuntimeError(
-                    f"stale base_version: output based on {output.base_version!r} "
+                    f"stale base_version: output based on {dispatch_sha!r} "
                     f"but HEAD is {current_sha!r}"
                 )
 

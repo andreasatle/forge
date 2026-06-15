@@ -453,29 +453,27 @@ def test_work_output_defaults_to_empty_summary():
     assert wo.summary == ""
 
 
-def test_work_output_base_version_defaults_to_empty_string():
-    """WorkOutput.base_version defaults to empty string."""
-    wo = WorkOutput()
-    assert wo.base_version == ""
+def test_work_output_ignores_model_supplied_base_version():
+    """WorkOutput silently drops base_version from model JSON — framework owns git metadata."""
+    wo = WorkOutput.model_validate({"kind": "work_output", "summary": "done", "base_version": "0"})
+    assert not hasattr(wo, "base_version")
+    assert wo.summary == "done"
 
 
 def test_work_output_is_frozen():
     """WorkOutput raises on direct field mutation."""
     wo = WorkOutput()
     with pytest.raises(Exception):
-        wo.base_version = "abc123"  # type: ignore[misc]
+        wo.summary = "mutated"  # type: ignore[misc]
 
 
 def test_work_output_ignores_legacy_files_and_dependencies():
     """WorkOutput no longer transports file contents or dependencies."""
     fc = FileContent(path="src/lib.py", content="def f(): pass")
-    wo = WorkOutput.model_validate(
-        {"files": [fc.model_dump()], "dependencies": ["requests"], "base_version": "deadbeef"}
-    )
+    wo = WorkOutput.model_validate({"files": [fc.model_dump()], "dependencies": ["requests"]})
     assert not hasattr(wo, "files")
     assert not hasattr(wo, "dependencies")
     assert wo.summary == "Completed worktree changes."
-    assert wo.base_version == "deadbeef"
 
 
 # --- ToolTurn ---
@@ -516,12 +514,11 @@ def test_tool_turn_is_frozen():
 def test_final_turn_accepts_work_output():
     """FinalTurn.output holds a WorkOutput when the nested kind is 'work_output'."""
     ft = FinalTurn(
-        output=WorkOutput(summary="done", base_version="abc123"),
+        output=WorkOutput(summary="done"),
     )
     assert ft.kind == "final"
     assert isinstance(ft.output, WorkOutput)
     assert ft.output.summary == "done"
-    assert ft.output.base_version == "abc123"
 
 
 def test_final_turn_accepts_plan_response():
@@ -540,7 +537,7 @@ def test_final_turn_rejects_unknown_output_kind():
 
 def test_final_turn_roundtrip_work_output():
     """FinalTurn with WorkOutput serializes and deserializes back to an equivalent object."""
-    ft = FinalTurn(output=WorkOutput(summary="edits applied", base_version="sha1"))
+    ft = FinalTurn(output=WorkOutput(summary="edits applied"))
     data = ft.model_dump()
     restored = FinalTurn.model_validate(data)
     assert isinstance(restored.output, WorkOutput)

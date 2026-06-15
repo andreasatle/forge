@@ -190,7 +190,6 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
     assert response.output == WorkOutput(
         kind=AgentMessageKind.WORK_OUTPUT,
         summary="Wrote src/main.py in the worktree.",
-        base_version="0",
     )
     ss.apply_work_output.assert_called_once()
 
@@ -728,7 +727,7 @@ async def test_producer_critic_and_referee_receive_same_plugin_guidance(
             test_command="toy test",
             sync_command="toy sync",
             prompt_supplement="TOY_REVIEWER_CONTRACT_GUIDANCE",
-            work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
+            work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}]}}',
         )
     )
 
@@ -889,7 +888,7 @@ async def test_non_python_language_plugin_does_not_receive_python_wording(
             test_command="toy test",
             sync_command="toy sync",
             prompt_supplement="TOY_LANGUAGE_SUPPLEMENT",
-            work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}], "base_version": {base_version}}}',
+            work_output_example='{{"files": [{{"path": "module.toy", "content": "ok"}}]}}',
         )
     )
 
@@ -1042,8 +1041,10 @@ async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: 
     assert response.output == work_output
 
 
-async def test_worker_prompt_includes_explicit_base_version_instruction(tmp_path: Path) -> None:
-    """worker.py emits an explicit base_version instruction on the line after 'State version: N'."""
+async def test_worker_prompt_shows_state_version_without_base_version_instruction(
+    tmp_path: Path,
+) -> None:
+    """worker.py shows State version for context but does NOT instruct model to set base_version."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -1067,14 +1068,11 @@ async def test_worker_prompt_includes_explicit_base_version_instruction(tmp_path
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert "State version: 42" in user_prompt
-    assert "You MUST set base_version to 42 in your response." in user_prompt
-    version_line_idx = user_prompt.index("State version: 42")
-    must_line_idx = user_prompt.index("You MUST set base_version to 42 in your response.")
-    assert must_line_idx > version_line_idx
+    assert "base_version" not in user_prompt
 
 
-async def test_worker_prompt_includes_base_commit_sha_instruction(tmp_path: Path) -> None:
-    """worker.py emits 'Base commit: <sha>' and 'You MUST set base_version to <sha>' when version_sha is set."""
+async def test_worker_prompt_includes_base_commit_sha_for_context(tmp_path: Path) -> None:
+    """worker.py shows Base commit SHA for context but does NOT ask model to echo it back."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -1100,8 +1098,7 @@ async def test_worker_prompt_includes_base_commit_sha_instruction(tmp_path: Path
     user_prompt = mock_run_agent.call_args.args[3]
     assert "State version: 3" in user_prompt
     assert "Base commit: deadbeef1234abcd" in user_prompt
-    assert "You MUST set base_version to deadbeef1234abcd in your response." in user_prompt
-    assert "You MUST set base_version to 3 in your response." not in user_prompt
+    assert "base_version" not in user_prompt
 
 
 async def test_document_adapter_writes_file_then_returns_metadata_only_work_output(
@@ -1202,7 +1199,7 @@ async def test_document_adapter_prompt_instructs_write_file_and_json_only_respon
 async def test_document_adapter_prompt_includes_concrete_work_output_example(
     tmp_path: Path,
 ) -> None:
-    """document.yaml prompt includes a concrete WorkOutput example with the actual base_version value."""
+    """document.yaml prompt includes a concrete WorkOutput example without base_version."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("docs")
@@ -1239,7 +1236,7 @@ async def test_document_adapter_prompt_includes_concrete_work_output_example(
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert '"kind":"work_output"' in user_prompt
-    assert '"base_version":"0"' in user_prompt
+    assert "base_version" not in user_prompt
     assert '"..."' not in user_prompt
 
 
@@ -1284,8 +1281,10 @@ async def test_document_adapter_prompt_prohibits_document_content_in_final_respo
     assert "metadata only" in user_prompt
 
 
-async def test_version_zero_prompt_has_no_sha_contradiction(tmp_path: Path) -> None:
-    """When version_sha is absent, neither the system nor user prompt claims a commit SHA was shown."""
+async def test_version_zero_prompt_has_no_sha_and_no_base_version_instruction(
+    tmp_path: Path,
+) -> None:
+    """When version_sha is absent, neither prompt mentions a commit SHA or base_version."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -1310,10 +1309,9 @@ async def test_version_zero_prompt_has_no_sha_contradiction(tmp_path: Path) -> N
     tools = mock_run_agent.call_args.kwargs["tools"]
     user_prompt = mock_run_agent.call_args.args[3]
     system_prompt = PromptBuilder(tools, WorkOutput, always_show_final=True).build()
-    assert "current commit SHA shown above" not in system_prompt
-    assert "current commit SHA shown above" not in user_prompt
     assert "Base commit:" not in user_prompt
-    assert "You MUST set base_version to 0 in your response." in user_prompt
+    assert "base_version" not in user_prompt
+    assert "base_version" not in system_prompt
 
 
 async def test_worker_uses_work_output_as_final_response_type(tmp_path: Path) -> None:

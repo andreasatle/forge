@@ -31,11 +31,11 @@ def _model_data(model: BaseModel) -> dict[str, object]:
     return cast(dict[str, object], model.model_dump(mode="json"))
 
 
-def _work_output_summary(output: WorkOutput) -> dict[str, object]:
-    return {
-        "summary": output.summary,
-        "base_version": output.base_version,
-    }
+def _work_output_summary(output: WorkOutput, dispatch_sha: str = "") -> dict[str, object]:
+    result: dict[str, object] = {"summary": output.summary}
+    if dispatch_sha:
+        result["dispatch_sha"] = dispatch_sha
+    return result
 
 
 def _plan_summary(plan: PlanResponse) -> dict[str, object]:
@@ -54,7 +54,9 @@ def _plan_summary(plan: PlanResponse) -> dict[str, object]:
     }
 
 
-def _producer_response_summary(response: AgentResponse) -> dict[str, object]:
+def _producer_response_summary(
+    response: AgentResponse, dispatch_sha: str = ""
+) -> dict[str, object]:
     output_type = type(response.output).__name__ if response.output is not None else None
     data: dict[str, object] = {
         "status": response.status.value,
@@ -64,7 +66,7 @@ def _producer_response_summary(response: AgentResponse) -> dict[str, object]:
         "ran_tests_and_passed": response.ran_tests_and_passed,
     }
     if isinstance(response.output, WorkOutput):
-        data["work_output"] = _work_output_summary(response.output)
+        data["work_output"] = _work_output_summary(response.output, dispatch_sha)
     elif isinstance(response.output, PlanResponse):
         data["plan"] = _plan_summary(response.output)
     if response.diagnostics:
@@ -129,7 +131,9 @@ class AttemptTelemetryReporter:
             data={"max_attempts": max_attempts},
         )
 
-    def producer_response_parsed(self, attempt_number: int, response: AgentResponse) -> None:
+    def producer_response_parsed(
+        self, attempt_number: int, response: AgentResponse, dispatch_sha: str = ""
+    ) -> None:
         """Emit producer.response.parsed with the parsed response summary."""
         self._emit(
             attempt_number=attempt_number,
@@ -138,7 +142,7 @@ class AttemptTelemetryReporter:
             event_type="producer.response.parsed",
             status=response.status.value,
             summary=f"producer returned {response.status.value}",
-            data=_producer_response_summary(response),
+            data=_producer_response_summary(response, dispatch_sha),
         )
 
     def critic_finding_parsed(self, attempt_number: int, finding: CriticFinding) -> None:

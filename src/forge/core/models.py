@@ -309,7 +309,6 @@ class WorkOutput(BaseModel, frozen=True):
 
     kind: Literal[AgentMessageKind.WORK_OUTPUT] = AgentMessageKind.WORK_OUTPUT
     summary: str = ""
-    base_version: str = ""
 
     @model_validator(mode="before")
     @classmethod

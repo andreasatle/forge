@@ -20,4 +20,4 @@ prompt_template: |
   - Run tests before reporting completion
   - Add dependencies through the package manager or manifest files in the worktree
   - Your final WorkOutput is completion metadata only; do not include full file contents
-  - After edits and tests, return final JSON with kind, summary, and base_version
+  - After edits and tests, return final JSON with kind and summary

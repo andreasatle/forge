@@ -249,7 +249,7 @@ class PromptBuilder:
                     "",
                     "Rules for your final response:",
                     "  - Modify files directly in the assigned worktree before responding.",
-                    '  - After edits and tests are complete, stop calling tools and return final JSON with kind="final" and output containing kind, summary, and base_version.',
+                    '  - After edits and tests are complete, stop calling tools and return final JSON with kind="final" and output containing kind and summary.',
                     "  - The framework uses git status and git diff as the source of truth.",
                     "  - Do not include complete file contents in your final response.",
                     "",
@@ -257,7 +257,6 @@ class PromptBuilder:
                     '- kind: must be "work_output".',
                     "- summary: briefly describe the worktree changes you made.",
                     "- Dependency changes must be made in package manager files in the worktree.",
-                    "IMPORTANT: your response must include base_version set to the version value shown in your task prompt.",
                 ]
         return "\n".join(lines)
 
