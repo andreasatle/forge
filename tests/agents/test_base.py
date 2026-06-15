@@ -1080,10 +1080,10 @@ async def test_tool_loop_rejects_tool_call_after_successful_tests() -> None:
 # --- final_response_only without run_tests (no-test workers) ---
 
 
-async def test_tool_loop_no_test_write_file_triggers_final_response_only(
+async def test_tool_loop_no_test_write_file_does_not_trigger_completion_pressure(
     tmp_path: Path,
 ) -> None:
-    """No-test worker: write_file succeeds, next turn has no tools, valid WorkOutput completes."""
+    """Non-verifying adapter: successful write_file does not inject completion pressure."""
     registry = ToolRegistry()
     registry.register(make_write_file_tool_for_root(tmp_path))
     request = _work_request()
@@ -1108,17 +1108,17 @@ async def test_tool_loop_no_test_write_file_triggers_final_response_only(
 
     second_call_messages = provider.chat.call_args_list[1][0][0]
     system_content = second_call_messages[0]["content"]
-    assert "write_file" not in system_content
+    assert "write_file" in system_content
     assert "WorkOutput" in system_content
 
     last_user_content = second_call_messages[-1]["content"]
-    assert "Write complete" in last_user_content
+    assert "Write complete" not in last_user_content
 
 
-async def test_tool_loop_no_test_rejects_tool_call_after_write(
+async def test_tool_loop_no_test_allows_multiple_writes(
     tmp_path: Path,
 ) -> None:
-    """No-test worker: attempted tool call after successful write is rejected and not executed."""
+    """Non-verifying adapter: multiple successful write_file calls all execute before final output."""
     registry = ToolRegistry()
     registry.register(make_write_file_tool_for_root(tmp_path))
     request = _work_request()
@@ -1137,12 +1137,11 @@ async def test_tool_loop_no_test_rejects_tool_call_after_write(
         prompt="prompt",
         tools=registry,
         final_response_type=WorkOutput,
-        max_retries=3,
     ).run()
 
     assert response.status == ResponseStatus.COMPLETED
     assert (tmp_path / "a.txt").exists()
-    assert not (tmp_path / "b.txt").exists()
+    assert (tmp_path / "b.txt").exists()
 
 
 async def test_tool_loop_with_tests_write_file_alone_does_not_finalize(
@@ -1380,10 +1379,10 @@ def _make_custom_write_tool(tmp_path: Path) -> Tool:
     )
 
 
-async def test_tool_loop_adapter_declared_mutating_tool_triggers_finalization(
+async def test_tool_loop_adapter_declared_mutating_tool_does_not_trigger_finalization(
     tmp_path: Path,
 ) -> None:
-    """ToolLoop uses adapter-declared mutating_tools to decide when to set final_response_only."""
+    """Non-verifying adapter: adapter-declared mutating tool does not trigger completion pressure."""
     registry = ToolRegistry()
     registry.register(_make_custom_write_tool(tmp_path))
     spec = AdapterSpec(
@@ -1416,8 +1415,10 @@ async def test_tool_loop_adapter_declared_mutating_tool_triggers_finalization(
     assert response.status == ResponseStatus.COMPLETED
     assert provider.chat.call_count == 2
     second_call_messages = provider.chat.call_args_list[1][0][0]
+    system_content = second_call_messages[0]["content"]
+    assert "custom_write" in system_content
     last_user_content = second_call_messages[-1]["content"]
-    assert "Write complete" in last_user_content
+    assert "Write complete" not in last_user_content
 
 
 async def test_tool_loop_write_file_does_not_finalize_when_not_in_mutating_tools(
@@ -1622,3 +1623,135 @@ async def test_tool_loop_state_counts_verifications_in_diagnostic() -> None:
     assert response.ran_tests_and_passed is True
     assert response.diagnostics
     assert "ran_tests_and_passed=True" in response.diagnostics[0].message
+
+
+# --- Phase 2: non-verifying adapter completion pressure ---
+
+
+async def test_non_verifying_adapter_allows_multiple_mutations_before_final_output(
+    tmp_path: Path,
+) -> None:
+    """Non-verifying adapter: three successful mutations all execute before the model returns final output."""
+    registry = ToolRegistry()
+    registry.register(_make_custom_write_tool(tmp_path))
+    spec = AdapterSpec(
+        name="document",
+        description="document adapter",
+        tools=["custom_write"],
+        prompt_template="",
+        mutating_tools=["custom_write"],
+        verification_tools=[],
+        verification_required=False,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "custom_write", "arguments": {"path": "a.md", "content": "# A"}}',
+            '{"kind": "tool", "name": "custom_write", "arguments": {"path": "b.md", "content": "# B"}}',
+            '{"kind": "tool", "name": "custom_write", "arguments": {"path": "c.md", "content": "# C"}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert (tmp_path / "a.md").exists()
+    assert (tmp_path / "b.md").exists()
+    assert (tmp_path / "c.md").exists()
+    assert provider.chat.call_count == 4
+
+
+async def test_verifying_adapter_gets_completion_pressure_after_verification_passes(
+    tmp_path: Path,
+) -> None:
+    """Verifying adapter: verification pass still triggers final_response_only regardless of mutation count."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    registry.register(_make_custom_check_tool(passed=True))
+    spec = AdapterSpec(
+        name="coding",
+        description="coding adapter",
+        tools=["write_file", "custom_check"],
+        prompt_template="",
+        mutating_tools=["write_file"],
+        verification_tools=["custom_check"],
+        verification_required=True,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "x.py", "content": "x=1"}}',
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "y.py", "content": "y=2"}}',
+            '{"kind": "tool", "name": "custom_check", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is True
+    assert provider.chat.call_count == 4
+    fourth_call_messages = provider.chat.call_args_list[3][0][0]
+    system_content = fourth_call_messages[0]["content"]
+    assert "write_file" not in system_content
+    last_user_content = fourth_call_messages[-1]["content"]
+    assert "Tests passed" in last_user_content
+
+
+async def test_coding_adapter_write_alone_does_not_finalize_unchanged(
+    tmp_path: Path,
+) -> None:
+    """Coding adapter (verification_required=True): write_file alone still does not trigger finalization."""
+    registry = ToolRegistry()
+    registry.register(make_write_file_tool_for_root(tmp_path))
+    registry.register(_make_passing_run_tests_tool())
+    spec = AdapterSpec(
+        name="coding",
+        description="coding adapter",
+        tools=["write_file", "run_tests"],
+        prompt_template="",
+        mutating_tools=["write_file"],
+        verification_tools=["run_tests"],
+        verification_required=True,
+    )
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "write_file", "arguments": {"path": "f.py", "content": "x=1"}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        adapter_spec=spec,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is True
+    # 3 calls proves write_file alone did not finalize; run_tests was still needed
+    assert provider.chat.call_count == 3
