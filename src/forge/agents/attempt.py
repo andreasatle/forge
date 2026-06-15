@@ -26,6 +26,7 @@ from forge.core.models import (
     RevisionItem,
     RevisionRequest,
     StateView,
+    TaskSpec,
     WorkDecision,
     WorkOutput,
 )
@@ -308,7 +309,7 @@ class PlannerOutputValidator:
         for i, task in enumerate(output.tasks):
             lines.append(f"Task {i}: {task.objective}")
             lines.append(f"  Success condition: {task.success_condition}")
-            if task.artifact:
+            if isinstance(task, TaskSpec) and task.artifact:
                 lines.append(f"  Artifact: {task.artifact}")
         return "\n".join(lines)
 

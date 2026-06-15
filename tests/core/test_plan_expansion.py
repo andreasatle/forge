@@ -5,6 +5,7 @@ from forge.core.models import (
     AgentMessageKind,
     AgentRequest,
     AgentType,
+    DecompositionTask,
     DependentSplitDecision,
     OrthogonalSplitDecision,
     PlanResponse,
@@ -214,3 +215,74 @@ def test_orthogonal_split_decision_expands_to_independent_work_nodes() -> None:
     assert len(requests) == 3
     assert all(r.agent_type == AgentType.WORK for r in requests)
     assert all(r.dependencies == frozenset() for r in requests)
+
+
+# --- DecompositionTask expansion ---
+
+
+def _make_decomposition_task(objective: str = "sub-plan") -> DecompositionTask:
+    return DecompositionTask(objective=objective, success_condition="planned")
+
+
+def test_decomposition_task_inside_split_expands_to_plan_node() -> None:
+    """A DecompositionTask inside an orthogonal split produces an AgentType.PLAN request."""
+    decision = OrthogonalSplitDecision(tasks=[_make_decomposition_task("plan the sub-system")])
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert len(requests) == 1
+    assert requests[0].agent_type == AgentType.PLAN
+    assert isinstance(requests[0].spec, PlanSpec)
+    assert requests[0].spec.northstar == "plan the sub-system"
+    assert requests[0].source == RequestSource.PLANNER
+    assert requests[0].dependencies == frozenset()
+
+
+def test_dependent_split_mixed_children_creates_dependency_chain() -> None:
+    """DependentSplitDecision with mixed work/decomposition children chains them in order."""
+    decision = DependentSplitDecision(
+        tasks=[
+            _make_task_spec("work-a"),
+            _make_decomposition_task("plan-b"),
+            _make_task_spec("work-c"),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    node_a, node_b, node_c = requests
+
+    assert node_a.agent_type == AgentType.WORK
+    assert node_b.agent_type == AgentType.PLAN
+    assert node_c.agent_type == AgentType.WORK
+    assert node_a.dependencies == frozenset()
+    assert node_a.id in node_b.dependencies
+    assert len(node_b.dependencies) == 1
+    assert node_b.id in node_c.dependencies
+    assert len(node_c.dependencies) == 1
+
+
+def test_orthogonal_split_mixed_children_creates_no_sibling_dependencies() -> None:
+    """OrthogonalSplitDecision with mixed children produces no sibling dependencies."""
+    decision = OrthogonalSplitDecision(
+        tasks=[
+            _make_task_spec("work-a"),
+            _make_decomposition_task("plan-b"),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert len(requests) == 2
+    assert requests[0].agent_type == AgentType.WORK
+    assert requests[1].agent_type == AgentType.PLAN
+    assert all(r.dependencies == frozenset() for r in requests)
+
+
+def test_all_work_expansion_unchanged_with_task_spec() -> None:
+    """Legacy all-work expansion via TaskSpec still produces only WORK nodes."""
+    decision = DependentSplitDecision(tasks=[_make_task_spec("a"), _make_task_spec("b")])
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert all(r.agent_type == AgentType.WORK for r in requests)
+    assert len(requests) == 2

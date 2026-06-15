@@ -5,9 +5,11 @@ from forge.core.models import (
     AgentRequest,
     AgentType,
     DecompositionDecision,
+    DecompositionTask,
     DependentSplitDecision,
     OrthogonalSplitDecision,
     PlanResponse,
+    PlanSpec,
     RequestSource,
     TaskSpec,
     WorkDecision,
@@ -41,6 +43,24 @@ class PlanExpansionBuilder:
             ),
         )
 
+    def _decomposition_task_to_request(self, task: DecompositionTask) -> AgentRequest:
+        return AgentRequest(
+            agent_type=AgentType.PLAN,
+            source=RequestSource.PLANNER,
+            spec=PlanSpec(
+                northstar=task.objective,
+                contract=AgentContract(
+                    objective=task.objective,
+                    success_condition=task.success_condition,
+                ),
+            ),
+        )
+
+    def _child_task_to_request(self, task: TaskSpec | DecompositionTask) -> AgentRequest:
+        if isinstance(task, DecompositionTask):
+            return self._decomposition_task_to_request(task)
+        return self._task_spec_to_request(task)
+
     def build(self, plan_response: PlanResponse) -> list[AgentRequest]:
         """Convert a PlanResponse into work requests with remapped dependencies."""
         if not plan_response.tasks:
@@ -60,7 +80,7 @@ class PlanExpansionBuilder:
         ]
 
     def build_from_decision(self, decision: DecompositionDecision) -> list[AgentRequest]:
-        """Convert a DecompositionDecision into work requests."""
+        """Convert a DecompositionDecision into agent requests."""
         if isinstance(decision, WorkDecision):
             return [
                 AgentRequest(
@@ -70,7 +90,7 @@ class PlanExpansionBuilder:
                 )
             ]
         if isinstance(decision, DependentSplitDecision):
-            nodes = [self._task_spec_to_request(task) for task in decision.tasks]
+            nodes = [self._child_task_to_request(task) for task in decision.tasks]
             result: list[AgentRequest] = [nodes[0]]
             for i in range(1, len(nodes)):
                 result.append(
@@ -79,4 +99,4 @@ class PlanExpansionBuilder:
             return result
         # OrthogonalSplitDecision — siblings are independent
         assert isinstance(decision, OrthogonalSplitDecision)
-        return [self._task_spec_to_request(task) for task in decision.tasks]
+        return [self._child_task_to_request(task) for task in decision.tasks]

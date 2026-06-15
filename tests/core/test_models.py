@@ -12,10 +12,12 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
+    ChildTask,
     CriticDisposition,
     CriticFinding,
     DAGNode,
     DecompositionDecision,
+    DecompositionTask,
     DependentSplitDecision,
     FailureKind,
     FileContent,
@@ -641,6 +643,70 @@ def test_plan_response_still_allows_empty_tasks():
     """PlanResponse.tasks continues to accept an empty list (existing behavior unchanged)."""
     pr = PlanResponse(tasks=[])
     assert pr.tasks == []
+
+
+# --- DecompositionTask ---
+
+
+def test_decomposition_task_validates_and_serializes():
+    """DecompositionTask round-trips through model_dump and model_validate."""
+    task = DecompositionTask(objective="plan the sub-system", success_condition="planned")
+    data = task.model_dump()
+    restored = DecompositionTask.model_validate(data)
+    assert restored.kind == "decomposition_task"
+    assert restored.objective == "plan the sub-system"
+    assert restored.success_condition == "planned"
+
+
+def test_decomposition_task_kind_is_decomposition_task():
+    """DecompositionTask.kind defaults to 'decomposition_task'."""
+    task = DecompositionTask(objective="x", success_condition="y")
+    assert task.kind == "decomposition_task"
+
+
+def test_task_spec_kind_defaults_to_work_task():
+    """TaskSpec.kind defaults to 'work_task' for backward compatibility."""
+    ts = TaskSpec(
+        objective="write tests",
+        success_condition="tests pass",
+        adapter="coding",
+        artifact="codebase",
+    )
+    assert ts.kind == "work_task"
+
+
+# --- ChildTask discriminated union ---
+
+
+def test_child_task_discriminates_work_task():
+    """TypeAdapter resolves kind='work_task' to TaskSpec."""
+    ta: TypeAdapter[ChildTask] = TypeAdapter(ChildTask)
+    result = ta.validate_python(
+        {
+            "kind": "work_task",
+            "objective": "write tests",
+            "success_condition": "tests pass",
+            "adapter": "coding",
+            "artifact": "codebase",
+        }
+    )
+    assert isinstance(result, TaskSpec)
+
+
+def test_child_task_discriminates_decomposition_task():
+    """TypeAdapter resolves kind='decomposition_task' to DecompositionTask."""
+    ta: TypeAdapter[ChildTask] = TypeAdapter(ChildTask)
+    result = ta.validate_python(
+        {"kind": "decomposition_task", "objective": "plan sub", "success_condition": "planned"}
+    )
+    assert isinstance(result, DecompositionTask)
+
+
+def test_child_task_rejects_unknown_kind():
+    """TypeAdapter raises ValidationError for an unrecognized kind value."""
+    ta: TypeAdapter[ChildTask] = TypeAdapter(ChildTask)
+    with pytest.raises(Exception):
+        ta.validate_python({"kind": "unknown_kind"})
 
 
 def test_final_turn_roundtrip_plan_response():

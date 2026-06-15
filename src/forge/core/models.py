@@ -4,7 +4,7 @@ from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
 RequestId = UUID
 
@@ -361,8 +361,9 @@ def _empty_ints() -> list[int]:
 
 
 class TaskSpec(BaseModel, frozen=True):
-    """A single task emitted by the planner."""
+    """A single task emitted by the planner — always expands to a work node."""
 
+    kind: Literal["work_task"] = "work_task"
     objective: str
     success_condition: str
     acceptance_criteria: list[AcceptanceCriterion] = Field(
@@ -374,6 +375,20 @@ class TaskSpec(BaseModel, frozen=True):
     artifact: str
     language: str | None = None
     depends_on: list[int] = Field(default_factory=_empty_ints)
+
+
+class DecompositionTask(BaseModel, frozen=True):
+    """A child task that expands to a plan node rather than a work node."""
+
+    kind: Literal["decomposition_task"] = "decomposition_task"
+    objective: str
+    success_condition: str
+
+
+ChildTask = Annotated[
+    TaskSpec | DecompositionTask,
+    Field(discriminator="kind"),
+]
 
 
 class PlanResponse(BaseModel, frozen=True):
@@ -390,18 +405,38 @@ class WorkDecision(BaseModel, frozen=True):
     task: WorkSpec
 
 
+def _default_child_task_kinds(tasks: object) -> object:
+    """Insert kind='work_task' into task dicts that omit it — LLMs don't emit the discriminator."""
+    if not isinstance(tasks, list):
+        return tasks
+    result: list[Any] = []
+    for t in cast("list[Any]", tasks):
+        result.append({**t, "kind": "work_task"} if isinstance(t, dict) and "kind" not in t else t)
+    return result
+
+
 class DependentSplitDecision(BaseModel, frozen=True):
     """Decomposition decision to split into ordered child tasks where each depends on the previous."""
 
     kind: Literal["split_dependent"] = "split_dependent"
-    tasks: list[TaskSpec] = Field(min_length=1)
+    tasks: list[ChildTask] = Field(min_length=1)
+
+    @field_validator("tasks", mode="before")
+    @classmethod
+    def _default_task_kinds(cls, v: object) -> object:
+        return _default_child_task_kinds(v)
 
 
 class OrthogonalSplitDecision(BaseModel, frozen=True):
     """Decomposition decision to split into independent child tasks with no sibling dependencies."""
 
     kind: Literal["split_orthogonal"] = "split_orthogonal"
-    tasks: list[TaskSpec] = Field(min_length=1)
+    tasks: list[ChildTask] = Field(min_length=1)
+
+    @field_validator("tasks", mode="before")
+    @classmethod
+    def _default_task_kinds(cls, v: object) -> object:
+        return _default_child_task_kinds(v)
 
 
 DecompositionDecision = Annotated[
