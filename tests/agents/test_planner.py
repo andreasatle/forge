@@ -572,3 +572,71 @@ async def test_planner_legacy_plan_response_still_works() -> None:
     assert response.status == ResponseStatus.COMPLETED
     assert isinstance(response.output, PlanResponse)
     assert len(response.output.tasks) == 1
+
+
+# --- Orthogonal decomposition preference policy ---
+
+
+async def test_planner_prompt_prefers_orthogonal_over_dependent() -> None:
+    """PLAN_PROMPT instructs the planner to prefer split_orthogonal when children are independent."""
+    request = _make_request()
+    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "Prefer split_orthogonal" in user_prompt
+    assert "can proceed independently" in user_prompt
+
+
+async def test_planner_prompt_requires_genuine_ordering_for_dependent_split() -> None:
+    """PLAN_PROMPT requires a genuine ordering constraint to justify split_dependent."""
+    request = _make_request()
+    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "genuine ordering constraint" in user_prompt
+
+
+async def test_planner_prompt_states_balanced_trees_are_not_a_goal() -> None:
+    """PLAN_PROMPT explicitly says balanced and symmetric trees are not a goal."""
+    request = _make_request()
+    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "not a goal" in user_prompt
+    assert "symmetric" in user_prompt or "balanced" in user_prompt
+
+
+async def test_planner_prompt_instructs_maximizing_concurrency() -> None:
+    """PLAN_PROMPT instructs the planner to maximize safe concurrency."""
+    request = _make_request()
+    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "Maximize safe concurrency" in user_prompt
+
+
+async def test_planner_prompt_includes_good_and_bad_decomposition_examples() -> None:
+    """PLAN_PROMPT includes concrete good and bad decomposition examples."""
+    request = _make_request()
+    provider = _mock_provider_with_response('{"kind":"final","output":{"kind":"plan","tasks":[]}}')
+
+    await plan_agent(request, ["codebase"], {"codebase": "python"}, provider)
+
+    messages = provider.chat.call_args.args[0]
+    user_prompt = messages[1]["content"]
+    assert "Good decomposition" in user_prompt
+    assert "Bad decomposition" in user_prompt
+    assert "split_orthogonal" in user_prompt
+    assert "split_dependent" in user_prompt

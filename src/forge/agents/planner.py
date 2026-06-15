@@ -64,6 +64,31 @@ Decomposition decision kinds (choose one):
 Legacy (still accepted):
   kind="plan" — list tasks with explicit depends_on indices.
     {{"kind":"plan","tasks":[{{"objective":"...","depends_on":[0],...}},...] }}
+
+Decomposition policy:
+- Prefer split_orthogonal whenever child tasks can proceed independently.
+  Independent means: no child needs output from another child to start.
+- Use split_dependent only when there is a genuine ordering constraint —
+  when one child produces an artifact that a later child must consume.
+  "It feels logical to do A first" is not an ordering constraint.
+- Do not create dependencies for symmetry, aesthetic balance, or convention.
+- Balanced and symmetric trees are not a goal. An uneven tree that
+  exposes more parallel work is better than a balanced tree that forces
+  unnecessary sequencing.
+- Maximize safe concurrency. When in doubt, prefer split_orthogonal.
+
+Good decomposition:
+  Goal: "build scraper"
+  → split_orthogonal: frontend, tests, CLI, core engine   (all independent)
+
+  Goal: "core engine" (if internal steps genuinely depend on each other)
+  → split_dependent: fetching → parsing → validation
+
+Bad decomposition:
+  Goal: "build scraper"
+  → split_dependent: frontend → tests → CLI → core engine
+  (frontend, tests, and CLI do not depend on each other — this forces
+  unnecessary sequencing and wastes available concurrency)
 {decomposition_context}
 Goal: {northstar}
 
