@@ -27,7 +27,7 @@ from forge.core.models import (
     WorkDecision,
     WorkSpec,
 )
-from forge.core.plan_expansion import PlanExpansionBuilder
+from forge.core.plan_expansion import DecompositionConvergenceError, PlanExpansionBuilder
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
@@ -123,7 +123,26 @@ class SchedulerConsequenceHandler:
         state = state.update_node(updated)
 
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_PLAN:
-            plan_expansion = self._build_plan_expansion(node, response)
+            try:
+                plan_expansion = self._build_plan_expansion(node, response)
+            except DecompositionConvergenceError as exc:
+                logger.warning(
+                    "decomposition convergence check failed for node %s: %s",
+                    node.request.id,
+                    exc,
+                )
+                self._emit_convergence_failure(node, str(exc))
+                failed_response = AgentResponse(
+                    request_id=node.request.id,
+                    status=ResponseStatus.FAILED,
+                    failure_kind=FailureKind.VALIDATION_REJECTED,
+                    error=str(exc),
+                )
+                failed_updated = current.with_response(failed_response)
+                state = state.update_node(failed_updated)
+                return self._handle_failed(
+                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                )
             return self._handle_accepted_plan(state, updated, plan_expansion)
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_WORK:
             return self._handle_accepted_work(state, updated)
@@ -262,6 +281,25 @@ class SchedulerConsequenceHandler:
                 status="decompose",
                 summary="work node decomposed into plan node",
                 data={"plan_node_id": str(plan_request.id)},
+            ),
+        )
+
+    def _emit_convergence_failure(self, node: DAGNode, reason: str) -> None:
+        if self._run_id is None:
+            return
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=node.request.id,
+                request_id=node.request.id,
+                agent_type=node.request.agent_type.value,
+                role="scheduler",
+                phase="scheduler",
+                event_type="node.convergence_failed",
+                status="failed",
+                summary="Decomposition rejected: not reductive",
+                data={"reason": reason},
             ),
         )
 

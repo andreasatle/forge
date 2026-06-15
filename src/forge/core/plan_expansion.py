@@ -17,6 +17,57 @@ from forge.core.models import (
 )
 
 
+class DecompositionConvergenceError(ValueError):
+    """Raised when a decomposition decision fails semantic convergence checks."""
+
+
+class DecompositionConvergenceValidator:
+    """Validates that decomposition decisions are reductive relative to their parent.
+
+    Invariant: a split decision is valid only if its child tasks are strictly
+    narrower, more concrete, or more executable than the parent objective.
+    WorkDecision is terminal and exempt from all checks.
+    """
+
+    @staticmethod
+    def _normalize(text: str) -> str:
+        return " ".join(text.lower().strip().split())
+
+    def validate(self, parent_objective: str, decision: DecompositionDecision) -> None:
+        """Raise DecompositionConvergenceError if decision is not reductive."""
+        if isinstance(decision, WorkDecision):
+            return
+
+        parent_norm = self._normalize(parent_objective)
+        child_norms: list[str] = []
+
+        for task in decision.tasks:
+            obj = task.objective
+            norm = self._normalize(obj)
+
+            if len(norm) < 3:
+                raise DecompositionConvergenceError(
+                    f"Decomposition child has empty or near-empty objective: {obj!r}. "
+                    "Return WorkDecision if the task is already atomic."
+                )
+
+            if norm == parent_norm:
+                raise DecompositionConvergenceError(
+                    f"Decomposition is not reductive: child objective {obj!r} repeats "
+                    f"parent objective {parent_objective!r}. "
+                    "Split children must be narrower or more concrete than the parent, "
+                    "or return WorkDecision if the task is already atomic."
+                )
+
+            child_norms.append(norm)
+
+        if len(child_norms) >= 2 and len(set(child_norms)) == 1:
+            raise DecompositionConvergenceError(
+                f"Decomposition is not reductive: all child objectives normalize to "
+                f"{child_norms[0]!r}. Each child must address a distinct, narrower concern."
+            )
+
+
 class PlanExpansionBuilder:
     """Build scheduler work requests from an accepted planner response."""
 
@@ -81,6 +132,8 @@ class PlanExpansionBuilder:
 
     def build_from_decision(self, decision: DecompositionDecision) -> list[AgentRequest]:
         """Convert a DecompositionDecision into agent requests."""
+        parent_objective = self.request.spec.contract.objective
+        DecompositionConvergenceValidator().validate(parent_objective, decision)
         if isinstance(decision, WorkDecision):
             return [
                 AgentRequest(

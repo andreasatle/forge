@@ -1,5 +1,7 @@
 """Tests for scheduler-owned plan expansion."""
 
+import pytest
+
 from forge.core.models import (
     AcceptanceCriterion,
     AgentMessageKind,
@@ -15,7 +17,11 @@ from forge.core.models import (
     WorkDecision,
     WorkSpec,
 )
-from forge.core.plan_expansion import PlanExpansionBuilder
+from forge.core.plan_expansion import (
+    DecompositionConvergenceError,
+    DecompositionConvergenceValidator,
+    PlanExpansionBuilder,
+)
 
 
 def _plan_request() -> AgentRequest:
@@ -189,7 +195,7 @@ def test_work_decision_expands_to_one_work_node() -> None:
 def test_dependent_split_decision_expands_to_chained_work_nodes() -> None:
     """DependentSplitDecision with three tasks produces three WORK nodes chained a->b->c."""
     decision = DependentSplitDecision(
-        tasks=[_make_task_spec("a"), _make_task_spec("b"), _make_task_spec("c")]
+        tasks=[_make_task_spec("task-a"), _make_task_spec("task-b"), _make_task_spec("task-c")]
     )
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
@@ -207,7 +213,7 @@ def test_dependent_split_decision_expands_to_chained_work_nodes() -> None:
 def test_orthogonal_split_decision_expands_to_independent_work_nodes() -> None:
     """OrthogonalSplitDecision with three tasks produces three WORK nodes with no sibling deps."""
     decision = OrthogonalSplitDecision(
-        tasks=[_make_task_spec("a"), _make_task_spec("b"), _make_task_spec("c")]
+        tasks=[_make_task_spec("task-a"), _make_task_spec("task-b"), _make_task_spec("task-c")]
     )
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
@@ -280,9 +286,131 @@ def test_orthogonal_split_mixed_children_creates_no_sibling_dependencies() -> No
 
 def test_all_work_expansion_unchanged_with_task_spec() -> None:
     """Legacy all-work expansion via TaskSpec still produces only WORK nodes."""
-    decision = DependentSplitDecision(tasks=[_make_task_spec("a"), _make_task_spec("b")])
+    decision = DependentSplitDecision(tasks=[_make_task_spec("task-a"), _make_task_spec("task-b")])
 
     requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert all(r.agent_type == AgentType.WORK for r in requests)
     assert len(requests) == 2
+
+
+# --- DecompositionConvergenceValidator ---
+
+
+def _make_validator() -> DecompositionConvergenceValidator:
+    return DecompositionConvergenceValidator()
+
+
+def test_convergence_validator_accepts_narrower_children() -> None:
+    """Valid decomposition with distinct, narrower child objectives passes."""
+    decision = OrthogonalSplitDecision(
+        tasks=[
+            _make_task_spec("implement HTTP fetching"),
+            _make_task_spec("implement HTML parsing"),
+            _make_task_spec("add CLI interface"),
+        ]
+    )
+
+    _make_validator().validate("implement web scraper", decision)  # must not raise
+
+
+def test_convergence_validator_rejects_child_identical_to_parent() -> None:
+    """A child whose normalized objective matches the parent is rejected."""
+    decision = OrthogonalSplitDecision(
+        tasks=[
+            _make_task_spec("build a web scraper"),
+            _make_task_spec("add CLI interface"),
+        ]
+    )
+
+    with pytest.raises(DecompositionConvergenceError, match="not reductive"):
+        _make_validator().validate("build a web scraper", decision)
+
+
+def test_convergence_validator_rejects_child_identical_to_parent_case_insensitive() -> None:
+    """Normalization is case-insensitive — 'Build A Web Scraper' equals 'build a web scraper'."""
+    decision = OrthogonalSplitDecision(
+        tasks=[_make_task_spec("Build A Web Scraper"), _make_task_spec("add CLI")]
+    )
+
+    with pytest.raises(DecompositionConvergenceError, match="not reductive"):
+        _make_validator().validate("build a web scraper", decision)
+
+
+def test_convergence_validator_rejects_all_identical_children() -> None:
+    """All children normalizing to the same objective is rejected."""
+    decision = DependentSplitDecision(
+        tasks=[
+            _make_task_spec("write comprehensive tests"),
+            _make_task_spec("Write Comprehensive Tests"),
+        ]
+    )
+
+    with pytest.raises(DecompositionConvergenceError, match="not reductive"):
+        _make_validator().validate("implement the system", decision)
+
+
+def test_convergence_validator_rejects_empty_child_objective() -> None:
+    """A child with an empty or near-empty objective is rejected."""
+    decision = OrthogonalSplitDecision(tasks=[_make_task_spec("  "), _make_task_spec("add CLI")])
+
+    with pytest.raises(DecompositionConvergenceError, match="near-empty"):
+        _make_validator().validate("build a web scraper", decision)
+
+
+def test_convergence_validator_accepts_work_decision() -> None:
+    """WorkDecision is exempt from all convergence checks."""
+    work_spec = WorkSpec(
+        objective="build a web scraper",
+        success_condition="tests pass",
+        adapter="coding",
+        artifact="codebase",
+    )
+    decision = WorkDecision(task=work_spec)
+
+    # parent objective equals child objective — still valid for WorkDecision
+    _make_validator().validate("build a web scraper", decision)  # must not raise
+
+
+def test_convergence_validator_single_child_not_identical_passes() -> None:
+    """A single child that is distinct from the parent is accepted."""
+    decision = OrthogonalSplitDecision(tasks=[_make_task_spec("implement HTTP fetching")])
+
+    _make_validator().validate("implement web scraper", decision)  # must not raise
+
+
+def test_build_from_decision_raises_on_identical_child_to_parent() -> None:
+    """build_from_decision raises DecompositionConvergenceError when a child repeats the parent."""
+    parent = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a web scraper"),
+    )
+    decision = OrthogonalSplitDecision(
+        tasks=[_make_task_spec("build a web scraper"), _make_task_spec("add CLI")]
+    )
+
+    with pytest.raises(DecompositionConvergenceError):
+        PlanExpansionBuilder(parent).build_from_decision(decision)
+
+
+def test_build_from_decision_work_decision_not_rejected_by_convergence() -> None:
+    """WorkDecision passes through build_from_decision even when objective matches parent."""
+    parent = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a web scraper"),
+    )
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="build a web scraper",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    requests = PlanExpansionBuilder(parent).build_from_decision(decision)
+
+    assert len(requests) == 1
+    assert requests[0].agent_type == AgentType.WORK

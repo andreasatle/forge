@@ -1206,7 +1206,9 @@ async def test_scheduler_expands_work_decision_via_build_from_decision() -> None
 async def test_scheduler_expands_dependent_split_decision_into_chained_work_nodes() -> None:
     """Planner returning DependentSplitDecision creates chained WORK nodes."""
     planner = _plan_request()
-    decision = DependentSplitDecision(tasks=[_task_spec("A"), _task_spec("B"), _task_spec("C")])
+    decision = DependentSplitDecision(
+        tasks=[_task_spec("task-alpha"), _task_spec("task-beta"), _task_spec("task-gamma")]
+    )
 
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == planner.id:
@@ -1229,9 +1231,9 @@ async def test_scheduler_expands_dependent_split_decision_into_chained_work_node
         assert isinstance(n.request.spec, WorkSpec)
         return n.request.spec.objective
 
-    node_a = next(n for n in work_nodes if objective(n) == "A")
-    node_b = next(n for n in work_nodes if objective(n) == "B")
-    node_c = next(n for n in work_nodes if objective(n) == "C")
+    node_a = next(n for n in work_nodes if objective(n) == "task-alpha")
+    node_b = next(n for n in work_nodes if objective(n) == "task-beta")
+    node_c = next(n for n in work_nodes if objective(n) == "task-gamma")
     assert node_a.request.dependencies == frozenset()
     assert node_a.request.id in node_b.request.dependencies
     assert node_b.request.id in node_c.request.dependencies
@@ -1240,7 +1242,7 @@ async def test_scheduler_expands_dependent_split_decision_into_chained_work_node
 async def test_scheduler_expands_orthogonal_split_decision_into_independent_work_nodes() -> None:
     """Planner returning OrthogonalSplitDecision creates independent WORK nodes."""
     planner = _plan_request()
-    decision = OrthogonalSplitDecision(tasks=[_task_spec("X"), _task_spec("Y")])
+    decision = OrthogonalSplitDecision(tasks=[_task_spec("task-alpha"), _task_spec("task-beta")])
 
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == planner.id:
@@ -1282,3 +1284,145 @@ async def test_scheduler_legacy_plan_response_still_expands_correctly() -> None:
     assert work_nodes[0].node_state == NodeState.INTEGRATED
     assert isinstance(work_nodes[0].request.spec, WorkSpec)
     assert work_nodes[0].request.spec.objective == "legacy-task"
+
+
+# --- Decomposition convergence ---
+
+
+async def test_scheduler_convergence_failure_marks_plan_node_failed() -> None:
+    """A split decision whose child repeats the parent objective fails the plan node."""
+    planner = _plan_request()
+    decision = OrthogonalSplitDecision(
+        tasks=[
+            TaskSpec(
+                objective="test northstar",  # repeats northstar == parent contract objective
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+            TaskSpec(
+                objective="add CLI interface",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=decision,
+        )
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    plan_node = final.dag[planner.id]
+    assert plan_node.node_state == NodeState.FAILED
+    assert plan_node.response is not None
+    assert plan_node.response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "not reductive" in (plan_node.response.error or "")
+
+
+async def test_scheduler_convergence_failure_adds_no_child_nodes() -> None:
+    """No child nodes are added to the DAG when convergence validation rejects the decision."""
+    planner = _plan_request()
+    decision = DependentSplitDecision(
+        tasks=[
+            TaskSpec(
+                objective="test northstar",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            )
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=decision,
+        )
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    assert len(final.dag) == 1  # only the original plan node — no children inserted
+    assert final.dag[planner.id].node_state == NodeState.FAILED
+
+
+async def test_scheduler_convergence_failure_emits_telemetry_event() -> None:
+    """A convergence failure emits a node.convergence_failed telemetry event."""
+    planner = _plan_request()
+    decision = OrthogonalSplitDecision(
+        tasks=[
+            TaskSpec(
+                objective="test northstar",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+            TaskSpec(
+                objective="another task",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+        ]
+    )
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=decision,
+        )
+
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        _base_state().add_nodes([DAGNode(request=planner)])
+    )
+
+    convergence_events = [e for e in sink.events if e.event_type == "node.convergence_failed"]
+    assert len(convergence_events) == 1
+    assert convergence_events[0].status == "failed"
+    assert "reason" in convergence_events[0].data
+
+
+async def test_scheduler_valid_split_not_affected_by_convergence_check() -> None:
+    """A valid split with distinct narrower children passes convergence and expands normally."""
+    planner = _plan_request()
+    decision = OrthogonalSplitDecision(
+        tasks=[
+            TaskSpec(
+                objective="implement HTTP fetching",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+            TaskSpec(
+                objective="implement HTML parsing",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    plan_node = final.dag[planner.id]
+    assert plan_node.node_state == NodeState.INTEGRATED
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 2
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
