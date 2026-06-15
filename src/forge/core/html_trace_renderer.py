@@ -109,6 +109,12 @@ class HtmlTraceRenderer:
     .event:first-of-type {{ border-top: 0; padding-top: 0; margin-top: 0; }}
     .event-title {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }}
     .event-body {{ margin: 0; overflow-wrap: anywhere; }}
+    .contract-section {{ margin-bottom: 14px; border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; background: var(--bg); }}
+    .contract-section summary {{ cursor: pointer; color: var(--accent); font-weight: 600; }}
+    .contract-body dl {{ margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }}
+    .contract-body dt {{ color: var(--muted); font-size: 12px; }}
+    .contract-body dd {{ margin: 0; overflow-wrap: anywhere; }}
+    .contract-body ul {{ margin: 0; padding-left: 18px; }}
     details {{ margin-top: 8px; }}
     summary {{ cursor: pointer; color: var(--accent); }}
     pre {{
@@ -196,16 +202,54 @@ class HtmlTraceRenderer:
         if not attempt_cards:
             attempt_cards = '<p class="empty">No PWC timeline events for this node.</p>'
 
+        contract_html = self._node_contract(evts)
         return f"""<section class="node-detail panel" id="node-{self._e(self._anchor_id(node_id))}">
   <div class="node-heading">
     <h3>{self._e(node_id[:8])}</h3>
     <span class="pill">{self._e(last_str(evts, "agent_type") or "unknown")}</span>
     <a href="#top">top</a>
   </div>
+  {contract_html}
   <div class="attempts">
     {attempt_cards}
   </div>
 </section>"""
+
+    def _node_contract(self, evts: list[TraceEvent]) -> str:
+        for event in evts:
+            if event.data.get("event_type") == "node.dispatched":
+                data = dict_value(event.data.get("data"))
+                contract = dict_value(data.get("contract"))
+                if contract:
+                    return self._render_contract(contract)
+        return ""
+
+    def _render_contract(self, contract: dict[str, Any]) -> str:
+        objective = str_value(contract.get("objective")) or ""
+        success = str_value(contract.get("success_condition")) or ""
+        artifact = str_value(contract.get("artifact")) or "—"
+        adapter = str_value(contract.get("adapter")) or "—"
+        criteria = list_value(contract.get("acceptance_criteria"))
+        criteria_html = (
+            "".join(
+                f"<li>{self._e(str_value(dict_value(c).get('text')) or '')}</li>"
+                for c in criteria
+                if str_value(dict_value(c).get("text"))
+            )
+            or "<li>None</li>"
+        )
+        return f"""<details class="contract-section">
+  <summary>Contract</summary>
+  <div class="contract-body">
+    <dl>
+      <dt>Objective</dt><dd>{self._e(objective)}</dd>
+      <dt>Success condition</dt><dd>{self._e(success)}</dd>
+      <dt>Artifact</dt><dd>{self._e(artifact)}</dd>
+      <dt>Adapter</dt><dd>{self._e(adapter)}</dd>
+      <dt>Acceptance criteria</dt><dd><ul>{criteria_html}</ul></dd>
+    </dl>
+  </div>
+</details>"""
 
     def _attempt_card(self, attempt_number: int | None, evts: list[TraceEvent]) -> str:
         title = f"Attempt {attempt_number}" if attempt_number is not None else "Node Events"

@@ -256,6 +256,37 @@ class SchedulerConsequenceHandler:
             ),
         )
 
+    def emit_node_dispatched(self, node: DAGNode) -> None:
+        """Emit node.dispatched with the node's contract so traces expose planner intent."""
+        if self._run_id is None:
+            return
+        spec = node.request.spec
+        contract_data: dict[str, object] = {
+            "objective": spec.contract.objective,
+            "success_condition": spec.contract.success_condition,
+            "acceptance_criteria": [
+                {"id": c.id, "text": c.text} for c in spec.contract.acceptance_criteria
+            ],
+        }
+        if isinstance(spec, WorkSpec):
+            contract_data["artifact"] = spec.artifact
+            contract_data["adapter"] = spec.adapter
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=node.request.id,
+                request_id=node.request.id,
+                agent_type=node.request.agent_type.value,
+                role="scheduler",
+                phase="scheduler",
+                event_type="node.dispatched",
+                status="dispatched",
+                summary=spec.contract.objective,
+                data={"contract": contract_data},
+            ),
+        )
+
     def _emit_node_failed(self, node: DAGNode) -> None:
         if self._run_id is None:
             return
@@ -341,6 +372,7 @@ class Scheduler:
                 running = node.with_state(NodeState.RUNNING)
                 state = state.update_node(running)
                 self._fire_node(self._callbacks.on_node_dispatched, running)
+                self._consequences.emit_node_dispatched(running)
 
             coros = [self._runner(node.request) for node in to_dispatch]
             raw = await asyncio.gather(*coros, return_exceptions=True)

@@ -4,6 +4,8 @@ import asyncio
 from uuid import uuid4
 
 from forge.core.models import (
+    AcceptanceCriterion,
+    AgentContract,
     AgentDiagnostic,
     AgentRequest,
     AgentResponse,
@@ -1094,6 +1096,50 @@ async def test_runner_exception_telemetry_node_failed_has_error_summary() -> Non
     assert event.status == "failed"
     assert event.data.get("failure_kind") == "internal_error"
     assert "'AttemptEngine'" in (event.summary or "")
+
+
+async def test_scheduler_emits_node_dispatched_telemetry_for_work_node() -> None:
+    """Scheduler emits node.dispatched with contract data when a work node is dispatched."""
+    work = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="Implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+            contract=AgentContract(
+                objective="Implement parser",
+                success_condition="tests pass",
+                acceptance_criteria=[AcceptanceCriterion(id="AC1", text="parse tags")],
+            ),
+        ),
+    )
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        state, _plan_request()
+    )
+
+    dispatched = [e for e in sink.events if e.event_type == "node.dispatched"]
+    work_dispatched = [e for e in dispatched if e.node_id == work.id]
+    assert len(work_dispatched) == 1
+    event = work_dispatched[0]
+    assert event.run_id == sink.run_id
+    assert event.node_id == work.id
+    assert event.role == "scheduler"
+    assert event.phase == "scheduler"
+    assert event.status == "dispatched"
+    contract = event.data["contract"]
+    assert contract["objective"] == "Implement parser"
+    assert contract["success_condition"] == "tests pass"
+    assert contract["artifact"] == "codebase"
+    assert contract["adapter"] == "coding"
+    assert contract["acceptance_criteria"] == [{"id": "AC1", "text": "parse tags"}]
 
 
 async def test_runner_exception_cancels_dependents() -> None:

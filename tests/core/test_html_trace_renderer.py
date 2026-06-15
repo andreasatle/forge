@@ -329,3 +329,69 @@ def test_malformed_events_shows_warning(tmp_path: Path) -> None:
     result = HtmlTraceRenderer().render_run(run)
 
     assert "Skipped 3 malformed events." in result
+
+
+def _dispatched_event(node_id: str) -> TraceEvent:
+    return TraceEvent(
+        line_number=1,
+        data={
+            "schema_version": 1,
+            "event_id": f"event-{node_id[:4]}-dispatched",
+            "run_id": RUN_ID,
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "node_id": node_id,
+            "request_id": node_id,
+            "agent_type": "work",
+            "attempt_number": None,
+            "role": "scheduler",
+            "phase": "scheduler",
+            "event_type": "node.dispatched",
+            "status": "dispatched",
+            "summary": "Implement parser",
+            "data": {
+                "contract": {
+                    "objective": "Implement parser",
+                    "success_condition": "tests pass",
+                    "artifact": "codebase",
+                    "adapter": "coding",
+                    "acceptance_criteria": [
+                        {"id": "AC1", "text": "parse tags"},
+                        {"id": "AC2", "text": "parse classes"},
+                    ],
+                }
+            },
+        },
+    )
+
+
+def test_renders_node_contract_section(tmp_path: Path) -> None:
+    """render_run includes a collapsible Contract section for work nodes."""
+    run = _run(
+        events=[
+            _dispatched_event(NODE_1),
+            _event(NODE_1, "work", "producer.response.parsed"),
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "contract-section" in result
+    assert "Contract" in result
+    assert "Implement parser" in result
+    assert "codebase" in result
+    assert "coding" in result
+    assert "parse tags" in result
+    assert "parse classes" in result
+
+
+def test_renders_no_contract_section_without_dispatched_event(tmp_path: Path) -> None:
+    """render_run omits the contract section when no node.dispatched event is present."""
+    run = _run(
+        events=[_event(NODE_1, "work", "producer.response.parsed")],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert '<details class="contract-section">' not in result

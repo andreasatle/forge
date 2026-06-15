@@ -117,6 +117,10 @@ def _node_summary_line(node_id: str, evts: list[TraceEvent]) -> str:
 
 def _compact_timeline(evts: list[TraceEvent], *, indent: str, full: bool = False) -> list[str]:
     lines: list[str] = []
+    contract = _extract_contract(evts)
+    if contract:
+        lines.extend(_contract_block(contract, indent))
+
     no_attempt: list[TraceEvent] = []
     for event in evts:
         if not isinstance(event.data.get("attempt_number"), int):
@@ -130,6 +134,45 @@ def _compact_timeline(evts: list[TraceEvent], *, indent: str, full: bool = False
     for event in interesting_events(no_attempt):
         lines.extend(_render_event(event, indent=indent, full=full))
     return lines or [f"{indent}no timeline events"]
+
+
+def _extract_contract(evts: list[TraceEvent]) -> dict[str, Any] | None:
+    for event in evts:
+        if event.data.get("event_type") == "node.dispatched":
+            data = dict_value(event.data.get("data"))
+            contract = dict_value(data.get("contract"))
+            if contract:
+                return contract
+    return None
+
+
+def _contract_block(contract: dict[str, Any], indent: str) -> list[str]:
+    lines: list[str] = []
+    objective = str_value(contract.get("objective"))
+    if objective:
+        lines.append(f"{indent}objective:")
+        lines.append(f"{indent}  {one_line(objective)}")
+        lines.append("")
+    artifact = str_value(contract.get("artifact"))
+    if artifact:
+        lines.append(f"{indent}artifact:")
+        lines.append(f"{indent}  {artifact}")
+        lines.append("")
+    adapter = str_value(contract.get("adapter"))
+    if adapter:
+        lines.append(f"{indent}adapter:")
+        lines.append(f"{indent}  {adapter}")
+        lines.append("")
+    criteria = list_value(contract.get("acceptance_criteria"))
+    if criteria:
+        lines.append(f"{indent}acceptance:")
+        for c in criteria:
+            c_dict = dict_value(c)
+            text = str_value(c_dict.get("text"))
+            if text:
+                lines.append(f"{indent}  - {one_line(text)}")
+        lines.append("")
+    return lines
 
 
 def _render_event(event: TraceEvent, *, indent: str, full: bool) -> list[str]:

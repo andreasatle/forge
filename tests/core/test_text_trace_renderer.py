@@ -456,3 +456,78 @@ def test_render_run_invalid_json_diagnostic_still_renders_excerpt() -> None:
     assert "raw_response:" in text
     assert "this is markdown" in text
     assert "iterations:" not in text
+
+
+def _dispatched_event(
+    node_id: str,
+    *,
+    objective: str = "Implement parser",
+    artifact: str = "codebase",
+    adapter: str = "coding",
+    criteria: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    return {
+        "run_id": RUN_1,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "node_id": node_id,
+        "agent_type": "work",
+        "attempt_number": None,
+        "event_type": "node.dispatched",
+        "status": "dispatched",
+        "summary": objective,
+        "data": {
+            "contract": {
+                "objective": objective,
+                "success_condition": "tests pass",
+                "artifact": artifact,
+                "adapter": adapter,
+                "acceptance_criteria": criteria or [{"id": "AC1", "text": "parse tags"}],
+            }
+        },
+    }
+
+
+def test_render_run_shows_contract_block_for_work_node() -> None:
+    """render_run includes a compact contract block before attempt groups for work nodes."""
+    run = _make_run(
+        RUN_1,
+        events=[
+            _dispatched_event(NODE_1),
+            _event(NODE_1, "work", "producer.response.parsed", attempt=1),
+        ],
+    )
+    text = TextTraceRenderer().render_run(run)
+    assert "objective:" in text
+    assert "Implement parser" in text
+    assert "artifact:" in text
+    assert "codebase" in text
+    assert "adapter:" in text
+    assert "coding" in text
+    assert "acceptance:" in text
+    assert "- parse tags" in text
+
+
+def test_render_run_contract_block_appears_before_attempts() -> None:
+    """Contract block is rendered before attempt groups in the node timeline."""
+    run = _make_run(
+        RUN_1,
+        events=[
+            _dispatched_event(NODE_1),
+            _event(NODE_1, "work", "producer.response.parsed", attempt=1),
+        ],
+    )
+    text = TextTraceRenderer().render_run(run)
+    objective_pos = text.index("objective:")
+    attempt_pos = text.index("attempt 1:")
+    assert objective_pos < attempt_pos
+
+
+def test_render_run_no_contract_block_when_no_dispatched_event() -> None:
+    """render_run omits the contract block when no node.dispatched event is present."""
+    run = _make_run(
+        RUN_1,
+        events=[_event(NODE_1, "work", "producer.response.parsed", attempt=1)],
+    )
+    text = TextTraceRenderer().render_run(run)
+    assert "objective:" not in text
+    assert "artifact:" not in text
