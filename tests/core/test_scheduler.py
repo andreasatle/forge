@@ -11,9 +11,11 @@ from forge.core.models import (
     AgentResponse,
     AgentType,
     DAGNode,
+    DecompositionNodeSpec,
     DecompositionTask,
     DependentSplitDecision,
     FailureKind,
+    GraphSplitDecision,
     NodeState,
     OrthogonalSplitDecision,
     PlanResponse,
@@ -1285,6 +1287,50 @@ async def test_scheduler_legacy_plan_response_still_expands_correctly() -> None:
     assert work_nodes[0].node_state == NodeState.INTEGRATED
     assert isinstance(work_nodes[0].request.spec, WorkSpec)
     assert work_nodes[0].request.spec.objective == "legacy-task"
+
+
+async def test_scheduler_expands_graph_split_decision_into_dag_work_nodes() -> None:
+    """Root PLAN returning GraphSplitDecision creates WORK nodes with correct dependencies."""
+    planner = _plan_request()
+    decision = GraphSplitDecision(
+        nodes=[
+            DecompositionNodeSpec(
+                id="setup", task=_task_spec("set up the database"), depends_on=[]
+            ),
+            DecompositionNodeSpec(
+                id="api", task=_task_spec("implement the API"), depends_on=["setup"]
+            ),
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state(max_concurrency=2).add_nodes([DAGNode(request=planner)])
+    )
+
+    plan_node = final.dag[planner.id]
+    assert plan_node.node_state == NodeState.INTEGRATED
+
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 2
+    assert all(n.node_state == NodeState.INTEGRATED for n in work_nodes)
+
+    def objective(n: DAGNode) -> str:
+        assert isinstance(n.request.spec, WorkSpec)
+        return n.request.spec.objective
+
+    setup_node = next(n for n in work_nodes if objective(n) == "set up the database")
+    api_node = next(n for n in work_nodes if objective(n) == "implement the API")
+    assert setup_node.request.dependencies == frozenset()
+    assert setup_node.request.id in api_node.request.dependencies
 
 
 # --- Decomposition convergence ---

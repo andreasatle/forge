@@ -16,6 +16,7 @@ from forge.core.models import (
     DAGNode,
     DependentSplitDecision,
     FailureKind,
+    GraphSplitDecision,
     NodeState,
     OrthogonalSplitDecision,
     PlanResponse,
@@ -166,7 +167,10 @@ class SchedulerConsequenceHandler:
                     DAGNode(request=request)
                     for request in PlanExpansionBuilder(node.request).build(output)
                 ]
-            if isinstance(output, (WorkDecision, DependentSplitDecision, OrthogonalSplitDecision)):
+            if isinstance(
+                output,
+                (WorkDecision, DependentSplitDecision, OrthogonalSplitDecision, GraphSplitDecision),
+            ):
                 return [
                     DAGNode(request=request)
                     for request in PlanExpansionBuilder(node.request).build_from_decision(output)
