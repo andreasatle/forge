@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Protocol, TypeVar, cast, runtime_checkable
+from typing import Protocol, TypeVar, assert_never, cast, runtime_checkable
 from uuid import UUID
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
@@ -635,42 +635,66 @@ class AttemptLifecycle[T]:
                     )
                     return _validation_parse_failed_response(self._request, e)
                 self._telemetry.critic_finding_parsed(attempt_number, finding)
-                if finding.disposition == CriticDisposition.ALREADY_DONE:
-                    _logger.info(
-                        "attempt %d/%d: critic confirmed ALREADY_DONE",
-                        attempt_number,
-                        self._max_attempts,
-                    )
-                    return AgentResponse(
-                        request_id=self._request.id,
-                        status=ResponseStatus.ALREADY_DONE,
-                        output=response.output,
-                    )
-                if finding.disposition == CriticDisposition.REJECT:
-                    _logger.info(
-                        "attempt %d/%d: critic rejected empty output",
-                        attempt_number,
-                        self._max_attempts,
-                    )
-                    return _validation_rejected_response(
-                        self._request,
-                        finding.disposition,
-                        finding.rationale,
-                        self._validator.work_noun(),
-                    )
-                _logger.info(
-                    "attempt %d/%d: critic=%s on empty output — retrying",
-                    attempt_number,
-                    self._max_attempts,
-                    finding.disposition.value,
-                )
-                history = history.append_from_review(
-                    rationale=finding.rationale,
-                    prior_attempts=attempt_number,
-                    critic_finding=finding,
-                )
-                self._telemetry.revision_appended(attempt_number, history.requests[-1])
-                continue
+                match finding.disposition:
+                    case CriticDisposition.ALREADY_DONE:
+                        _logger.info(
+                            "attempt %d/%d: critic confirmed ALREADY_DONE",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        return AgentResponse(
+                            request_id=self._request.id,
+                            status=ResponseStatus.ALREADY_DONE,
+                            output=response.output,
+                        )
+                    case CriticDisposition.REJECT:
+                        _logger.info(
+                            "attempt %d/%d: critic rejected empty output",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        return _validation_rejected_response(
+                            self._request,
+                            finding.disposition,
+                            finding.rationale,
+                            self._validator.work_noun(),
+                        )
+                    case CriticDisposition.ACCEPT:
+                        _logger.info(
+                            "attempt %d/%d: critic accepted empty output — ALREADY_DONE",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        return AgentResponse(
+                            request_id=self._request.id,
+                            status=ResponseStatus.ALREADY_DONE,
+                        )
+                    case CriticDisposition.DECOMPOSE:
+                        _logger.info(
+                            "attempt %d/%d: critic requested decomposition on empty output",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        return AgentResponse(
+                            request_id=self._request.id,
+                            status=ResponseStatus.DECOMPOSE,
+                        )
+                    case CriticDisposition.REVISE:
+                        _logger.info(
+                            "attempt %d/%d: critic=%s on empty output — retrying",
+                            attempt_number,
+                            self._max_attempts,
+                            finding.disposition.value,
+                        )
+                        history = history.append_from_review(
+                            rationale=finding.rationale,
+                            prior_attempts=attempt_number,
+                            critic_finding=finding,
+                        )
+                        self._telemetry.revision_appended(attempt_number, history.requests[-1])
+                        continue
+                    case _ as unreachable:
+                        assert_never(unreachable)
 
             if response.status != ResponseStatus.COMPLETED or output is None:
                 raise RunAgentFailed(response)
@@ -707,84 +731,98 @@ class AttemptLifecycle[T]:
                 return _validation_parse_failed_response(self._request, e)
 
             _logger.info(
-                "attempt %d/%d: critic=%s referee=%s — %s",
+                "attempt %d/%d: critic=%s referee=%s",
                 attempt_number,
                 self._max_attempts,
                 finding.disposition.value,
                 decision.disposition.value,
-                "returning" if decision.disposition == CriticDisposition.ACCEPT else "retrying",
             )
             self._telemetry.critic_finding_parsed(attempt_number, finding)
             self._telemetry.referee_decision_parsed(attempt_number, decision)
 
-            if decision.disposition == CriticDisposition.ACCEPT:
-                return response
-            if decision.disposition == CriticDisposition.REJECT:
-                if (
-                    attempt < self._max_attempts - 1
-                    and _claimed_work_has_no_worktree_changes(output, self._validator)
-                    and _mentions_no_worktree_changes(finding.rationale, decision.rationale)
-                ):
-                    _logger.info(
-                        "attempt %d/%d: no worktree changes despite WorkOutput — retrying",
-                        attempt_number,
-                        self._max_attempts,
-                    )
-                    revision_request = _no_worktree_change_revision(
-                        rationale=decision.rationale or finding.rationale,
-                        prior_attempts=attempt_number,
-                    )
-                    history = history.append(revision_request)
-                    self._telemetry.revision_appended(attempt_number, revision_request)
-                    continue
-                if _is_ungrounded_generic_feedback(
-                    self._request, self._validator, finding, decision
-                ):
-                    _logger.warning(
-                        "attempt %d/%d: validation rejected with ungrounded generic feedback",
-                        attempt_number,
-                        self._max_attempts,
-                    )
-                    return _ungrounded_validation_feedback_response(
+            match decision.disposition:
+                case CriticDisposition.ACCEPT:
+                    return response
+                case CriticDisposition.REJECT:
+                    if (
+                        attempt < self._max_attempts - 1
+                        and _claimed_work_has_no_worktree_changes(output, self._validator)
+                        and _mentions_no_worktree_changes(finding.rationale, decision.rationale)
+                    ):
+                        _logger.info(
+                            "attempt %d/%d: no worktree changes despite WorkOutput — retrying",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        revision_request = _no_worktree_change_revision(
+                            rationale=decision.rationale or finding.rationale,
+                            prior_attempts=attempt_number,
+                        )
+                        history = history.append(revision_request)
+                        self._telemetry.revision_appended(attempt_number, revision_request)
+                        continue
+                    if _is_ungrounded_generic_feedback(
+                        self._request, self._validator, finding, decision
+                    ):
+                        _logger.warning(
+                            "attempt %d/%d: validation rejected with ungrounded generic feedback",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        return _ungrounded_validation_feedback_response(
+                            self._request,
+                            self._validator.work_noun(),
+                        )
+                    return _validation_rejected_response(
                         self._request,
+                        decision.disposition,
+                        decision.rationale,
                         self._validator.work_noun(),
                     )
-                return _validation_rejected_response(
-                    self._request,
-                    decision.disposition,
-                    decision.rationale,
-                    self._validator.work_noun(),
-                )
-            if decision.disposition == CriticDisposition.DECOMPOSE:
-                _logger.info(
-                    "attempt %d/%d: referee requested decomposition",
-                    attempt_number,
-                    self._max_attempts,
-                )
-                self._telemetry.decompose_requested(attempt_number, decision)
-                return AgentResponse(
-                    request_id=self._request.id,
-                    status=ResponseStatus.DECOMPOSE,
-                )
-
-            if _is_ungrounded_generic_feedback(self._request, self._validator, finding, decision):
-                _logger.warning(
-                    "attempt %d/%d: validation revised with ungrounded generic feedback",
-                    attempt_number,
-                    self._max_attempts,
-                )
-                return _ungrounded_validation_feedback_response(
-                    self._request,
-                    self._validator.work_noun(),
-                )
-
-            history = history.append_from_review(
-                rationale=decision.rationale,
-                prior_attempts=attempt_number,
-                critic_finding=finding,
-                referee_decision=decision,
-            )
-            self._telemetry.revision_appended(attempt_number, history.requests[-1])
+                case CriticDisposition.DECOMPOSE:
+                    _logger.info(
+                        "attempt %d/%d: referee requested decomposition",
+                        attempt_number,
+                        self._max_attempts,
+                    )
+                    self._telemetry.decompose_requested(attempt_number, decision)
+                    return AgentResponse(
+                        request_id=self._request.id,
+                        status=ResponseStatus.DECOMPOSE,
+                    )
+                case CriticDisposition.ALREADY_DONE:
+                    _logger.info(
+                        "attempt %d/%d: referee returned ALREADY_DONE",
+                        attempt_number,
+                        self._max_attempts,
+                    )
+                    return AgentResponse(
+                        request_id=self._request.id,
+                        status=ResponseStatus.ALREADY_DONE,
+                        output=response.output,
+                    )
+                case CriticDisposition.REVISE:
+                    if _is_ungrounded_generic_feedback(
+                        self._request, self._validator, finding, decision
+                    ):
+                        _logger.warning(
+                            "attempt %d/%d: validation revised with ungrounded generic feedback",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        return _ungrounded_validation_feedback_response(
+                            self._request,
+                            self._validator.work_noun(),
+                        )
+                    history = history.append_from_review(
+                        rationale=decision.rationale,
+                        prior_attempts=attempt_number,
+                        critic_finding=finding,
+                        referee_decision=decision,
+                    )
+                    self._telemetry.revision_appended(attempt_number, history.requests[-1])
+                case _ as unreachable:
+                    assert_never(unreachable)
 
         _logger.warning(
             "max_attempts (%d) exhausted; validation did not accept",

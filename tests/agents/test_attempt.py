@@ -1669,6 +1669,87 @@ async def test_empty_work_output_critic_revise_triggers_retry_with_feedback() ->
     assert "1. Required change: add some code" in prompts[1]
 
 
+async def test_empty_work_output_critic_accept_returns_already_done() -> None:
+    """Critic ACCEPT on empty output yields ALREADY_DONE instead of silently retrying."""
+    request = _work_request()
+    run_fn, _ = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                output=WorkOutput(),
+                error="empty output",
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT, rationale="nothing to do"
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.ALREADY_DONE
+
+
+async def test_empty_work_output_critic_decompose_propagates() -> None:
+    """Critic DECOMPOSE on empty output propagates DECOMPOSE instead of silently retrying."""
+    request = _work_request()
+    run_fn, _ = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                output=WorkOutput(),
+                error="empty output",
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.DECOMPOSE, rationale="task too large"
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.DECOMPOSE
+
+
+async def test_referee_already_done_on_non_empty_output_returns_already_done() -> None:
+    """Referee ALREADY_DONE returns ALREADY_DONE instead of silently retrying (bug fix)."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, _ = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ALREADY_DONE, rationale="already done"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ALREADY_DONE, rationale="already done", override=False
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.ALREADY_DONE
+    assert result.output == work_output
+
+
 async def test_work_noun_comes_from_adapter_spec() -> None:
     """Engine uses adapter.work_noun in retry feedback rather than a hardcoded string."""
     request = AgentRequest(
