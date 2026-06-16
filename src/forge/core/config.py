@@ -31,12 +31,17 @@ class PwcModelConfig:
     max_attempts: int = 3
 
 
+def _empty_worker_profiles() -> dict[str, PwcModelConfig]:
+    return {}
+
+
 @dataclass
 class ModelsConfig:
     """Model configuration per scheduler agent type."""
 
     planner: PwcModelConfig = field(default_factory=PwcModelConfig)
     worker: PwcModelConfig = field(default_factory=PwcModelConfig)
+    worker_profiles: dict[str, PwcModelConfig] = field(default_factory=_empty_worker_profiles)
 
 
 @dataclass
@@ -136,7 +141,31 @@ class ForgeConfigLoader:
                 fallback_critic=flat_critic,
                 fallback_referee=flat_referee,
             ),
+            worker_profiles=self._load_worker_profiles(
+                models.get("worker_profiles"),
+                fallback_critic=flat_critic,
+                fallback_referee=flat_referee,
+            ),
         )
+
+    def _load_worker_profiles(
+        self,
+        value: object,
+        *,
+        fallback_critic: str | None = None,
+        fallback_referee: str | None = None,
+    ) -> dict[str, PwcModelConfig]:
+        """Parse optional worker_profiles mapping to dict[str, PwcModelConfig]."""
+        profiles_raw = _as_mapping(value, "models.worker_profiles")
+        result: dict[str, PwcModelConfig] = {}
+        for name, profile_value in profiles_raw.items():
+            result[name] = self._load_pwc_model_config(
+                profile_value,
+                field=f"models.worker_profiles.{name}",
+                fallback_critic=fallback_critic,
+                fallback_referee=fallback_referee,
+            )
+        return result
 
     def _load_pwc_model_config(
         self,

@@ -600,3 +600,115 @@ def test_artifact_name_path_traversal_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="invalid"):
         ForgeConfig.load(p)
+
+
+# --- worker_profiles ---
+
+
+def test_worker_profiles_absent_gives_empty_dict(tmp_path: Path) -> None:
+    """Old configs without worker_profiles load cleanly and give worker_profiles == {}."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.models.worker_profiles == {}
+
+
+def test_models_config_defaults_worker_profiles_to_empty_dict() -> None:
+    """ModelsConfig() default-constructs with worker_profiles == {}."""
+    assert ModelsConfig().worker_profiles == {}
+
+
+def test_worker_profiles_full_pwc_parsed(tmp_path: Path) -> None:
+    """worker_profiles.fast parses producer/critic/referee/max_attempts correctly."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker:\n"
+        + "    producer: openai/gpt-4o\n"
+        + "  worker_profiles:\n"
+        + "    fast:\n"
+        + "      producer: ollama/gemma2:2b\n"
+        + "      critic: ollama/gemma2:2b\n"
+        + "      referee: ollama/gemma2:2b\n"
+        + "      max_attempts: 1\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    fast = config.models.worker_profiles["fast"]
+    assert fast.producer == "ollama/gemma2:2b"
+    assert fast.critic == "ollama/gemma2:2b"
+    assert fast.referee == "ollama/gemma2:2b"
+    assert fast.max_attempts == 1
+
+
+def test_worker_profiles_null_critic_and_referee(tmp_path: Path) -> None:
+    """A worker profile with critic: null and referee: null parses correctly."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker:\n"
+        + "    producer: openai/gpt-4o\n"
+        + "  worker_profiles:\n"
+        + "    bare:\n"
+        + "      producer: ollama/gemma2:2b\n"
+        + "      critic: null\n"
+        + "      referee: null\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    bare = config.models.worker_profiles["bare"]
+    assert bare.producer == "ollama/gemma2:2b"
+    assert bare.critic is None
+    assert bare.referee is None
+
+
+def test_worker_profiles_not_a_mapping_raises(tmp_path: Path) -> None:
+    """worker_profiles that is not a mapping raises ValueError."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker_profiles:\n"
+        + "    - fast\n"
+        + "    - slow\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    with pytest.raises(ValueError, match="worker_profiles"):
+        ForgeConfig.load(p)
+
+
+def test_worker_profiles_missing_producer_raises(tmp_path: Path) -> None:
+    """A worker profile entry without a producer key raises ValueError."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker_profiles:\n"
+        + "    bad:\n"
+        + "      critic: ollama/gemma2:2b\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    with pytest.raises(ValueError, match="producer"):
+        ForgeConfig.load(p)
+
+
+def test_worker_profiles_default_name_allowed(tmp_path: Path) -> None:
+    """A profile named 'default' is valid at config level and parses normally."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker:\n"
+        + "    producer: openai/gpt-4o\n"
+        + "  worker_profiles:\n"
+        + "    default:\n"
+        + "      producer: openai/gpt-4o-mini\n"
+        + "      critic: null\n"
+        + "      referee: null\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    assert "default" in config.models.worker_profiles
+    assert config.models.worker_profiles["default"].producer == "openai/gpt-4o-mini"
+    assert config.models.worker_profiles["default"].critic is None
