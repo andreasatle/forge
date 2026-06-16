@@ -1,9 +1,20 @@
 """Task complexity classification abstractions."""
 
+import inspect
+import json
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol, cast
 
-from forge.core.models import AgentRequest
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+from forge.core.models import AcceptanceCriterion, AgentRequest, AgentType, WorkSpec
+from forge.llm.providers import ChatMessage, LLMProvider
+
+_CLASSIFIER_SYSTEM_PROMPT = (
+    "Classify the worker task complexity from the compact metadata provided. "
+    'Return strict JSON with exactly these keys: {"complexity":"easy|medium|hard",'
+    '"rationale":"short string"}. Do not include any other keys or prose.'
+)
 
 
 class TaskComplexity(StrEnum):
@@ -12,6 +23,30 @@ class TaskComplexity(StrEnum):
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
+
+
+class TaskComplexityInput(BaseModel):
+    """Compact worker task metadata used for task complexity classification."""
+
+    model_config = ConfigDict(frozen=True)
+
+    objective: str
+    success_condition: str
+    acceptance_criteria: list[AcceptanceCriterion]
+    constraints: list[str]
+    non_goals: list[str]
+    adapter: str
+    artifact: str
+    language: str | None = None
+
+
+class TaskComplexityResponse(BaseModel):
+    """Strict model response for task complexity classification."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    complexity: TaskComplexity
+    rationale: str
 
 
 class TaskComplexityClassifier(Protocol):
@@ -28,3 +63,62 @@ class DefaultTaskComplexityClassifier:
     def classify(self, request: AgentRequest) -> TaskComplexity:
         """Return the default task complexity."""
         return TaskComplexity.MEDIUM
+
+
+def task_complexity_input_from_request(request: AgentRequest) -> TaskComplexityInput:
+    """Extract compact worker task metadata from a WORK request."""
+    if request.agent_type is not AgentType.WORK or not isinstance(request.spec, WorkSpec):
+        raise ValueError("task complexity input requires a WORK request with WorkSpec")
+
+    spec = request.spec
+    contract = spec.contract
+    return TaskComplexityInput(
+        objective=spec.objective,
+        success_condition=spec.success_condition,
+        acceptance_criteria=contract.acceptance_criteria,
+        constraints=contract.constraints,
+        non_goals=contract.non_goals,
+        adapter=spec.adapter,
+        artifact=spec.artifact,
+        language=spec.language,
+    )
+
+
+def parse_task_complexity_response(raw: str) -> TaskComplexityResponse:
+    """Parse a strict task complexity classifier JSON response."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid task complexity JSON: {exc.msg}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError("invalid task complexity response: expected a JSON object")
+
+    try:
+        return TaskComplexityResponse.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError(f"invalid task complexity response schema: {exc}") from exc
+
+
+class LLMTaskComplexityClassifier:
+    """LLM-backed classifier for compact worker task metadata."""
+
+    def __init__(self, provider: LLMProvider) -> None:
+        self.provider = provider
+
+    def classify(self, request: AgentRequest) -> TaskComplexity:
+        """Return only the parsed complexity label for a WORK request."""
+        metadata = task_complexity_input_from_request(request)
+        messages: list[ChatMessage] = [
+            {"role": "system", "content": _CLASSIFIER_SYSTEM_PROMPT},
+            {"role": "user", "content": metadata.model_dump_json()},
+        ]
+        raw = cast(Any, self.provider).chat(messages)
+        if inspect.isawaitable(raw):
+            raise RuntimeError(
+                "LLMProvider.chat is async; synchronous task complexity classification "
+                "requires an async integration decision before real providers can be used"
+            )
+        if not isinstance(raw, str):
+            raise ValueError("task complexity provider returned a non-string response")
+        return parse_task_complexity_response(raw).complexity
