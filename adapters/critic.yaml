@@ -7,6 +7,12 @@ prompt_template: |
 
   Review only against this contract. Do not revise or reject for unstated ideals,
   broader completeness, or improvements outside the contract.
+  Ground every non-ACCEPT finding in the AgentRequest contract and the supplied evidence.
+  Cite concrete acceptance criteria, files, tests, git status/diff, or worktree evidence.
+  Do not give generic essay, argument, verbosity, style, or writing feedback unless the
+  contract explicitly asks for it. For coding work, revision_items must reference files,
+  tests, diffs, worktree evidence, or contract criteria. For document work, revision_items
+  must reference the requested documentation requirements.
 
   {contract_block}
 
@@ -26,6 +32,7 @@ prompt_template: |
   - hints must be specific and actionable
   - For "revise", populate revision_items with concrete required changes
   - When a required change corresponds to an acceptance criterion, set criterion_id to that criterion's id
+  - Every revise/reject rationale and revision_item must cite contract text or supplied evidence
   - hints and revision_items must stay within the contract
   - Never request a change that contradicts any constraint, non-goal, artifact, adapter, language, or language plugin guidance in the contract
   - Before issuing any revision item, check it against the language plugin guidance and constraints in the AgentRequest contract. Never request a change that contradicts the contract constraints or language plugin guidance. If the implementation follows the contract constraints, do not flag it as a violation even if you would personally prefer a different approach.

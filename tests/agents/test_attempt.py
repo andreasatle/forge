@@ -365,6 +365,230 @@ async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
     assert "1. Required change: handle failures" in prompts[2]
 
 
+async def test_generic_argument_feedback_does_not_become_coding_revision() -> None:
+    """Generic essay feedback is rejected instead of becoming coding revision instructions."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="The argument needs more supporting evidence.",
+            hints=["Add more supporting evidence."],
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE,
+            rationale="The argument needs more supporting evidence.",
+            override=False,
+            revision_items=[
+                RevisionItem(
+                    required_change="Add more supporting evidence.",
+                    rationale="The argument is weak.",
+                )
+            ],
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "ungrounded generic feedback" in (result.error or "")
+    assert len(prompts) == 1
+
+
+async def test_generic_verbose_feedback_requires_contract_grounding() -> None:
+    """Generic verbosity feedback is allowed only when the contract asks for it."""
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write concise docs",
+            success_condition="docs are concise",
+            contract=AgentContract(
+                objective="write concise docs",
+                success_condition="docs are concise",
+                constraints=["Generated text must not be verbose."],
+            ),
+            adapter="coding",
+            artifact="codebase",
+        ),
+    )
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="The generated text is too verbose.",
+                hints=["Shorten the generated text."],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="concise now"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE,
+                rationale="The generated text is too verbose.",
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 2
+    assert "REQUIRED REVISION" in prompts[1]
+    assert "too verbose" in prompts[1]
+
+
+async def test_generic_verbose_feedback_without_contract_grounding_fails() -> None:
+    """Generic verbosity feedback without contract support is rejected as ungrounded."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="The generated text is too verbose.",
+            hints=["Make it less verbose."],
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE,
+            rationale="The generated text is too verbose.",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "ungrounded generic feedback" in (result.error or "")
+    assert len(prompts) == 1
+
+
+async def test_missing_file_feedback_remains_valid_revision() -> None:
+    """Grounded missing-file feedback still becomes a normal revision request."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="The required src/app.py file is missing from the worktree.",
+                revision_items=[
+                    RevisionItem(
+                        required_change="Create src/app.py with the requested implementation.",
+                        rationale="The worktree evidence lacks the required file.",
+                    )
+                ],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="file exists"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE,
+                rationale="The required src/app.py file is missing from the worktree.",
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 2
+    assert "1. Required change: Create src/app.py" in prompts[1]
+
+
 async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> None:
     """Reviewer-quoted invariant contract text is not duplicated in REQUIRED REVISION."""
     plugin_guidance = "Language plugin guidance:\n" + "\n".join(

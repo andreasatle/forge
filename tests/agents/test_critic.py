@@ -238,6 +238,10 @@ async def test_critic_prompt_includes_canonical_contract_and_scope_boundary() ->
     assert "Language: python" in prompt
     assert "Do not revise or reject for unstated ideals" in prompt
     assert "improvements outside the contract" in prompt
+    assert "Ground every non-ACCEPT finding" in prompt
+    assert "files, tests, git status/diff, or worktree evidence" in prompt
+    assert "Do not give generic essay, argument, verbosity, style, or writing feedback" in prompt
+    assert "For coding work, revision_items must reference files" in prompt
 
 
 async def test_critic_prompt_treats_plugin_guidance_as_binding_contract() -> None:

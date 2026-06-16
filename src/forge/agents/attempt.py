@@ -32,6 +32,7 @@ from forge.core.models import (
     TaskSpec,
     WorkDecision,
     WorkOutput,
+    WorkSpec,
 )
 from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import run_git
@@ -63,6 +64,48 @@ _NO_WORKTREE_CHANGE_PHRASES = (
     "produced no file changes",
     "did not change any files",
     "didn't change any files",
+)
+_GENERIC_UNGROUNDED_FEEDBACK_PHRASES = (
+    "argument needs more supporting evidence",
+    "needs more supporting evidence",
+    "generated text is too verbose",
+    "text is too verbose",
+    "too verbose",
+    "focus on requested information",
+    "code lacks proper error handling",
+    "lacks proper error handling",
+)
+_GROUNDING_TERMS = (
+    "acceptance criterion",
+    "criterion",
+    "contract",
+    "worktree",
+    "git status",
+    "git diff",
+    "diff",
+    "file",
+    "files",
+    "test",
+    "tests",
+    "pyproject.toml",
+    "src/",
+    "src.",
+    ".py",
+    ".md",
+    ".toml",
+    ".yaml",
+    ".yml",
+    "dependency",
+    "dependencies",
+)
+_STYLE_CONTRACT_TERMS = (
+    "argument",
+    "supporting evidence",
+    "verbose",
+    "verbosity",
+    "concise",
+    "style",
+    "error handling",
 )
 
 
@@ -368,6 +411,91 @@ def _claimed_work_has_no_worktree_changes(output: object, validator: object) -> 
     )
 
 
+def _contract_text(request: AgentRequest) -> str:
+    contract = request.spec.contract
+    parts = [
+        contract.objective,
+        contract.success_condition,
+        *(criterion.text for criterion in contract.acceptance_criteria),
+        *contract.constraints,
+        *contract.non_goals,
+    ]
+    return " ".join(parts).lower()
+
+
+def _review_feedback_text(
+    finding: object,
+    decision: object | None = None,
+) -> str:
+    values: list[str] = []
+    for review in (finding, decision):
+        if review is None:
+            continue
+        rationale = getattr(review, "rationale", None)
+        if isinstance(rationale, str):
+            values.append(rationale)
+        hints = getattr(review, "hints", None)
+        if isinstance(hints, list):
+            hint_values = cast("list[object]", hints)
+            values.extend(hint for hint in hint_values if isinstance(hint, str))
+        revision_items = getattr(review, "revision_items", None)
+        if isinstance(revision_items, list):
+            item_values = cast("list[object]", revision_items)
+            for item in item_values:
+                criterion_id = getattr(item, "criterion_id", None)
+                required_change = getattr(item, "required_change", None)
+                rationale = getattr(item, "rationale", None)
+                if isinstance(criterion_id, str):
+                    values.append(criterion_id)
+                if isinstance(required_change, str):
+                    values.append(required_change)
+                if isinstance(rationale, str):
+                    values.append(rationale)
+    return " ".join(value for value in values if value).lower()
+
+
+def _feedback_has_grounding(feedback: str) -> bool:
+    return any(term in feedback for term in _GROUNDING_TERMS)
+
+
+def _contract_allows_generic_feedback(request: AgentRequest, feedback: str) -> bool:
+    contract = _contract_text(request)
+    return any(term in feedback and term in contract for term in _STYLE_CONTRACT_TERMS)
+
+
+def _is_ungrounded_generic_feedback(
+    request: AgentRequest,
+    validator: object,
+    finding: object,
+    decision: object | None = None,
+) -> bool:
+    if not isinstance(validator, WorkOutputValidator):
+        return False
+    if not isinstance(request.spec, WorkSpec):
+        return False
+    feedback = _review_feedback_text(finding, decision)
+    if not any(phrase in feedback for phrase in _GENERIC_UNGROUNDED_FEEDBACK_PHRASES):
+        return False
+    if _feedback_has_grounding(feedback):
+        return False
+    return not _contract_allows_generic_feedback(request, feedback)
+
+
+def _ungrounded_validation_feedback_response(
+    request: AgentRequest,
+    output_noun: str,
+) -> AgentResponse:
+    return AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.FAILED,
+        error=(
+            f"validation produced ungrounded generic feedback for {output_noun}; "
+            "review feedback must cite the AgentRequest contract or supplied worktree evidence"
+        ),
+        failure_kind=FailureKind.VALIDATION_REJECTED,
+    )
+
+
 class AttemptLifecycle[T]:
     """Owner of producer/critic/referee execution for work and plan agents."""
 
@@ -609,6 +737,18 @@ class AttemptLifecycle[T]:
                     history = history.append(revision_request)
                     self._telemetry.revision_appended(attempt_number, revision_request)
                     continue
+                if _is_ungrounded_generic_feedback(
+                    self._request, self._validator, finding, decision
+                ):
+                    _logger.warning(
+                        "attempt %d/%d: validation rejected with ungrounded generic feedback",
+                        attempt_number,
+                        self._max_attempts,
+                    )
+                    return _ungrounded_validation_feedback_response(
+                        self._request,
+                        self._validator.work_noun(),
+                    )
                 return _validation_rejected_response(
                     self._request,
                     decision.disposition,
@@ -625,6 +765,17 @@ class AttemptLifecycle[T]:
                 return AgentResponse(
                     request_id=self._request.id,
                     status=ResponseStatus.DECOMPOSE,
+                )
+
+            if _is_ungrounded_generic_feedback(self._request, self._validator, finding, decision):
+                _logger.warning(
+                    "attempt %d/%d: validation revised with ungrounded generic feedback",
+                    attempt_number,
+                    self._max_attempts,
+                )
+                return _ungrounded_validation_feedback_response(
+                    self._request,
+                    self._validator.work_noun(),
                 )
 
             history = history.append_from_review(

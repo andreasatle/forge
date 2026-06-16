@@ -292,6 +292,10 @@ async def test_referee_prompt_includes_canonical_contract_and_scope_boundary() -
     assert "Language: python" in prompt
     assert "Out-of-scope ideals are not grounds for rejection" in prompt
     assert "outside the contract" in prompt
+    assert "Ground every non-ACCEPT disposition" in prompt
+    assert "files, tests, git status/diff, or worktree evidence" in prompt
+    assert "Do not use generic essay, argument, verbosity, style, or writing feedback" in prompt
+    assert "For coding work, revision_items must reference files" in prompt
 
 
 async def test_referee_can_override_critic_revision_items_that_contradict_plugin_guidance() -> None:

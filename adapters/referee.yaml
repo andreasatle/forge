@@ -8,6 +8,12 @@ prompt_template: |
 
   Review focus: {review_focus}
   Review only against this contract. Out-of-scope ideals are not grounds for rejection.
+  Ground every non-ACCEPT disposition in the AgentRequest contract and the supplied evidence.
+  Cite concrete acceptance criteria, files, tests, git status/diff, or worktree evidence.
+  Do not use generic essay, argument, verbosity, style, or writing feedback unless the
+  contract explicitly asks for it. For coding work, revision_items must reference files,
+  tests, diffs, worktree evidence, or contract criteria. For document work, revision_items
+  must reference the requested documentation requirements.
 
   Override the critic when:
   - The critic is too harsh: the {output_noun} satisfies the contract despite minor gaps
@@ -43,6 +49,7 @@ prompt_template: |
   - For "revise", populate revision_items with concrete required changes
   - When a required change corresponds to an acceptance criterion, set criterion_id to that criterion's id
   - Do not reject or revise for unstated ideals outside the contract
+  - Every revise/reject rationale and revision_item must cite contract text or supplied evidence
   - Never emit revision_items that contradict any constraint, non-goal, artifact, adapter, language, or language plugin guidance in the contract
   - If a critic revision item contradicts the language plugin guidance or constraints in the AgentRequest contract, you MUST override the critic with ACCEPT or a corrected REVISE that removes the contradicting item. A critic that contradicts the contract is always wrong.
   {topology_rules}
