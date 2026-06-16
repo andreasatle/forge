@@ -35,6 +35,10 @@ from forge.core.profile_assignment import (
     ProfileAssigner,
     ProfileAssignmentResult,
 )
+from forge.core.profile_escalation import (
+    NoProfileEscalationPolicy,
+    ProfileEscalationPolicy,
+)
 from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
@@ -138,12 +142,14 @@ class SchedulerConsequenceHandler:
         run_id: UUID | None = None,
         state_services: dict[str, StateService] | None = None,
         profile_assigner: ProfileAssigner | None = None,
+        profile_escalation_policy: ProfileEscalationPolicy | None = None,
     ) -> None:
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
         self._state_services = state_services or {}
         self._profile_assigner = profile_assigner or DefaultProfileAssigner()
+        self._profile_escalation_policy = profile_escalation_policy or NoProfileEscalationPolicy()
 
     async def apply(
         self,
@@ -511,9 +517,41 @@ class SchedulerConsequenceHandler:
         outcome_kind: TerminalOutcomeKind = TerminalOutcomeKind.TERMINAL_FAILURE,
     ) -> SchedulerState:
         _ = outcome_kind
+        if updated.response is not None:
+            retry = self._profile_escalation_retry_node(updated, updated.response)
+            if retry is not None:
+                state = state.add_nodes([retry])
+                state = self._transfer_dependents(state, updated.request.id, retry.request.id)
+                self._emit_profile_escalated(updated, retry)
+                return state
+
         self._emit_node_failed(updated)
         self._fire_node(self._callbacks.on_node_failed, updated)
         return self._cancel_dependents(state, updated.request.id)
+
+    def _profile_escalation_retry_node(
+        self,
+        node: DAGNode,
+        response: AgentResponse,
+    ) -> DAGNode | None:
+        next_profile = self._profile_escalation_policy.next_profile(node, response)
+        if next_profile is None:
+            return None
+
+        retry_request = AgentRequest(
+            agent_type=node.request.agent_type,
+            source=node.request.source,
+            spec=node.request.spec,
+            dependencies=node.request.dependencies,
+            model_profile=next_profile,
+        )
+        return DAGNode(
+            request=retry_request,
+            decomposition_depth=node.decomposition_depth,
+            retry_of=node.request.id,
+            profile_escalation_attempt=node.profile_escalation_attempt + 1,
+            prior_profiles=(*node.prior_profiles, node.request.model_profile),
+        )
 
     def _transfer_dependents(
         self,
@@ -649,6 +687,39 @@ class SchedulerConsequenceHandler:
                 ),
             )
 
+    def _emit_profile_escalated(self, failed: DAGNode, retry: DAGNode) -> None:
+        if self._run_id is None:
+            return
+        response = failed.response
+        reason = response.failure_kind.value if response and response.failure_kind else None
+        error = response.error if response else None
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=retry.request.id,
+                request_id=retry.request.id,
+                agent_type=retry.request.agent_type.value,
+                role="scheduler",
+                phase="routing",
+                event_type="node.profile_escalated",
+                status="retry",
+                summary=(
+                    f"worker profile escalated from {failed.request.model_profile!r} "
+                    f"to {retry.request.model_profile!r}"
+                ),
+                data={
+                    "failed_node_id": str(failed.request.id),
+                    "retry_node_id": str(retry.request.id),
+                    "old_profile": failed.request.model_profile,
+                    "new_profile": retry.request.model_profile,
+                    "reason": reason,
+                    "error": error,
+                    "attempt": retry.profile_escalation_attempt,
+                },
+            ),
+        )
+
     def emit_node_dispatched(self, node: DAGNode) -> None:
         """Emit node.dispatched with the node's contract so traces expose planner intent."""
         if self._run_id is None:
@@ -731,6 +802,7 @@ class Scheduler:
         run_id: UUID | None = None,
         state_services: dict[str, StateService] | None = None,
         profile_assigner: ProfileAssigner | None = None,
+        profile_escalation_policy: ProfileEscalationPolicy | None = None,
     ) -> None:
         self._runner = runner
         self._callbacks = callbacks or SchedulerCallbacks()
@@ -740,6 +812,7 @@ class Scheduler:
             run_id=run_id,
             state_services=state_services,
             profile_assigner=profile_assigner,
+            profile_escalation_policy=profile_escalation_policy,
         )
 
     async def run(

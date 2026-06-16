@@ -10,24 +10,25 @@ models:
     producer: claude/claude-haiku-4-5
     critic: claude/claude-haiku-4-5
     referee: claude/claude-haiku-4-5
+    max_attempts: 3
 
   worker:
-    producer: openai/gpt-4o-mini
-    critic: openai/gpt-4o-mini
-    referee: openai/gpt-4o-mini
+    producer: ollama/qwen2.5-coder:14b
+    critic: ollama/gemma4:e4b
+    referee: ollama/gemma4:e4b
     max_attempts: 5
 
   worker_profiles:
     fast:
-      producer: claude/claude-haiku-4-5
-      critic: null
-      referee: null
+      producer: ollama/qwen2.5-coder:7b
+      critic: ollama/gemma3:latest
+      referee: ollama/gemma3:latest
       max_attempts: 2
 
     strong:
-      producer: openai/gpt-4o-mini
-      critic: openai/gpt-4o-mini
-      referee: openai/gpt-4o-mini
+      producer: ollama/qwen2.5-coder:14b
+      critic: ollama/gemma4:26b
+      referee: ollama/gemma4:26b
       max_attempts: 5
 
   complexity_classifier:
@@ -36,8 +37,7 @@ models:
     complexity_to_profile:
       easy: fast
       medium: default
-      hard: strong
-artifacts:
+      hard: strongartifacts:
   - name: codebase
     type: coding
     language: python

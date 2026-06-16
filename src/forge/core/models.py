@@ -515,6 +515,9 @@ class DAGNode(BaseModel):
     node_state: NodeState = NodeState.PENDING
     response: AgentResponse | None = None
     decomposition_depth: int = 0
+    retry_of: RequestId | None = None
+    profile_escalation_attempt: int = 0
+    prior_profiles: tuple[str, ...] = ()
 
     def with_state(self, node_state: NodeState) -> "DAGNode":
         """Return a copy of this node with the given node_state."""

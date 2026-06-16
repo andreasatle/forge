@@ -30,6 +30,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.profile_assignment import ProfileAssignmentResult
+from forge.core.profile_escalation import StaticProfileEscalationPolicy
 from forge.core.scheduler import (
     Scheduler,
     SchedulerCallbacks,
@@ -111,7 +112,11 @@ def _plan_request() -> AgentRequest:
     )
 
 
-def _work_request(*, deps: frozenset[RequestId] = frozenset()) -> AgentRequest:
+def _work_request(
+    *,
+    deps: frozenset[RequestId] = frozenset(),
+    model_profile: str = "default",
+) -> AgentRequest:
     return AgentRequest(
         agent_type=AgentType.WORK,
         source=RequestSource.PLANNER,
@@ -122,6 +127,7 @@ def _work_request(*, deps: frozenset[RequestId] = frozenset()) -> AgentRequest:
             artifact="codebase",
         ),
         dependencies=deps,
+        model_profile=model_profile,
     )
 
 
@@ -141,6 +147,14 @@ def _already_done(request: AgentRequest) -> AgentResponse:
     return AgentResponse(
         request_id=request.id,
         status=ResponseStatus.ALREADY_DONE,
+    )
+
+
+def _profile_escalation_policy(max_escalations: int = 2) -> StaticProfileEscalationPolicy:
+    return StaticProfileEscalationPolicy(
+        profile_chain=("fast", "default", "strong"),
+        escalatable_failures=frozenset({FailureKind.MAX_ITERATIONS}),
+        max_escalations=max_escalations,
     )
 
 
@@ -289,6 +303,187 @@ async def test_failed_node_cancels_dependents() -> None:
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
     assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+
+
+async def test_max_iterations_work_failure_creates_profile_retry_node() -> None:
+    """A configured MAX_ITERATIONS worker failure creates a stronger-profile retry node."""
+    work = _work_request(model_profile="fast")
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.model_profile == "fast":
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.MAX_ITERATIONS,
+                error="agent loop exceeded 25 iterations",
+            )
+        return _ok(request)
+
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    final = await Scheduler(
+        runner=runner,
+        profile_escalation_policy=_profile_escalation_policy(),
+    ).run(state)
+
+    original = final.dag[work.id]
+    retries = [node for node in final.dag.values() if node.retry_of == work.id]
+
+    assert original.node_state == NodeState.FAILED
+    assert original.response is not None
+    assert original.response.failure_kind == FailureKind.MAX_ITERATIONS
+    assert len(retries) == 1
+    retry = retries[0]
+    assert retry.node_state == NodeState.INTEGRATED
+    assert retry.request.model_profile == "default"
+    assert retry.profile_escalation_attempt == 1
+    assert retry.prior_profiles == ("fast",)
+
+
+async def test_profile_retry_preserves_contract_and_dependencies() -> None:
+    """A profile retry keeps the same WorkSpec contract and original dependencies."""
+    prerequisite = _work_request()
+    prerequisite_node = DAGNode(request=prerequisite).with_response(_already_done(prerequisite))
+    work = _work_request(deps=frozenset({prerequisite.id}), model_profile="fast")
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.MAX_ITERATIONS,
+                error="agent loop exceeded 25 iterations",
+            )
+        return _ok(request)
+
+    state = _base_state().add_nodes([prerequisite_node, DAGNode(request=work)])
+    final = await Scheduler(
+        runner=runner,
+        profile_escalation_policy=_profile_escalation_policy(),
+    ).run(state)
+
+    retry = next(node for node in final.dag.values() if node.retry_of == work.id)
+    assert retry.request.id != work.id
+    assert retry.request.source == work.source
+    assert retry.request.spec == work.spec
+    assert retry.request.dependencies == work.dependencies
+    assert retry.request.dependencies == frozenset({prerequisite.id})
+
+
+async def test_profile_retry_transfers_dependents_without_cancelling() -> None:
+    """Pending dependents are repointed to the retry node and are not cancelled."""
+    work_a = _work_request(model_profile="fast")
+    work_b = _work_request(deps=frozenset({work_a.id}))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.MAX_ITERATIONS,
+                error="agent loop exceeded 25 iterations",
+            )
+        return _ok(request)
+
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+    final = await Scheduler(
+        runner=runner,
+        profile_escalation_policy=_profile_escalation_policy(),
+    ).run(state)
+
+    retry = next(node for node in final.dag.values() if node.retry_of == work_a.id)
+    dependent = final.dag[work_b.id]
+    assert dependent.node_state == NodeState.INTEGRATED
+    assert dependent.request.dependencies == frozenset({retry.request.id})
+
+
+async def test_final_profile_max_iterations_failure_cancels_dependents() -> None:
+    """A MAX_ITERATIONS failure at the final profile is terminal."""
+    work_a = _work_request(model_profile="strong")
+    work_b = _work_request(deps=frozenset({work_a.id}))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.MAX_ITERATIONS,
+                error="agent loop exceeded 25 iterations",
+            )
+        return _ok(request)
+
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+    final = await Scheduler(
+        runner=runner,
+        profile_escalation_policy=_profile_escalation_policy(),
+    ).run(state)
+
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+    assert all(node.retry_of != work_a.id for node in final.dag.values())
+
+
+async def test_disabled_profile_escalation_preserves_failure_behavior() -> None:
+    """Without an escalation policy, MAX_ITERATIONS remains terminal."""
+    work_a = _work_request(model_profile="fast")
+    work_b = _work_request(deps=frozenset({work_a.id}))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work_a.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.MAX_ITERATIONS,
+                error="agent loop exceeded 25 iterations",
+            )
+        return _ok(request)
+
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+    final = await Scheduler(runner=runner).run(state)
+
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+    assert all(node.retry_of != work_a.id for node in final.dag.values())
+
+
+async def test_profile_escalation_emits_telemetry() -> None:
+    """Scheduler emits node.profile_escalated with profile and reason metadata."""
+    work = _work_request(model_profile="fast")
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == work.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.MAX_ITERATIONS,
+                error="agent loop exceeded 25 iterations",
+            )
+        return _ok(request)
+
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    final = await Scheduler(
+        runner=runner,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+        profile_escalation_policy=_profile_escalation_policy(),
+    ).run(state)
+
+    retry = next(node for node in final.dag.values() if node.retry_of == work.id)
+    events = [event for event in sink.events if event.event_type == "node.profile_escalated"]
+    assert len(events) == 1
+    event = events[0]
+    assert event.run_id == sink.run_id
+    assert event.node_id == retry.request.id
+    assert event.request_id == retry.request.id
+    assert event.role == "scheduler"
+    assert event.phase == "routing"
+    assert event.data["failed_node_id"] == str(work.id)
+    assert event.data["retry_node_id"] == str(retry.request.id)
+    assert event.data["old_profile"] == "fast"
+    assert event.data["new_profile"] == "default"
+    assert event.data["reason"] == "max_iterations"
+    assert event.data["error"] == "agent loop exceeded 25 iterations"
+    assert event.data["attempt"] == 1
 
 
 async def test_scheduler_emits_node_failed_telemetry() -> None:
