@@ -973,7 +973,7 @@ async def test_typed_post_merge_test_failure_creates_retry_node() -> None:
     final = await Scheduler(
         runner=runner,
         state_services={"codebase": state_service},  # type: ignore[dict-item]
-        max_integration_test_retries=1,
+        max_post_merge_test_retries=1,
     ).run(state)
 
     original = final.dag[work.id]
@@ -984,7 +984,7 @@ async def test_typed_post_merge_test_failure_creates_retry_node() -> None:
     assert len(retries) == 1
     retry = retries[0]
     assert retry.request.model_profile == "fast"
-    assert retry.integration_retry_attempt == 1
+    assert retry.post_merge_retry_attempt == 1
     assert retry.request.initial_revision is not None
     assert "FAILED tests/test_app.py::test_app" in retry.request.initial_revision.rationale
 
@@ -1008,7 +1008,7 @@ async def test_post_merge_test_retry_preserves_contract_and_dependencies() -> No
     final = await Scheduler(
         runner=runner,
         state_services={"codebase": state_service},  # type: ignore[dict-item]
-        max_integration_test_retries=1,
+        max_post_merge_test_retries=1,
     ).run(state)
 
     retry = next(node for node in final.dag.values() if node.retry_of == work.id)
@@ -1037,7 +1037,7 @@ async def test_post_merge_test_retry_transfers_dependents_without_cancelling() -
     final = await Scheduler(
         runner=runner,
         state_services={"codebase": state_service},  # type: ignore[dict-item]
-        max_integration_test_retries=1,
+        max_post_merge_test_retries=1,
     ).run(state)
 
     retry = next(node for node in final.dag.values() if node.retry_of == work_a.id)
@@ -1061,7 +1061,7 @@ async def test_post_merge_test_retry_exhaustion_cancels_dependents() -> None:
     final = await Scheduler(
         runner=runner,
         state_services={"codebase": state_service},  # type: ignore[dict-item]
-        max_integration_test_retries=0,
+        max_post_merge_test_retries=0,
     ).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
@@ -1082,7 +1082,7 @@ async def test_non_test_integration_failure_remains_terminal() -> None:
     final = await Scheduler(
         runner=runner,
         state_services={"codebase": state_service},  # type: ignore[dict-item]
-        max_integration_test_retries=1,
+        max_post_merge_test_retries=1,
     ).run(state)
 
     assert final.dag[work_a.id].node_state == NodeState.FAILED
@@ -1090,7 +1090,7 @@ async def test_non_test_integration_failure_remains_terminal() -> None:
     assert all(node.retry_of != work_a.id for node in final.dag.values())
 
 
-async def test_integration_revision_requested_telemetry_contains_bounded_output() -> None:
+async def test_post_merge_revision_requested_telemetry_contains_bounded_output() -> None:
     """Post-merge test retry telemetry includes bounded test output and retry metadata."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -1108,12 +1108,12 @@ async def test_integration_revision_requested_telemetry_contains_bounded_output(
         telemetry_sink=sink,
         run_id=sink.run_id,
         state_services={"codebase": state_service},  # type: ignore[dict-item]
-        max_integration_test_retries=1,
+        max_post_merge_test_retries=1,
     ).run(state)
 
     retry = next(node for node in final.dag.values() if node.retry_of == work.id)
     events = [
-        event for event in sink.events if event.event_type == "node.integration_revision_requested"
+        event for event in sink.events if event.event_type == "node.post_merge_revision_requested"
     ]
     assert len(events) == 1
     event = events[0]

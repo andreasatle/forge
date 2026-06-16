@@ -159,7 +159,7 @@ class SchedulerConsequenceHandler:
         state_services: dict[str, StateService] | None = None,
         profile_assigner: ProfileAssigner | None = None,
         profile_escalation_policy: ProfileEscalationPolicy | None = None,
-        max_integration_test_retries: int = 0,
+        max_post_merge_test_retries: int = 0,
     ) -> None:
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
@@ -167,7 +167,7 @@ class SchedulerConsequenceHandler:
         self._state_services = state_services or {}
         self._profile_assigner = profile_assigner or DefaultProfileAssigner()
         self._profile_escalation_policy = profile_escalation_policy or NoProfileEscalationPolicy()
-        self._max_integration_test_retries = max_integration_test_retries
+        self._max_post_merge_test_retries = max_post_merge_test_retries
 
     async def apply(
         self,
@@ -471,7 +471,7 @@ class SchedulerConsequenceHandler:
             return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
         state = state.add_nodes([retry])
         state = self._transfer_dependents(state, failed.request.id, retry.request.id)
-        self._emit_integration_revision_requested(failed, retry, error)
+        self._emit_post_merge_revision_requested(failed, retry, error)
         return state
 
     def _post_merge_test_retry_node(
@@ -481,9 +481,9 @@ class SchedulerConsequenceHandler:
     ) -> DAGNode | None:
         if node.request.agent_type is not AgentType.WORK:
             return None
-        if node.integration_retry_attempt >= self._max_integration_test_retries:
+        if node.post_merge_retry_attempt >= self._max_post_merge_test_retries:
             return None
-        revision = self._post_merge_test_revision(error, node.integration_retry_attempt + 1)
+        revision = self._post_merge_test_revision(error, node.post_merge_retry_attempt + 1)
         retry_request = AgentRequest(
             agent_type=node.request.agent_type,
             source=node.request.source,
@@ -497,7 +497,7 @@ class SchedulerConsequenceHandler:
             decomposition_depth=node.decomposition_depth,
             retry_of=node.request.id,
             profile_escalation_attempt=node.profile_escalation_attempt,
-            integration_retry_attempt=node.integration_retry_attempt + 1,
+            post_merge_retry_attempt=node.post_merge_retry_attempt + 1,
             prior_profiles=node.prior_profiles,
         )
 
@@ -820,7 +820,7 @@ class SchedulerConsequenceHandler:
             ),
         )
 
-    def _emit_integration_revision_requested(
+    def _emit_post_merge_revision_requested(
         self,
         failed: DAGNode,
         retry: DAGNode,
@@ -839,7 +839,7 @@ class SchedulerConsequenceHandler:
                 agent_type=retry.request.agent_type.value,
                 role="scheduler",
                 phase="scheduler",
-                event_type="node.integration_revision_requested",
+                event_type="node.post_merge_revision_requested",
                 status="retry",
                 summary="post-merge tests failed; retry requested",
                 data={
@@ -849,7 +849,7 @@ class SchedulerConsequenceHandler:
                     "reason": "test_failed",
                     "test_summary": error.summary,
                     "test_output_excerpt": error.output_excerpt,
-                    "attempt": retry.integration_retry_attempt,
+                    "attempt": retry.post_merge_retry_attempt,
                 },
             ),
         )
@@ -937,7 +937,7 @@ class Scheduler:
         state_services: dict[str, StateService] | None = None,
         profile_assigner: ProfileAssigner | None = None,
         profile_escalation_policy: ProfileEscalationPolicy | None = None,
-        max_integration_test_retries: int = 0,
+        max_post_merge_test_retries: int = 0,
     ) -> None:
         self._runner = runner
         self._callbacks = callbacks or SchedulerCallbacks()
@@ -948,7 +948,7 @@ class Scheduler:
             state_services=state_services,
             profile_assigner=profile_assigner,
             profile_escalation_policy=profile_escalation_policy,
-            max_integration_test_retries=max_integration_test_retries,
+            max_post_merge_test_retries=max_post_merge_test_retries,
         )
 
     async def run(
