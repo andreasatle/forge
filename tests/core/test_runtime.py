@@ -24,6 +24,7 @@ from forge.core.models import (
     RequestSource,
     ResponseStatus,
     SchedulerState,
+    WorkDecision,
     WorkSpec,
 )
 from forge.core.profile_assignment import ComplexityProfileAssigner, DefaultProfileAssigner
@@ -36,9 +37,13 @@ from forge.core.telemetry import TelemetrySink
 class _FakeProvider:
     """Minimal provider stand-in that records the configured producer string."""
 
-    def __init__(self, producer: str) -> None:
+    def __init__(self, producer: str, response: str = "") -> None:
         self.producer = producer
         self.max_tokens = 8192
+        self.response = response
+
+    async def chat(self, messages: object) -> str:
+        return self.response
 
 
 def _fake_make_provider(model: str, max_tokens: int) -> _FakeProvider:
@@ -223,6 +228,60 @@ async def test_runtime_scheduler_receives_profile_assigner(
     await ForgeRuntime(_config_with_classifier(tmp_path)).start()
 
     assert isinstance(captured_assigners[0], ComplexityProfileAssigner)
+
+
+async def test_runtime_completes_with_failed_state_when_classifier_output_is_invalid(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Invalid classifier output fails the plan node without raising out of runtime."""
+
+    def fake_make_provider(model: str, max_tokens: int) -> _FakeProvider:
+        return _FakeProvider(model, response="not json")
+
+    def fake_make_plan_handler(
+        *args: object, **kwargs: object
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        async def handler(request: AgentRequest) -> AgentResponse:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkDecision(
+                    task=WorkSpec(
+                        objective="implement parser",
+                        success_condition="tests pass",
+                        adapter="coding",
+                        artifact="codebase",
+                    )
+                ),
+            )
+
+        return handler
+
+    def fake_make_work_handler(
+        *args: object, **kwargs: object
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        async def handler(request: AgentRequest) -> AgentResponse:
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+        return handler
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.make_plan_handler", fake_make_plan_handler)
+    monkeypatch.setattr("forge.core.runtime.make_work_handler", fake_make_work_handler)
+
+    result = await ForgeRuntime(_config_with_classifier(tmp_path)).start()
+
+    plan_node = next(
+        node
+        for node in result.final_state.dag.values()
+        if node.request.agent_type is AgentType.PLAN
+    )
+    assert plan_node.node_state == NodeState.FAILED
+    assert plan_node.response is not None
+    assert (
+        plan_node.response.error
+        == "profile assignment failed: invalid task complexity JSON: Expecting value"
+    )
 
 
 async def test_runtime_creates_telemetry_sink(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

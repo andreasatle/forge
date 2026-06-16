@@ -90,6 +90,16 @@ class _FixedProfileAssigner:
         return self.result
 
 
+class _RaisingProfileAssigner:
+    """Profile assigner fake that raises during plan expansion."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    async def assign(self, request: AgentRequest) -> str:
+        raise self.error
+
+
 # --- Helpers ---
 
 
@@ -2289,3 +2299,114 @@ async def test_profile_assignment_still_works_when_telemetry_sink_absent() -> No
     )
     assert work_node.request.model_profile == "fast"
     assert work_node.node_state == NodeState.INTEGRATED
+
+
+async def test_profile_assignment_failure_marks_parent_plan_failed_without_crashing() -> None:
+    """Profile assignment errors during accepted plan expansion become scheduler failures."""
+    planner = _plan_request()
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        profile_assigner=_RaisingProfileAssigner(
+            ValueError("invalid task complexity JSON: Expecting value")
+        ),
+    ).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    plan_node = final.dag[planner.id]
+    assert plan_node.node_state == NodeState.FAILED
+    assert plan_node.response is not None
+    assert plan_node.response.status == ResponseStatus.FAILED
+    assert plan_node.response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert (
+        plan_node.response.error
+        == "profile assignment failed: invalid task complexity JSON: Expecting value"
+    )
+
+
+async def test_profile_assignment_failure_cancels_existing_dependents() -> None:
+    """Profile assignment failures reuse normal failed-node dependent cancellation."""
+    planner = _plan_request()
+    dependent = _work_request(deps=frozenset({planner.id}))
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        profile_assigner=_RaisingProfileAssigner(
+            ValueError("invalid task complexity JSON: Expecting value")
+        ),
+    ).run(_base_state().add_nodes([DAGNode(request=planner), DAGNode(request=dependent)]))
+
+    assert final.dag[planner.id].node_state == NodeState.FAILED
+    assert final.dag[dependent.id].node_state == NodeState.CANCELLED
+
+
+async def test_profile_assignment_failure_error_does_not_include_task_metadata() -> None:
+    """Profile assignment failure diagnostics do not include full work task metadata."""
+    planner = _plan_request()
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="use SECRET_FAKE_FILE_CONTENT to implement parser",
+            success_condition="tests pass with StateView(files=[...])",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        profile_assigner=_RaisingProfileAssigner(
+            ValueError("invalid task complexity JSON: Expecting value")
+        ),
+    ).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    response = final.dag[planner.id].response
+    assert response is not None
+    assert response.error is not None
+    assert "profile assignment failed" in response.error
+    assert "invalid task complexity JSON: Expecting value" in response.error
+    assert "SECRET_FAKE_FILE_CONTENT" not in response.error
+    assert "StateView(files=[...])" not in response.error
+    assert "objective" not in response.error
+    assert "success_condition" not in response.error

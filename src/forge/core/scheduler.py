@@ -25,7 +25,11 @@ from forge.core.models import (
     WorkOutput,
     WorkSpec,
 )
-from forge.core.plan_expansion import DecompositionConvergenceError, PlanExpansionBuilder
+from forge.core.plan_expansion import (
+    DecompositionConvergenceError,
+    PlanExpansionBuilder,
+    ProfileAssignmentError,
+)
 from forge.core.profile_assignment import (
     DefaultProfileAssigner,
     ProfileAssigner,
@@ -175,6 +179,23 @@ class SchedulerConsequenceHandler:
                     exc,
                 )
                 self._emit_convergence_failure(node, str(exc))
+                failed_response = AgentResponse(
+                    request_id=node.request.id,
+                    status=ResponseStatus.FAILED,
+                    failure_kind=FailureKind.VALIDATION_REJECTED,
+                    error=str(exc),
+                )
+                failed_updated = current.with_response(failed_response)
+                state = state.update_node(failed_updated)
+                return self._handle_failed(
+                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                )
+            except ProfileAssignmentError as exc:
+                logger.warning(
+                    "profile assignment failed for plan node %s: %s",
+                    node.request.id,
+                    exc,
+                )
                 failed_response = AgentResponse(
                     request_id=node.request.id,
                     status=ResponseStatus.FAILED,

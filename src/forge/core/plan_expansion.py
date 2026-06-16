@@ -27,6 +27,17 @@ class DecompositionConvergenceError(ValueError):
     """Raised when a decomposition decision fails semantic convergence checks."""
 
 
+class ProfileAssignmentError(ValueError):
+    """Raised when assigning a model profile during plan expansion fails."""
+
+
+def _profile_assignment_error_message(error: Exception, limit: int = 240) -> str:
+    detail = " ".join(str(error).split()) or type(error).__name__
+    if len(detail) > limit:
+        detail = detail[: limit - 3].rstrip() + "..."
+    return f"profile assignment failed: {detail}"
+
+
 class DecompositionConvergenceValidator:
     """Validates that decomposition decisions are reductive relative to their parent.
 
@@ -91,7 +102,10 @@ class PlanExpansionBuilder:
         self.profile_assignment_results: dict[RequestId, ProfileAssignmentResult] = {}
 
     async def _assign_work_profile(self, request: AgentRequest) -> AgentRequest:
-        result = await assign_profile_with_metadata(self.profile_assigner, request)
+        try:
+            result = await assign_profile_with_metadata(self.profile_assigner, request)
+        except Exception as exc:
+            raise ProfileAssignmentError(_profile_assignment_error_message(exc)) from exc
         assigned = request.model_copy(update={"model_profile": result.model_profile})
         self.profile_assignment_results[assigned.id] = result
         return assigned

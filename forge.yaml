@@ -10,11 +10,33 @@ models:
     producer: claude/claude-haiku-4-5
     critic: claude/claude-haiku-4-5
     referee: claude/claude-haiku-4-5
+
   worker:
     producer: openai/gpt-4o-mini
     critic: openai/gpt-4o-mini
     referee: openai/gpt-4o-mini
     max_attempts: 5
+
+  worker_profiles:
+    fast:
+      producer: claude/claude-haiku-4-5
+      critic: null
+      referee: null
+      max_attempts: 2
+
+    strong:
+      producer: openai/gpt-4o-mini
+      critic: openai/gpt-4o-mini
+      referee: openai/gpt-4o-mini
+      max_attempts: 5
+
+  complexity_classifier:
+    model: claude/claude-haiku-4-5
+    max_tokens: 512
+    complexity_to_profile:
+      easy: fast
+      medium: default
+      hard: strong
 artifacts:
   - name: codebase
     type: coding
