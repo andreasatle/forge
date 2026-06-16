@@ -200,24 +200,17 @@ _PlannerOutput = WorkDecision | GraphSplitDecision
 _DECOMPOSITION_TOPOLOGY_RULES = """\
 Decomposition topology rules (apply when reviewing split_graph or work decisions):
 
-For each split_graph decision, ask:
-- Are the depends_on edges minimal? Could any edge be removed without violating information flow?
+For each split_graph decision, validate:
 - Are the depends_on edges justified by real artifact or information flow?
   A downstream node must genuinely consume output produced by an upstream node.
-- Does the graph expose maximum safe concurrency?
-- Is any node waiting unnecessarily for another?
+- For tasks that can proceed independently, depends_on must be empty.
 
 Policy:
 - Use split_graph for any multi-task decomposition — independent, dependent, or mixed topology.
-- For tasks that can proceed independently, set depends_on to [] for every node.
 - A genuine ordering constraint is required to justify each depends_on edge.
   Convention, symmetry, and aesthetic balance are NOT ordering constraints.
-- Balanced trees are not a goal. An uneven tree that exposes more parallel work is preferred.
-- Maximize safe concurrency. When in doubt, remove edges.
 
-If a split_graph has unnecessary ordering edges, issue REVISE with this rationale:
-  "This graph introduces unnecessary ordering. Several child tasks can proceed independently.
-  Remove depends_on edges that lack genuine information flow justification."\
+If a split_graph has depends_on edges with no genuine information flow justification, issue REVISE.\
 """
 
 

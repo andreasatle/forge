@@ -1201,6 +1201,38 @@ async def test_planner_output_validator_review_context_is_contract_bounded() -> 
     assert "northstar goal" not in context.review_focus
 
 
+async def test_planner_output_validator_review_context_excludes_optimization_guidance() -> None:
+    """ReviewContext.topology_rules must not contain optimization preferences."""
+    context = PlannerOutputValidator().review_context()
+    rules = context.topology_rules
+
+    assert "Maximize safe concurrency" not in rules
+    assert "When in doubt" not in rules
+    assert "not a goal" not in rules
+    assert "more parallel work" not in rules
+
+
+async def test_planner_output_validator_review_context_includes_structural_validation() -> None:
+    """ReviewContext.topology_rules contains structural validation authority only."""
+    context = PlannerOutputValidator().review_context()
+    rules = context.topology_rules
+
+    assert "genuine ordering constraint" in rules
+    assert "information flow" in rules
+    assert "Convention, symmetry" in rules
+
+
+async def test_work_output_validator_review_context_has_no_topology_rules() -> None:
+    """WorkOutputValidator review context carries no topology rules — topology is planner-only."""
+    adapters_dir = Path(__file__).parents[2] / "adapters"
+    registry = AdapterRegistry()
+    registry.load(adapters_dir)
+    state_view = StateView(artifact_name="codebase", language=None, files=[], dependencies=[])
+    context = WorkOutputValidator(registry.get("coding"), state_view).review_context()
+
+    assert context.topology_rules == ""
+
+
 async def test_planner_output_validator_extracts_only_typed_output() -> None:
     """PlannerOutputValidator returns None when response has no WorkDecision/GraphSplitDecision."""
     request = _plan_request()

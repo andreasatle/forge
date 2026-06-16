@@ -278,8 +278,8 @@ async def test_critic_prompt_includes_decomposition_topology_rules_for_planner_o
     assert "real artifact or information flow" in prompt
     assert "genuine ordering constraint" in prompt
     assert "split_graph" in prompt
-    assert "Maximize safe concurrency" in prompt
-    assert "not a goal" in prompt
+    assert "Maximize safe concurrency" not in prompt
+    assert "not a goal" not in prompt
 
 
 async def test_critic_prompt_topology_rules_cover_all_required_criteria() -> None:
@@ -301,12 +301,11 @@ async def test_critic_prompt_topology_rules_cover_all_required_criteria() -> Non
 
     messages = provider.chat.call_args.args[0]
     prompt = messages[1]["content"]
-    # Checks that the required criteria questions are present
+    # Structural validation criteria only — no optimization preferences
     assert "independently" in prompt
     assert "ordering" in prompt
     assert "convention" in prompt or "symmetry" in prompt
-    assert "concurrency" in prompt
-    assert "unnecessary ordering" in prompt
+    assert "information flow" in prompt
 
 
 async def test_critic_prompt_excludes_topology_rules_for_work_output() -> None:
@@ -348,8 +347,30 @@ async def test_critic_prompt_includes_split_graph_topology_rules() -> None:
     prompt = messages[1]["content"]
     assert "split_graph" in prompt
     assert "depends_on" in prompt
-    assert "minimal" in prompt
-    assert "concurrency" in prompt
+    assert "information flow" in prompt
+
+
+async def test_review_context_topology_excludes_optimization_guidance() -> None:
+    """ReviewContext.topology_rules must not inject optimization preferences into critic/referee."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    context = PlannerOutputValidator().review_context()
+    rules = context.topology_rules
+    assert "Maximize safe concurrency" not in rules
+    assert "When in doubt" not in rules
+    assert "not a goal" not in rules
+    assert "more parallel work" not in rules
+
+
+async def test_review_context_topology_includes_structural_validation_rules() -> None:
+    """ReviewContext.topology_rules contains structural validation authority for planner output."""
+    from forge.agents.attempt import PlannerOutputValidator
+
+    context = PlannerOutputValidator().review_context()
+    rules = context.topology_rules
+    assert "genuine ordering constraint" in rules
+    assert "information flow" in rules
+    assert "Convention, symmetry" in rules
 
 
 async def test_critic_agent_retries_on_invalid_json() -> None:
