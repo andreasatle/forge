@@ -12,9 +12,9 @@ from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.agents.revisions import RevisionHistory
 from forge.core.file_filters import (
-    CRITIC_EVIDENCE_NOISE_DIRS,
-    CRITIC_EVIDENCE_NOISE_SUFFIXES,
-    NOISE_FILE_NAMES,
+    CRITIC_EVIDENCE_EXCLUDED_DIRS,
+    CRITIC_EVIDENCE_EXCLUDED_SUFFIXES,
+    EXCLUDED_FILE_NAMES,
 )
 from forge.core.models import (
     VALIDATION_EXHAUSTED_DIAGNOSTIC,
@@ -144,9 +144,9 @@ class WorkOutputValidator:
                 continue
             p = Path(path_str)
             if (
-                any(part in CRITIC_EVIDENCE_NOISE_DIRS for part in p.parts)
-                or p.name in NOISE_FILE_NAMES
-                or p.suffix in CRITIC_EVIDENCE_NOISE_SUFFIXES
+                any(part in CRITIC_EVIDENCE_EXCLUDED_DIRS for part in p.parts)
+                or p.name in EXCLUDED_FILE_NAMES
+                or p.suffix in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
             ):
                 continue
             paths.append(path_str)

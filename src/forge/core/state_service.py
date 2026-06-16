@@ -4,11 +4,11 @@ import subprocess
 from pathlib import Path
 
 from forge.core.file_filters import (
+    EXCLUDED_FILE_NAMES,
     GENERATED_ARTIFACT_DIRS,
     GENERATED_ARTIFACT_SUFFIXES,
-    NOISE_FILE_NAMES,
-    STATE_VIEW_NOISE_DIRS,
-    STATE_VIEW_NOISE_SUFFIXES,
+    STATE_VIEW_EXCLUDED_DIRS,
+    STATE_VIEW_EXCLUDED_SUFFIXES,
 )
 from forge.core.models import FileView, RunResult, StateView, WorkOutput
 from forge.core.workspace import Workspace, run_git
@@ -21,9 +21,9 @@ def _is_noise(path: Path, root: Path) -> bool:
     parts = path.relative_to(root).parts
     return (
         any(p.startswith(".") for p in parts)
-        or any(p in STATE_VIEW_NOISE_DIRS for p in parts)
-        or path.name in NOISE_FILE_NAMES
-        or path.suffix in STATE_VIEW_NOISE_SUFFIXES
+        or any(p in STATE_VIEW_EXCLUDED_DIRS for p in parts)
+        or path.name in EXCLUDED_FILE_NAMES
+        or path.suffix in STATE_VIEW_EXCLUDED_SUFFIXES
     )
 
 

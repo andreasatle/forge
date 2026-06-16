@@ -1552,7 +1552,7 @@ async def test_render_for_critic_excludes_pyc_suffix_files(
 async def test_render_for_critic_excludes_noise_file_names(
     git_worktree: Path,
 ) -> None:
-    """NOISE_FILE_NAMES entries (e.g. pyvenv.cfg) do not appear as 'New file:' blocks."""
+    """EXCLUDED_FILE_NAMES entries (e.g. pyvenv.cfg) do not appear as 'New file:' blocks."""
     (git_worktree / "pyvenv.cfg").write_text("[python]\nversion = 3.12\n")
     (git_worktree / "real.py").write_text("x = 1\n")
 
