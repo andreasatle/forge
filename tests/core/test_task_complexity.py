@@ -193,10 +193,75 @@ def test_parse_task_complexity_response_accepts_valid_response() -> None:
     assert result.rationale == "requires broad coordination"
 
 
+def test_parse_task_complexity_response_accepts_fenced_json_response() -> None:
+    """Strict parser accepts a single lowercase json fenced block."""
+    result = parse_task_complexity_response(
+        '```json\n{"complexity":"easy","rationale":"standard scaffolding"}\n```'
+    )
+
+    assert result.complexity is TaskComplexity.EASY
+    assert result.rationale == "standard scaffolding"
+
+
+def test_parse_task_complexity_response_accepts_fenced_json_uppercase_response() -> None:
+    """Strict parser accepts a single uppercase JSON fenced block."""
+    result = parse_task_complexity_response(
+        '```JSON\n{"complexity":"medium","rationale":"bounded coordination"}\n```'
+    )
+
+    assert result.complexity is TaskComplexity.MEDIUM
+    assert result.rationale == "bounded coordination"
+
+
+def test_parse_task_complexity_response_accepts_bare_fenced_json_response() -> None:
+    """Strict parser accepts a single bare fenced JSON block."""
+    result = parse_task_complexity_response(
+        '```\n{"complexity":"hard","rationale":"many coordinated changes"}\n```'
+    )
+
+    assert result.complexity is TaskComplexity.HARD
+    assert result.rationale == "many coordinated changes"
+
+
 def test_parse_task_complexity_response_rejects_invalid_json() -> None:
     """Invalid JSON fails with a clear ValueError."""
     with pytest.raises(ValueError, match="invalid task complexity JSON"):
         parse_task_complexity_response("not json")
+
+
+def test_parse_task_complexity_response_rejects_prose_before_fenced_json() -> None:
+    """A fenced JSON block with prose before it is not accepted."""
+    raw = 'Here is the classification:\n```json\n{"complexity":"easy","rationale":"small"}\n```'
+
+    with pytest.raises(ValueError, match="invalid task complexity JSON"):
+        parse_task_complexity_response(raw)
+
+
+def test_parse_task_complexity_response_rejects_prose_after_fenced_json() -> None:
+    """A fenced JSON block with prose after it is not accepted."""
+    raw = '```json\n{"complexity":"easy","rationale":"small"}\n```\nDone.'
+
+    with pytest.raises(ValueError, match="invalid task complexity JSON"):
+        parse_task_complexity_response(raw)
+
+
+def test_parse_task_complexity_response_rejects_multiple_fenced_blocks() -> None:
+    """Multiple fenced blocks are not accepted."""
+    raw = (
+        '```json\n{"complexity":"easy","rationale":"small"}\n```\n'
+        '```json\n{"complexity":"medium","rationale":"second"}\n```'
+    )
+
+    with pytest.raises(ValueError, match="invalid task complexity JSON"):
+        parse_task_complexity_response(raw)
+
+
+def test_parse_task_complexity_response_rejects_invalid_json_inside_fence() -> None:
+    """A single JSON fence still requires valid JSON inside."""
+    raw = "```json\nnot json\n```"
+
+    with pytest.raises(ValueError, match="invalid task complexity JSON"):
+        parse_task_complexity_response(raw)
 
 
 def test_parse_task_complexity_response_rejects_empty_output() -> None:

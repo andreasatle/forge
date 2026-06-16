@@ -1,6 +1,7 @@
 """Task complexity classification abstractions."""
 
 import json
+import re
 from enum import StrEnum
 from typing import Protocol
 
@@ -19,6 +20,7 @@ _CLASSIFIER_SYSTEM_PROMPT = (
     'Valid example: {"complexity":"medium","rationale":"requires coordinated but bounded changes"}'
 )
 _RAW_OUTPUT_EXCERPT_LIMIT = 240
+_JSON_FENCE_OPEN_RE = re.compile(r"^```(?:json)?\s*$", re.IGNORECASE)
 
 
 class TaskComplexity(StrEnum):
@@ -93,8 +95,9 @@ def parse_task_complexity_response(raw: str) -> TaskComplexityResponse:
     raw_stripped = raw.strip()
     if not raw_stripped:
         raise ValueError("empty classifier output")
+    payload = _strip_single_json_fence(raw_stripped)
     try:
-        data = json.loads(raw_stripped)
+        data = json.loads(payload)
     except json.JSONDecodeError as exc:
         raise ValueError(
             f"invalid task complexity JSON: {exc.msg}; "
@@ -115,6 +118,25 @@ def _raw_output_excerpt(raw: str, limit: int = _RAW_OUTPUT_EXCERPT_LIMIT) -> str
     if len(excerpt) <= limit:
         return excerpt
     return excerpt[: limit - 3].rstrip() + "..."
+
+
+def _strip_single_json_fence(raw: str) -> str:
+    """Return inner JSON only when raw is exactly one json or bare fenced block."""
+    if not raw.startswith("```"):
+        return raw
+
+    lines = raw.splitlines()
+    if len(lines) < 3:
+        return raw
+    if _JSON_FENCE_OPEN_RE.fullmatch(lines[0]) is None:
+        return raw
+    if lines[-1].strip() != "```":
+        return raw
+
+    inner = "\n".join(lines[1:-1])
+    if "```" in inner:
+        return raw
+    return inner.strip()
 
 
 class LLMTaskComplexityClassifier:
