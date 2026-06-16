@@ -195,12 +195,14 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
 
 
 async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:
-    """WorkTaskExecutor passes only the tools declared by the adapter."""
+    """WorkTaskExecutor passes adapter-declared tools plus available verification tools."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
     adapter_registry = _yaml_adapter_registry()
-    expected = set(adapter_registry.get("coding").tools)
+    adapter = adapter_registry.get("coding")
+    # With a language plugin, verification tools (run_tests) are also injected
+    expected = set(adapter.tools) | set(adapter.verification_tools)
     request = _work_request("coding", language="python")
     provider = MagicMock()
     provider.max_tokens = 8192
@@ -489,12 +491,14 @@ async def test_worker_prompt_includes_state_version_and_file_context(tmp_path: P
 
 
 async def test_coding_adapter_receives_exactly_declared_tools(tmp_path: Path) -> None:
-    """work_agent passes exactly the tools declared in coding.yaml — no more, no less."""
+    """work_agent passes adapter tools plus available verification tools for coding.yaml."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
     adapter_registry = _yaml_adapter_registry()
-    expected = set(adapter_registry.get("coding").tools)
+    adapter = adapter_registry.get("coding")
+    # With a language plugin, run_tests is injected from verification_tools
+    expected = set(adapter.tools) | set(adapter.verification_tools)
     request = _work_request("coding", language="python")
     provider = MagicMock()
     provider.max_tokens = 8192
@@ -1550,3 +1554,64 @@ async def test_state_service_never_removes_worktree(tmp_path: Path) -> None:
 
     ss.apply_work_output.assert_called_once()
     assert len(removed) == 1
+
+
+# --- Adapter/tool semantic mismatch tests ---
+
+
+async def test_coding_adapter_starts_without_failing_when_no_language_plugin(
+    tmp_path: Path,
+) -> None:
+    """coding adapter can start a work node when no language plugin is set (run_tests not available)."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        response = await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            LanguageRegistry(),
+            provider,
+            _state_view(),
+        )
+
+    assert response.status != ResponseStatus.FAILED or "unknown tool" not in (response.error or "")
+    assert mock_run_agent.called
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert "run_tests" not in _tool_names(tools)
+
+
+async def test_coding_adapter_with_language_injects_run_tests(tmp_path: Path) -> None:
+    """coding adapter injects run_tests from verification_tools when a language plugin provides it."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    request = _work_request("coding", language="python")
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
+        mock_run_agent.return_value = AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+        )
+        await work_agent(
+            request,
+            _yaml_adapter_registry(),
+            workspace,
+            _language_registry_with_tests(),
+            provider,
+            _state_view(language="python"),
+        )
+
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert "run_tests" in _tool_names(tools)

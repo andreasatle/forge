@@ -2,8 +2,33 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 import yaml
+
+
+def _default_mutating_tools() -> list[str]:
+    """Return default mutating tool names."""
+    return ["write_file", "replace_in_file"]
+
+
+def _empty_str_list() -> list[str]:
+    """Return an empty string list for dataclass defaults."""
+    return []
+
+
+def _str_list(value: object) -> list[str]:
+    """Coerce a YAML value into a list of strings."""
+    if value is None:
+        return []
+
+    items = cast(list[object], value)
+
+    for item in items:
+        if not isinstance(item, str):
+            raise TypeError(f"expected str, got {type(item).__name__}")
+
+    return cast(list[str], items)
 
 
 @dataclass
@@ -16,8 +41,8 @@ class AdapterSpec:
     prompt_template: str
     requires_nonempty_output: bool = True
     work_noun: str = "implementation"
-    mutating_tools: list[str] = field(default_factory=lambda: ["write_file", "replace_in_file"])
-    verification_tools: list[str] = field(default_factory=lambda: ["run_tests"])
+    mutating_tools: list[str] = field(default_factory=_default_mutating_tools)
+    verification_tools: list[str] = field(default_factory=_empty_str_list)
     verification_required: bool | None = None
 
 
@@ -38,21 +63,23 @@ class AdapterRegistry:
         """Load all *.yaml adapter files from the given directory."""
         for path in sorted(adapters_dir.glob("*.yaml")):
             with path.open() as f:
-                data = yaml.safe_load(f)
+                data: dict[str, Any] = yaml.safe_load(f)
+
             for required_field in _REQUIRED_FIELDS:
                 if required_field not in data:
                     raise ValueError(
                         f"adapter {path.name!r} missing required field: {required_field!r}"
                     )
+
             spec = AdapterSpec(
-                name=data["name"],
-                description=data["description"],
-                tools=data["tools"],
-                prompt_template=data["prompt_template"],
-                requires_nonempty_output=data.get("requires_nonempty_output", True),
-                work_noun=data.get("work_noun", "implementation"),
-                mutating_tools=data.get("mutating_tools", ["write_file", "replace_in_file"]),
-                verification_tools=data.get("verification_tools", ["run_tests"]),
+                name=str(data["name"]),
+                description=str(data["description"]),
+                tools=_str_list(data["tools"]),
+                prompt_template=str(data["prompt_template"]),
+                requires_nonempty_output=bool(data.get("requires_nonempty_output", True)),
+                work_noun=str(data.get("work_noun", "implementation")),
+                mutating_tools=_str_list(data.get("mutating_tools", _default_mutating_tools())),
+                verification_tools=_str_list(data.get("verification_tools", [])),
                 verification_required=data.get("verification_required"),
             )
             self._adapters[spec.name] = spec

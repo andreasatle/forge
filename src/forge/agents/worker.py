@@ -133,6 +133,13 @@ class WorkTaskExecutor:
             tools = ToolRegistry()
             for tool in tool_list:
                 tools.register(tool)
+            registered = {t.name for t in tools}
+            for vt_name in adapter.verification_tools:
+                if vt_name not in registered:
+                    try:
+                        tools.register(full_registry.get(vt_name))
+                    except KeyError:
+                        pass
 
             if "{work_output_example}" in adapter.prompt_template:
                 if plugin:

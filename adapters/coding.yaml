@@ -7,6 +7,7 @@ tools:
   - read_file
   - write_file
   - replace_in_file
+verification_tools:
   - run_tests
 prompt_template: |
   Complete the following task: {objective}

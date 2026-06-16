@@ -130,7 +130,7 @@ def test_adapter_spec_new_fields_default_correctly() -> None:
         prompt_template="do: {objective}",
     )
     assert spec.mutating_tools == ["write_file", "replace_in_file"]
-    assert spec.verification_tools == ["run_tests"]
+    assert spec.verification_tools == []
     assert spec.verification_required is None
 
 
@@ -181,17 +181,46 @@ prompt_template: "do: {objective}"
     spec = registry.get("legacy")
 
     assert spec.mutating_tools == ["write_file", "replace_in_file"]
-    assert spec.verification_tools == ["run_tests"]
+    assert spec.verification_tools == []
     assert spec.verification_required is None
 
 
 def test_real_adapter_yamls_load_without_new_fields() -> None:
-    """Real adapter YAML files load without declaring new fields and get correct defaults."""
+    """Real adapter YAML files load with correct semantic field values."""
     registry = AdapterRegistry()
     registry.load(ADAPTERS_DIR)
 
-    for name in ("coding", "audit", "document"):
+    for name in ("audit", "document"):
         spec = registry.get(name)
         assert spec.mutating_tools == ["write_file", "replace_in_file"]
-        assert spec.verification_tools == ["run_tests"]
+        assert spec.verification_tools == []
         assert spec.verification_required is None
+
+    coding = registry.get("coding")
+    assert coding.mutating_tools == ["write_file", "replace_in_file"]
+    assert coding.verification_tools == ["run_tests"]
+    assert coding.verification_required is None
+
+
+def test_coding_adapter_tools_do_not_include_run_tests() -> None:
+    """coding.yaml tools list contains only tools available in the base worktree registry."""
+
+    registry = AdapterRegistry()
+    registry.load(ADAPTERS_DIR)
+    coding = registry.get("coding")
+
+    assert "run_tests" not in coding.tools
+    assert "run_tests" in coding.verification_tools
+
+
+def test_coding_adapter_declared_tools_resolve_without_language_plugin(tmp_path: Path) -> None:
+    """All tools in coding.tools are present in the base worktree registry (no language plugin)."""
+    from forge.tools.builtin import build_worktree_registry
+
+    registry = AdapterRegistry()
+    registry.load(ADAPTERS_DIR)
+    coding = registry.get("coding")
+
+    full_registry = build_worktree_registry(str(tmp_path))
+    for tool_name in coding.tools:
+        full_registry.get(tool_name)
