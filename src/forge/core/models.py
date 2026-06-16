@@ -248,6 +248,7 @@ class AgentRequest(BaseModel):
     source: RequestSource
     spec: AgentSpec
     dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
+    model_profile: str = "default"
 
 
 def _render_list_section(title: str, values: list[str]) -> list[str]:

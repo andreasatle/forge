@@ -812,3 +812,71 @@ def test_final_turn_roundtrip_graph_split_decision():
     restored = FinalTurn.model_validate(data)
     assert isinstance(restored.output, GraphSplitDecision)
     assert restored.output.nodes[1].depends_on == ["setup"]
+
+
+# --- AgentRequest.model_profile ---
+
+
+def test_agent_request_defaults_model_profile_to_default():
+    """AgentRequest without explicit model_profile has model_profile == 'default'."""
+    assert _make_request().model_profile == "default"
+
+
+def test_agent_request_explicit_model_profile_is_preserved():
+    """AgentRequest with explicit model_profile stores and returns that value."""
+    req = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do something",
+            success_condition="it is done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+        model_profile="fast",
+    )
+    assert req.model_profile == "fast"
+
+
+def test_agent_request_model_profile_roundtrip():
+    """AgentRequest with model_profile='fast' serializes and deserializes back to 'fast'."""
+    req = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.USER,
+        spec=WorkSpec(
+            objective="do something",
+            success_condition="it is done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+        model_profile="fast",
+    )
+    data = req.model_dump()
+    restored = AgentRequest.model_validate(data)
+    assert restored.model_profile == "fast"
+
+
+def test_agent_request_old_json_without_model_profile_loads_as_default():
+    """Old persisted JSON without model_profile deserializes with model_profile == 'default'."""
+    req = _make_request()
+    data = req.model_dump()
+    del data["model_profile"]
+    restored = AgentRequest.model_validate(data)
+    assert restored.model_profile == "default"
+
+
+def test_dag_node_carries_request_model_profile_unchanged():
+    """DAGNode.request.model_profile is accessible and reflects what was set on the request."""
+    req = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do something",
+            success_condition="it is done",
+            adapter="coding",
+            artifact="codebase",
+        ),
+        model_profile="fast",
+    )
+    node = DAGNode(request=req)
+    assert node.request.model_profile == "fast"
