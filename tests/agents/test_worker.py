@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 from forge.agents.base import PromptBuilder
+from forge.agents.planner import PlannerTaskExecutor
 from forge.agents.worker import WorkTaskExecutor, work_agent
 from forge.core.models import (
     AcceptanceCriterion,
@@ -18,6 +19,8 @@ from forge.core.models import (
     CriticFinding,
     FailureKind,
     FileView,
+    GraphSplitDecision,
+    PlanSpec,
     RefereeDecision,
     RequestSource,
     ResponseStatus,
@@ -26,6 +29,7 @@ from forge.core.models import (
     WorkSpec,
     render_agent_contract,
 )
+from forge.core.plan_expansion import PlanExpansionBuilder
 from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
@@ -1613,5 +1617,84 @@ async def test_coding_adapter_with_language_injects_run_tests(tmp_path: Path) ->
             _state_view(language="python"),
         )
 
+    tools = mock_run_agent.call_args.kwargs["tools"]
+    assert "run_tests" in _tool_names(tools)
+
+
+async def test_worker_receives_planner_normalized_language_guidance_and_run_tests(
+    tmp_path: Path,
+) -> None:
+    """Planner-normalized coding tasks reach workers with language-specific guidance/tools."""
+    plan_request = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build scraper"),
+    )
+    planner_provider = MagicMock()
+    planner_provider.max_tokens = 8192
+    planner_provider.chat = AsyncMock(
+        return_value=(
+            '{"kind":"final","output":{"kind":"split_graph","nodes":['
+            '{"id":"scraper","task":{"objective":"Implement scraper",'
+            '"success_condition":"pytest passes","adapter":"coding",'
+            '"artifact":"codebase"},"depends_on":[]}'
+            "]}}"
+        )
+    )
+    planner = PlannerTaskExecutor(
+        provider=planner_provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+        artifact_types={"codebase": "coding"},
+    )
+
+    plan_response = await planner.run(plan_request)
+
+    assert isinstance(plan_response.output, GraphSplitDecision)
+    work_request = PlanExpansionBuilder(plan_request).build_from_decision(plan_response.output)[0]
+    assert isinstance(work_request.spec, WorkSpec)
+    assert work_request.spec.language == "python"
+
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    language_registry = LanguageRegistry()
+    language_registry.register(
+        LanguagePlugin(
+            name="python",
+            init_command="uv init",
+            test_command="pytest",
+            sync_command="uv sync",
+            prompt_supplement="PYTHON_NORMALIZED_GUIDANCE",
+            work_output_example="PYTHON_NORMALIZED_EXAMPLE",
+        )
+    )
+    provider = MagicMock()
+    provider.max_tokens = 8192
+
+    with (
+        patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent,
+        patch("forge.agents.worker._worktree_has_changes", return_value=True),
+    ):
+        mock_run_agent.return_value = AgentResponse(
+            request_id=work_request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="Completed worktree changes."),
+        )
+        await work_agent(
+            work_request,
+            _yaml_adapter_registry(),
+            workspace,
+            language_registry,
+            provider,
+            _state_view(language="python"),
+        )
+
+    producer_request = mock_run_agent.call_args.args[0]
+    assert isinstance(producer_request.spec, WorkSpec)
+    assert producer_request.spec.language == "python"
+    user_prompt = mock_run_agent.call_args.args[3]
+    assert "PYTHON_NORMALIZED_GUIDANCE" in user_prompt
+    assert "PYTHON_NORMALIZED_EXAMPLE" in user_prompt
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert "run_tests" in _tool_names(tools)

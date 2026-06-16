@@ -6,10 +6,17 @@ from forge.agents.base import run_agent
 from forge.core.models import (
     AgentRequest,
     AgentResponse,
+    DecompositionNodeSpec,
+    FailureKind,
+    GraphSplitDecision,
     PlannerOutputModel,
     PlanSpec,
+    ProducerOutput,
     ResponseStatus,
     StateView,
+    TaskSpec,
+    WorkDecision,
+    WorkSpec,
     render_agent_contract,
 )
 from forge.core.telemetry import TelemetrySink
@@ -111,6 +118,48 @@ Produce output satisfying this contract.
 _DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[], dependencies=[])
 
 
+def _normalize_coding_task_language(
+    task: TaskSpec | WorkSpec,
+    artifact_languages: dict[str, str],
+) -> TaskSpec | WorkSpec:
+    """Fill coding task language from artifact metadata or reject unresolved language."""
+    if task.adapter != "coding":
+        return task
+    language = task.language or artifact_languages.get(task.artifact)
+    if not language:
+        raise ValueError(
+            "coding task targets artifact "
+            f"{task.artifact!r} but no language was provided and no artifact language is configured"
+        )
+    if task.language == language:
+        return task
+    return task.model_copy(update={"language": language})
+
+
+def _normalize_planner_output_languages(
+    output: ProducerOutput | None,
+    artifact_languages: dict[str, str],
+) -> ProducerOutput | None:
+    """Normalize planner coding task languages before validation accepts the plan."""
+    if isinstance(output, WorkDecision):
+        task = _normalize_coding_task_language(output.task, artifact_languages)
+        return output if task is output.task else output.model_copy(update={"task": task})
+    if not isinstance(output, GraphSplitDecision):
+        return output
+
+    updated_nodes: list[DecompositionNodeSpec] = []
+    changed = False
+    for node in output.nodes:
+        task = node.task
+        if isinstance(task, TaskSpec):
+            normalized = _normalize_coding_task_language(task, artifact_languages)
+            if normalized is not task:
+                node = node.model_copy(update={"task": normalized})
+                changed = True
+        updated_nodes.append(node)
+    return output.model_copy(update={"nodes": updated_nodes}) if changed else output
+
+
 class PlannerTaskExecutor:
     """Own planner prompt construction and decomposition decision execution."""
 
@@ -180,7 +229,7 @@ class PlannerTaskExecutor:
         max_retries = self.max_retries
 
         async def _run_fn(current_prompt: str) -> AgentResponse:
-            return await run_agent(
+            response = await run_agent(
                 request,
                 PlanSpec,
                 provider,
@@ -189,6 +238,20 @@ class PlannerTaskExecutor:
                 final_response_type=PlannerOutputModel,
                 max_retries=max_retries,
             )
+            if response.status != ResponseStatus.COMPLETED:
+                return response
+            try:
+                output = _normalize_planner_output_languages(
+                    response.output, self.artifact_languages
+                )
+            except ValueError as exc:
+                return AgentResponse(
+                    request_id=request.id,
+                    status=ResponseStatus.FAILED,
+                    failure_kind=FailureKind.VALIDATION_REJECTED,
+                    error=str(exc),
+                )
+            return response.model_copy(update={"output": output})
 
         lifecycle = AttemptLifecycle(
             request=request,

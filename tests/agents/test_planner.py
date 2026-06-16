@@ -10,6 +10,7 @@ from forge.core.models import (
     AgentContract,
     AgentRequest,
     AgentType,
+    FailureKind,
     GraphSplitDecision,
     PlanSpec,
     RequestSource,
@@ -82,10 +83,82 @@ async def test_planner_task_executor_returns_typed_plan_output() -> None:
     assert node.task.language == "python"
 
 
+async def test_planner_coding_task_inherits_artifact_language_when_omitted() -> None:
+    """Planner output fills missing coding task language from artifact metadata."""
+    request = _make_request()
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"split_graph","nodes":['
+        '{"id":"a","task":{"objective":"Fetch pages","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase"},"depends_on":[]}'
+        "]}}"
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert isinstance(response.output, GraphSplitDecision)
+    node = response.output.nodes[0]
+    assert isinstance(node.task, TaskSpec)
+    assert node.task.language == "python"
+
+
+async def test_planner_work_decision_inherits_artifact_language_when_omitted() -> None:
+    """A direct WorkDecision also receives artifact language metadata."""
+    request = _make_request()
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work","task":{'
+        '"objective":"Fetch pages","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase"}}}'
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={"codebase": "python"},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert isinstance(response.output, WorkDecision)
+    assert response.output.task.language == "python"
+
+
+async def test_planner_rejects_coding_task_without_resolvable_language() -> None:
+    """Coding tasks fail planner validation when no task or artifact language is available."""
+    request = _make_request()
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"split_graph","nodes":['
+        '{"id":"a","task":{"objective":"Fetch pages","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"codebase"},"depends_on":[]}'
+        "]}}"
+    )
+    executor = PlannerTaskExecutor(
+        provider=provider,
+        artifact_names=["codebase"],
+        artifact_languages={},
+    )
+
+    response = await executor.run(request)
+
+    assert response.status == ResponseStatus.FAILED
+    assert response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert response.error is not None
+    assert "no language was provided" in response.error
+
+
 async def test_planner_task_executor_preserves_artifact_language_context() -> None:
     """PlannerTaskExecutor renders artifact/language context into the planner prompt."""
     request = _make_request()
-    provider = _mock_provider()
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work","task":{'
+        '"objective":"implement API","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"api"}}}'
+    )
     executor = PlannerTaskExecutor(
         provider=provider,
         artifact_names=["api", "docs"],
@@ -113,7 +186,11 @@ async def test_planner_task_executor_preserves_artifact_language_context() -> No
 async def test_planner_task_executor_renders_plugin_owned_language_guidance() -> None:
     """Planner prompt receives language guidance as plugin-owned artifact metadata."""
     request = _make_request()
-    provider = _mock_provider()
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work","task":{'
+        '"objective":"implement API","success_condition":"tests pass",'
+        '"adapter":"coding","artifact":"api"}}}'
+    )
     executor = PlannerTaskExecutor(
         provider=provider,
         artifact_names=["api"],
@@ -190,7 +267,11 @@ async def test_planner_prompt_handles_missing_artifact_description() -> None:
 async def test_planner_prompt_includes_artifact_description() -> None:
     """Planner prompt includes configured artifact descriptions."""
     request = _make_request()
-    provider = _mock_provider()
+    provider = _mock_provider(
+        '{"kind":"final","output":{"kind":"work","task":{'
+        '"objective":"Write docs","success_condition":"docs exist",'
+        '"adapter":"document","artifact":"docs"}}}'
+    )
     executor = PlannerTaskExecutor(
         provider=provider,
         artifact_names=["docs"],
