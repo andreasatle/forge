@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +25,8 @@ from forge.core.telemetry import JsonlTelemetrySink, TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
 from forge.llm.factory import make_provider
+
+logger = logging.getLogger(__name__)
 
 _ADAPTERS_DIR = Path(__file__).parent.parent.parent.parent / "adapters"
 _LANGUAGES_DIR = Path(__file__).parent.parent.parent.parent / "languages"
@@ -70,7 +73,7 @@ class ForgeRuntime:
 
         language_registry = LanguageRegistry()
         language_registry.load(_LANGUAGES_DIR)
-        print(f"languages: {language_registry.names()}")
+        logger.info("languages: %s", language_registry.names())
         artifact_language_guidance = {
             artifact.name: language_registry.get(artifact.language).prompt_supplement
             for artifact in config.artifacts
@@ -87,7 +90,7 @@ class ForgeRuntime:
             state_services[artifact.name] = StateService(workspace, artifact.name, plugin)
 
         if workspace.state_path().exists():
-            print(f"resuming: {workspace.path}")
+            logger.info("resuming: %s", workspace.path)
             initial_state: SchedulerState | None = load_run(workspace)
             northstar = initial_state.northstar
         else:
@@ -103,12 +106,12 @@ class ForgeRuntime:
                 metadata={"workspace": str(workspace.path), "northstar": northstar},
             )
         except Exception as e:
-            print(f"telemetry disabled: {type(e).__name__}: {e}")
+            logger.warning("telemetry disabled: %s: %s", type(e).__name__, e)
             telemetry_sink = None
 
         registry = AdapterRegistry()
         registry.load(_ADAPTERS_DIR)
-        print(f"adapters: {registry.names()}")
+        logger.info("adapters: %s", registry.names())
 
         planner_provider = make_provider(config.models.planner.producer, config.max_tokens)
         planner_critic_provider = (
@@ -181,14 +184,14 @@ class ForgeRuntime:
             state = state.add_nodes([DAGNode(request=root_node)])
 
         callbacks = SchedulerCallbacks(
-            on_node_dispatched=lambda node: print(
-                f"→ dispatched: {node.request.agent_type.value} ({node.request.id})"
+            on_node_dispatched=lambda node: logger.info(
+                "→ dispatched: %s (%s)", node.request.agent_type.value, node.request.id
             ),
-            on_node_completed=lambda node: print(
-                f"✓ integrated: {node.request.agent_type.value} ({node.request.id})"
+            on_node_completed=lambda node: logger.info(
+                "✓ integrated: %s (%s)", node.request.agent_type.value, node.request.id
             ),
-            on_node_failed=lambda node: print(format_failed_node(node)),
-            on_idle=lambda s: print(f"~ idle: {len(s.dag)} nodes in DAG"),
+            on_node_failed=lambda node: logger.info("%s", format_failed_node(node)),
+            on_idle=lambda s: logger.info("~ idle: %d nodes in DAG", len(s.dag)),
         )
 
         final = await Scheduler(
@@ -200,23 +203,30 @@ class ForgeRuntime:
         ).run(state)
 
         save_path = save_run(final, workspace)
-        print(f"run saved: {save_path}")
+        logger.info("run saved: %s", save_path)
 
         completed = sum(1 for n in final.dag.values() if n.node_state.value == "integrated")
         failed = sum(1 for n in final.dag.values() if n.node_state.value == "failed")
         cancelled = sum(1 for n in final.dag.values() if n.node_state.value == "cancelled")
-        print(f"\nDone — integrated: {completed}, failed: {failed}, cancelled: {cancelled}")
+        logger.info(
+            "Done — integrated: %d, failed: %d, cancelled: %d", completed, failed, cancelled
+        )
 
         if self._verbose:
-            print("\nDAG summary:")
+            logger.info("DAG summary:")
             for node in sorted(final.dag.values(), key=lambda n: len(n.request.dependencies)):
                 short_id = str(node.request.id)[:8]
                 agent_type = node.request.agent_type.value
                 node_state = node.node_state.value
                 n_deps = len(node.request.dependencies)
                 output = node.response.output if node.response else None
-                print(
-                    f"  {short_id}  {agent_type:<10}  {node_state:<10}  deps={n_deps}  output={output}"
+                logger.info(
+                    "  %s  %-10s  %-10s  deps=%d  output=%s",
+                    short_id,
+                    agent_type,
+                    node_state,
+                    n_deps,
+                    output,
                 )
 
         return StartResult(final_state=final, save_path=save_path)

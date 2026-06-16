@@ -157,29 +157,33 @@ async def test_runtime_creates_telemetry_sink(tmp_path: Path, monkeypatch: Monke
 
 
 async def test_runtime_verbose_prints_dag_summary(
-    tmp_path: Path, monkeypatch: MonkeyPatch, capsys: object
+    tmp_path: Path, monkeypatch: MonkeyPatch, caplog: object
 ) -> None:
-    """ForgeRuntime prints DAG summary when verbose=True."""
+    """ForgeRuntime logs DAG summary when verbose=True."""
+    import logging
+
     monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
     monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
 
-    await ForgeRuntime(_minimal_config(tmp_path), verbose=True).start()
+    with caplog.at_level(logging.INFO, logger="forge.core.runtime"):  # type: ignore[attr-defined]
+        await ForgeRuntime(_minimal_config(tmp_path), verbose=True).start()
 
-    out = capsys.readouterr().out  # type: ignore[attr-defined]
-    assert "DAG summary:" in out
+    assert "DAG summary:" in caplog.text  # type: ignore[attr-defined]
 
 
 async def test_runtime_no_dag_summary_when_not_verbose(
-    tmp_path: Path, monkeypatch: MonkeyPatch, capsys: object
+    tmp_path: Path, monkeypatch: MonkeyPatch, caplog: object
 ) -> None:
-    """ForgeRuntime does not print DAG summary when verbose=False."""
+    """ForgeRuntime does not log DAG summary when verbose=False."""
+    import logging
+
     monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
     monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
 
-    await ForgeRuntime(_minimal_config(tmp_path), verbose=False).start()
+    with caplog.at_level(logging.INFO, logger="forge.core.runtime"):  # type: ignore[attr-defined]
+        await ForgeRuntime(_minimal_config(tmp_path), verbose=False).start()
 
-    out = capsys.readouterr().out  # type: ignore[attr-defined]
-    assert "DAG summary:" not in out
+    assert "DAG summary:" not in caplog.text  # type: ignore[attr-defined]
 
 
 async def test_runtime_wires_adapter_and_language_registries(
