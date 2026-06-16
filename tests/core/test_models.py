@@ -197,6 +197,15 @@ def test_with_response_sets_failed_for_failed_status():
     assert updated.response is response
 
 
+def test_with_response_sets_cancelled_for_decompose_status():
+    """with_response() sets node_state to CANCELLED when response status is DECOMPOSE."""
+    node = _make_node()
+    response = _make_response(node.request.id, status=ResponseStatus.DECOMPOSE)
+    updated = node.with_response(response)
+    assert updated.node_state == NodeState.CANCELLED
+    assert updated.response is response
+
+
 # --- SchedulerState.ready_nodes ---
 
 

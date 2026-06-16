@@ -5,6 +5,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import assert_never
 from uuid import UUID
 
 from forge.core.models import (
@@ -93,14 +94,21 @@ class TerminalNodeOutcome:
     @classmethod
     def from_response(cls, node: DAGNode, response: AgentResponse) -> "TerminalNodeOutcome":
         """Classify an agent response into the scheduler's terminal outcome categories."""
-        if response.status == ResponseStatus.DECOMPOSE:
-            return cls(TerminalOutcomeKind.DECOMPOSITION_REQUEST, response)
-        if response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE):
-            if node.request.agent_type == AgentType.PLAN:
-                return cls(TerminalOutcomeKind.ACCEPTED_PLAN, response)
-            if node.request.agent_type == AgentType.WORK:
-                return cls(TerminalOutcomeKind.ACCEPTED_WORK, response)
-        return cls(TerminalOutcomeKind.TERMINAL_FAILURE, response)
+        match response.status:
+            case ResponseStatus.DECOMPOSE:
+                return cls(TerminalOutcomeKind.DECOMPOSITION_REQUEST, response)
+            case ResponseStatus.COMPLETED | ResponseStatus.ALREADY_DONE:
+                match node.request.agent_type:
+                    case AgentType.PLAN:
+                        return cls(TerminalOutcomeKind.ACCEPTED_PLAN, response)
+                    case AgentType.WORK:
+                        return cls(TerminalOutcomeKind.ACCEPTED_WORK, response)
+                    case _ as unreachable:
+                        assert_never(unreachable)
+            case ResponseStatus.FAILED:
+                return cls(TerminalOutcomeKind.TERMINAL_FAILURE, response)
+            case _ as unreachable:
+                assert_never(unreachable)
 
     @classmethod
     def from_exception(cls, node: DAGNode, error: BaseException) -> "TerminalNodeOutcome":
@@ -173,90 +181,93 @@ class SchedulerConsequenceHandler:
         updated = current.with_response(response)
         state = state.update_node(updated)
 
-        if outcome.kind == TerminalOutcomeKind.ACCEPTED_PLAN:
-            try:
-                plan_expansion = await self._build_plan_expansion(node, response)
-            except PlanOutputValidationError as exc:
-                failed_response = AgentResponse(
-                    request_id=node.request.id,
-                    status=ResponseStatus.FAILED,
-                    failure_kind=FailureKind.VALIDATION_REJECTED,
-                    error=str(exc),
-                )
-                failed_updated = current.with_response(failed_response)
-                state = state.update_node(failed_updated)
-                return self._handle_failed(
-                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
-                )
-            except DecompositionConvergenceError as exc:
-                logger.warning(
-                    "decomposition convergence check failed for node %s: %s",
-                    node.request.id,
-                    exc,
-                )
-                self._emit_convergence_failure(node, str(exc))
-                failed_response = AgentResponse(
-                    request_id=node.request.id,
-                    status=ResponseStatus.FAILED,
-                    failure_kind=FailureKind.VALIDATION_REJECTED,
-                    error=str(exc),
-                )
-                failed_updated = current.with_response(failed_response)
-                state = state.update_node(failed_updated)
-                return self._handle_failed(
-                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
-                )
-            except ProfileAssignmentError as exc:
-                logger.warning(
-                    "profile assignment failed for plan node %s: %s",
-                    node.request.id,
-                    exc,
-                )
-                failed_response = AgentResponse(
-                    request_id=node.request.id,
-                    status=ResponseStatus.FAILED,
-                    failure_kind=FailureKind.VALIDATION_REJECTED,
-                    error=str(exc),
-                )
-                failed_updated = current.with_response(failed_response)
-                state = state.update_node(failed_updated)
-                return self._handle_failed(
-                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
-                )
-            try:
-                self._validate_plan_expansion_budget(state, updated, plan_expansion)
-            except DecompositionBudgetError as exc:
-                logger.warning(
-                    "decomposition budget check failed for node %s: %s",
-                    node.request.id,
-                    exc,
-                )
-                self._emit_convergence_failure(
-                    node,
-                    exc.reason,
-                    current_depth=exc.current_depth,
-                    max_plan_depth=exc.max_plan_depth,
-                    dag_size=exc.dag_size,
-                    max_dag_nodes=exc.max_dag_nodes,
-                )
-                failed_response = AgentResponse(
-                    request_id=node.request.id,
-                    status=ResponseStatus.FAILED,
-                    failure_kind=FailureKind.VALIDATION_REJECTED,
-                    error=exc.reason,
-                )
-                failed_updated = current.with_response(failed_response)
-                state = state.update_node(failed_updated)
-                return self._handle_failed(
-                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
-                )
-            return self._handle_accepted_plan(state, updated, plan_expansion)
-        if outcome.kind == TerminalOutcomeKind.ACCEPTED_WORK:
-            return await self._handle_accepted_work(state, updated)
-        if outcome.kind == TerminalOutcomeKind.DECOMPOSITION_REQUEST:
-            return self._handle_decompose(state, updated)
-
-        return self._handle_failed(state, updated, outcome.kind)
+        match outcome.kind:
+            case TerminalOutcomeKind.ACCEPTED_PLAN:
+                try:
+                    plan_expansion = await self._build_plan_expansion(node, response)
+                except PlanOutputValidationError as exc:
+                    failed_response = AgentResponse(
+                        request_id=node.request.id,
+                        status=ResponseStatus.FAILED,
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
+                        error=str(exc),
+                    )
+                    failed_updated = current.with_response(failed_response)
+                    state = state.update_node(failed_updated)
+                    return self._handle_failed(
+                        state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                    )
+                except DecompositionConvergenceError as exc:
+                    logger.warning(
+                        "decomposition convergence check failed for node %s: %s",
+                        node.request.id,
+                        exc,
+                    )
+                    self._emit_convergence_failure(node, str(exc))
+                    failed_response = AgentResponse(
+                        request_id=node.request.id,
+                        status=ResponseStatus.FAILED,
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
+                        error=str(exc),
+                    )
+                    failed_updated = current.with_response(failed_response)
+                    state = state.update_node(failed_updated)
+                    return self._handle_failed(
+                        state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                    )
+                except ProfileAssignmentError as exc:
+                    logger.warning(
+                        "profile assignment failed for plan node %s: %s",
+                        node.request.id,
+                        exc,
+                    )
+                    failed_response = AgentResponse(
+                        request_id=node.request.id,
+                        status=ResponseStatus.FAILED,
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
+                        error=str(exc),
+                    )
+                    failed_updated = current.with_response(failed_response)
+                    state = state.update_node(failed_updated)
+                    return self._handle_failed(
+                        state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                    )
+                try:
+                    self._validate_plan_expansion_budget(state, updated, plan_expansion)
+                except DecompositionBudgetError as exc:
+                    logger.warning(
+                        "decomposition budget check failed for node %s: %s",
+                        node.request.id,
+                        exc,
+                    )
+                    self._emit_convergence_failure(
+                        node,
+                        exc.reason,
+                        current_depth=exc.current_depth,
+                        max_plan_depth=exc.max_plan_depth,
+                        dag_size=exc.dag_size,
+                        max_dag_nodes=exc.max_dag_nodes,
+                    )
+                    failed_response = AgentResponse(
+                        request_id=node.request.id,
+                        status=ResponseStatus.FAILED,
+                        failure_kind=FailureKind.VALIDATION_REJECTED,
+                        error=exc.reason,
+                    )
+                    failed_updated = current.with_response(failed_response)
+                    state = state.update_node(failed_updated)
+                    return self._handle_failed(
+                        state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                    )
+                return self._handle_accepted_plan(state, updated, plan_expansion)
+            case TerminalOutcomeKind.ACCEPTED_WORK:
+                return await self._handle_accepted_work(state, updated)
+            case TerminalOutcomeKind.DECOMPOSITION_REQUEST:
+                return self._handle_decompose(state, updated)
+            case TerminalOutcomeKind.INTEGRATION_FAILURE | TerminalOutcomeKind.TERMINAL_FAILURE:
+                return self._handle_failed(state, updated, outcome.kind)
+            case _ as unreachable:
+                assert_never(unreachable)
 
     async def _build_plan_expansion(
         self,

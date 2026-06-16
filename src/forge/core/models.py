@@ -1,7 +1,7 @@
 """Core Pydantic models and enums shared across all forge components."""
 
 from enum import Enum, StrEnum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, assert_never, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
@@ -527,12 +527,15 @@ class DAGNode(BaseModel):
 
     def with_response(self, response: AgentResponse) -> "DAGNode":
         """Return a copy of this node with the response set and state derived from its status."""
-        if response.status == ResponseStatus.DECOMPOSE:
-            node_state = NodeState.CANCELLED
-        elif response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE):
-            node_state = NodeState.INTEGRATED
-        else:
-            node_state = NodeState.FAILED
+        match response.status:
+            case ResponseStatus.DECOMPOSE:
+                node_state = NodeState.CANCELLED
+            case ResponseStatus.COMPLETED | ResponseStatus.ALREADY_DONE:
+                node_state = NodeState.INTEGRATED
+            case ResponseStatus.FAILED:
+                node_state = NodeState.FAILED
+            case _ as unreachable:
+                assert_never(unreachable)
         return self.model_copy(update={"node_state": node_state, "response": response})
 
 

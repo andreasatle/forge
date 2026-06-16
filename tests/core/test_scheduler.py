@@ -196,6 +196,51 @@ def test_validation_exhausted_diagnostic_classifies_as_terminal_failure() -> Non
     assert outcome.kind == TerminalOutcomeKind.TERMINAL_FAILURE
 
 
+def test_from_response_failed_status_produces_terminal_failure() -> None:
+    """from_response() maps ResponseStatus.FAILED directly to TERMINAL_FAILURE."""
+    work = _work_request()
+    node = DAGNode(request=work)
+    response = AgentResponse(request_id=work.id, status=ResponseStatus.FAILED, error="oops")
+    outcome = TerminalNodeOutcome.from_response(node, response)
+    assert outcome.kind == TerminalOutcomeKind.TERMINAL_FAILURE
+
+
+async def test_apply_integration_failure_kind_routes_to_failed_path() -> None:
+    """apply() routes TerminalOutcomeKind.INTEGRATION_FAILURE through _handle_failed."""
+    from forge.core.scheduler import SchedulerConsequenceHandler
+
+    work = _work_request()
+    node = DAGNode(request=work)
+    state = _base_state().add_nodes([node])
+    response = AgentResponse(
+        request_id=work.id,
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.INTEGRATION_FAILED,
+        error="integration failed",
+    )
+    outcome = TerminalNodeOutcome(kind=TerminalOutcomeKind.INTEGRATION_FAILURE, response=response)
+    final = await SchedulerConsequenceHandler().apply(state, node, outcome)
+    assert final.dag[work.id].node_state == NodeState.FAILED
+
+
+async def test_apply_terminal_failure_kind_routes_to_failed_path() -> None:
+    """apply() routes TerminalOutcomeKind.TERMINAL_FAILURE through _handle_failed."""
+    from forge.core.scheduler import SchedulerConsequenceHandler
+
+    work = _work_request()
+    node = DAGNode(request=work)
+    state = _base_state().add_nodes([node])
+    response = AgentResponse(
+        request_id=work.id,
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.VALIDATION_REJECTED,
+        error="validation failed",
+    )
+    outcome = TerminalNodeOutcome(kind=TerminalOutcomeKind.TERMINAL_FAILURE, response=response)
+    final = await SchedulerConsequenceHandler().apply(state, node, outcome)
+    assert final.dag[work.id].node_state == NodeState.FAILED
+
+
 # --- Tests ---
 
 
