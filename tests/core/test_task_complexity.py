@@ -275,6 +275,18 @@ async def test_llm_classifier_returns_parsed_complexity() -> None:
     assert result is TaskComplexity.HARD
 
 
+async def test_llm_classifier_can_return_rich_response_with_rationale() -> None:
+    """The LLM classifier exposes parsed rationale for routing telemetry."""
+    provider = _FakeAsyncProvider('{"complexity":"hard","rationale":"many moving parts"}')
+
+    result = await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify_with_response(
+        _work_request()
+    )
+
+    assert result.complexity is TaskComplexity.HARD
+    assert result.rationale == "many moving parts"
+
+
 async def test_llm_classifier_prompt_does_not_expose_profile_or_model_names() -> None:
     """Classifier prompts do not include routing profile names or model names."""
     provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small"}')

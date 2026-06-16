@@ -107,10 +107,14 @@ class LLMTaskComplexityClassifier:
 
     async def classify(self, request: AgentRequest) -> TaskComplexity:
         """Return only the parsed complexity label for a WORK request."""
+        return (await self.classify_with_response(request)).complexity
+
+    async def classify_with_response(self, request: AgentRequest) -> TaskComplexityResponse:
+        """Return the parsed complexity response, including rationale."""
         metadata = task_complexity_input_from_request(request)
         messages: list[ChatMessage] = [
             {"role": "system", "content": _CLASSIFIER_SYSTEM_PROMPT},
             {"role": "user", "content": metadata.model_dump_json()},
         ]
         raw = await self.provider.chat(messages)
-        return parse_task_complexity_response(raw).complexity
+        return parse_task_complexity_response(raw)

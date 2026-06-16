@@ -15,7 +15,12 @@ from forge.core.models import (
     WorkDecision,
     WorkSpec,
 )
-from forge.core.profile_assignment import DefaultProfileAssigner, ProfileAssigner
+from forge.core.profile_assignment import (
+    DefaultProfileAssigner,
+    ProfileAssigner,
+    ProfileAssignmentResult,
+    assign_profile_with_metadata,
+)
 
 
 class DecompositionConvergenceError(ValueError):
@@ -83,10 +88,13 @@ class PlanExpansionBuilder:
     ) -> None:
         self.request = request
         self.profile_assigner = profile_assigner or DefaultProfileAssigner()
+        self.profile_assignment_results: dict[RequestId, ProfileAssignmentResult] = {}
 
     async def _assign_work_profile(self, request: AgentRequest) -> AgentRequest:
-        profile = await self.profile_assigner.assign(request)
-        return request.model_copy(update={"model_profile": profile})
+        result = await assign_profile_with_metadata(self.profile_assigner, request)
+        assigned = request.model_copy(update={"model_profile": result.model_profile})
+        self.profile_assignment_results[assigned.id] = result
+        return assigned
 
     async def _task_spec_to_request(self, task: TaskSpec) -> AgentRequest:
         request = AgentRequest(

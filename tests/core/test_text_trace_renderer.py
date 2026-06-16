@@ -531,3 +531,28 @@ def test_render_run_no_contract_block_when_no_dispatched_event() -> None:
     text = TextTraceRenderer().render_run(run)
     assert "objective:" not in text
     assert "artifact:" not in text
+
+
+def test_render_run_shows_profile_assignment_event() -> None:
+    """render_run includes compact routing decisions in the node timeline."""
+    event = _event(NODE_1, "work", "node.profile_assigned", attempt=None, status="assigned")
+    event["data"] = {
+        "child_request_id": NODE_1,
+        "parent_request_id": NODE_2,
+        "artifact": "codebase",
+        "adapter": "coding",
+        "language": "python",
+        "model_profile": "strong",
+        "complexity": "hard",
+        "rationale": "requires broad coordination",
+    }
+    run = _make_run(RUN_1, events=[event])
+
+    text = TextTraceRenderer().render_run(run)
+
+    assert "profile assigned:" in text
+    assert "profile=strong" in text
+    assert "complexity=hard" in text
+    assert "artifact=codebase" in text
+    assert "adapter=coding" in text
+    assert "requires broad coordination" in text

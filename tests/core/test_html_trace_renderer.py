@@ -681,3 +681,35 @@ def test_long_objective_truncated_in_overview(tmp_path: Path) -> None:
 
     assert "node-objective" in result
     assert "A" * 117 + "..." in result
+
+
+def test_html_render_shows_profile_assignment_event(tmp_path: Path) -> None:
+    """HTML trace includes compact routing decisions in node events."""
+    run = _run(
+        events=[
+            _event(
+                NODE_1,
+                "work",
+                "node.profile_assigned",
+                attempt=None,
+                status="assigned",
+                data={
+                    "child_request_id": NODE_1,
+                    "parent_request_id": NODE_2,
+                    "artifact": "codebase",
+                    "adapter": "coding",
+                    "language": "python",
+                    "model_profile": "strong",
+                    "complexity": "hard",
+                    "rationale": "requires broad coordination",
+                },
+            )
+        ],
+        tmp_path=tmp_path,
+    )
+
+    result = HtmlTraceRenderer().render_run(run)
+
+    assert "node.profile_assigned" in result
+    assert "profile=strong complexity=hard artifact=codebase adapter=coding" in result
+    assert "requires broad coordination" in result

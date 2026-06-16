@@ -26,13 +26,25 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.plan_expansion import DecompositionConvergenceError, PlanExpansionBuilder
-from forge.core.profile_assignment import DefaultProfileAssigner, ProfileAssigner
+from forge.core.profile_assignment import (
+    DefaultProfileAssigner,
+    ProfileAssigner,
+    ProfileAssignmentResult,
+)
 from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
 logger = logging.getLogger(__name__)
+
+
+def _short_rationale(value: str, limit: int = 240) -> str:
+    """Return a compact single-line rationale for telemetry."""
+    rationale = " ".join(value.split())
+    if len(rationale) <= limit:
+        return rationale
+    return rationale[: limit - 3].rstrip() + "..."
 
 
 @dataclass
@@ -224,12 +236,16 @@ class SchedulerConsequenceHandler:
                     "completed PLAN response did not include WorkDecision or GraphSplitDecision output"
                 )
             if isinstance(output, (WorkDecision, GraphSplitDecision)):
-                return [
-                    DAGNode(request=request)
-                    for request in await PlanExpansionBuilder(
-                        node.request, profile_assigner=self._profile_assigner
-                    ).build_from_decision(output)
-                ]
+                builder = PlanExpansionBuilder(
+                    node.request, profile_assigner=self._profile_assigner
+                )
+                requests = await builder.build_from_decision(output)
+                self._emit_profile_assigned_events(
+                    parent=node,
+                    requests=requests,
+                    assignments=builder.profile_assignment_results,
+                )
+                return [DAGNode(request=request) for request in requests]
         return []
 
     def _validate_plan_expansion_budget(
@@ -566,6 +582,51 @@ class SchedulerConsequenceHandler:
                 data=data,
             ),
         )
+
+    def _emit_profile_assigned_events(
+        self,
+        *,
+        parent: DAGNode,
+        requests: list[AgentRequest],
+        assignments: dict[RequestId, ProfileAssignmentResult],
+    ) -> None:
+        if self._run_id is None:
+            return
+        for request in requests:
+            if request.agent_type is not AgentType.WORK or not isinstance(request.spec, WorkSpec):
+                continue
+            assignment = assignments.get(request.id)
+            if assignment is None:
+                assignment = ProfileAssignmentResult(model_profile=request.model_profile)
+            data: dict[str, object] = {
+                "child_request_id": str(request.id),
+                "parent_request_id": str(parent.request.id),
+                "artifact": request.spec.artifact,
+                "adapter": request.spec.adapter,
+                "model_profile": assignment.model_profile,
+            }
+            if request.spec.language is not None:
+                data["language"] = request.spec.language
+            if assignment.complexity is not None:
+                data["complexity"] = assignment.complexity.value
+            if assignment.rationale is not None:
+                data["rationale"] = _short_rationale(assignment.rationale)
+
+            safe_append_telemetry(
+                self._telemetry_sink,
+                TelemetryEvent(
+                    run_id=self._run_id,
+                    node_id=request.id,
+                    request_id=request.id,
+                    agent_type=request.agent_type.value,
+                    role="scheduler",
+                    phase="routing",
+                    event_type="node.profile_assigned",
+                    status="assigned",
+                    summary=f"worker task assigned to profile {assignment.model_profile!r}",
+                    data=data,
+                ),
+            )
 
     def emit_node_dispatched(self, node: DAGNode) -> None:
         """Emit node.dispatched with the node's contract so traces expose planner intent."""

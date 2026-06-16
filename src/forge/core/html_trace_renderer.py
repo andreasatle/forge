@@ -364,7 +364,22 @@ class HtmlTraceRenderer:
             return self._disposition(event, "referee_decision")
         if event_type == "pwc.revision.appended":
             return self._revision(event)
+        if event_type == "node.profile_assigned":
+            return self._profile_assignment(event)
         return f'<p class="event-body">{self._e(event_summary(event))}</p>'
+
+    def _profile_assignment(self, event: TraceEvent) -> str:
+        data = dict_value(event.data.get("data"))
+        profile = str_value(data.get("model_profile")) or "default"
+        complexity = str_value(data.get("complexity")) or "not classified"
+        artifact = str_value(data.get("artifact")) or "—"
+        adapter = str_value(data.get("adapter")) or "—"
+        rationale = str_value(data.get("rationale"))
+        summary = f"profile={profile} complexity={complexity} artifact={artifact} adapter={adapter}"
+        body = f'<p class="event-body">{self._e(summary)}</p>'
+        if rationale:
+            body += f'<p class="event-body">{self._e(fit(rationale, 160))}</p>'
+        return body
 
     def _disposition(self, event: TraceEvent, model_key: str) -> str:
         data = dict_value(event.data.get("data"))

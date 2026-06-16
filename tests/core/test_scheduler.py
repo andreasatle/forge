@@ -29,12 +29,14 @@ from forge.core.models import (
     WorkOutput,
     WorkSpec,
 )
+from forge.core.profile_assignment import ProfileAssignmentResult
 from forge.core.scheduler import (
     Scheduler,
     SchedulerCallbacks,
     TerminalNodeOutcome,
     TerminalOutcomeKind,
 )
+from forge.core.task_complexity import TaskComplexity
 from forge.core.telemetry import TelemetryEvent
 
 
@@ -74,13 +76,18 @@ class _FakeStateService:
 class _FixedProfileAssigner:
     """Profile assigner fake for scheduler injection tests."""
 
-    def __init__(self, profile: str) -> None:
+    def __init__(self, profile: str, result: ProfileAssignmentResult | None = None) -> None:
         self.profile = profile
+        self.result = result or ProfileAssignmentResult(model_profile=profile)
         self.calls: list[AgentRequest] = []
 
     async def assign(self, request: AgentRequest) -> str:
         self.calls.append(request)
         return self.profile
+
+    async def assign_with_metadata(self, request: AgentRequest) -> ProfileAssignmentResult:
+        self.calls.append(request)
+        return self.result
 
 
 # --- Helpers ---
@@ -2153,3 +2160,132 @@ async def test_scheduler_uses_injected_profile_assigner_without_model_wiring() -
 
     scheduler_source = inspect.getsource(scheduler_module)
     assert "make_provider" not in scheduler_source
+
+
+async def test_scheduler_emits_profile_assigned_telemetry_for_generated_work() -> None:
+    """Accepted plan expansion emits routing telemetry for generated WORK requests."""
+    planner = _plan_request()
+    sink = _MemoryTelemetrySink()
+    assigner = _FixedProfileAssigner(
+        "strong",
+        ProfileAssignmentResult(
+            model_profile="strong",
+            complexity=TaskComplexity.HARD,
+            rationale="requires broad coordination",
+        ),
+    )
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+            language="python",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+        profile_assigner=assigner,
+    ).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    work_node = next(
+        node for node in final.dag.values() if node.request.agent_type is AgentType.WORK
+    )
+    events = [event for event in sink.events if event.event_type == "node.profile_assigned"]
+    assert len(events) == 1
+    event = events[0]
+    assert event.node_id == work_node.request.id
+    assert event.request_id == work_node.request.id
+    assert event.agent_type == "work"
+    assert event.phase == "routing"
+    assert event.status == "assigned"
+    assert event.data == {
+        "child_request_id": str(work_node.request.id),
+        "parent_request_id": str(planner.id),
+        "artifact": "codebase",
+        "adapter": "coding",
+        "model_profile": "strong",
+        "language": "python",
+        "complexity": "hard",
+        "rationale": "requires broad coordination",
+    }
+
+
+async def test_profile_assigned_telemetry_excludes_file_and_stateview_content() -> None:
+    """Routing telemetry includes compact routing fields, not task prompt or state content."""
+    planner = _plan_request()
+    sink = _MemoryTelemetrySink()
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="use SECRET_FAKE_FILE_CONTENT to implement parser",
+            success_condition="tests pass with StateView(files=[...])",
+            adapter="coding",
+            artifact="codebase",
+            language="python",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(
+        _base_state().add_nodes([DAGNode(request=planner)])
+    )
+
+    event = next(event for event in sink.events if event.event_type == "node.profile_assigned")
+    rendered_data = str(event.data)
+    assert "SECRET_FAKE_FILE_CONTENT" not in rendered_data
+    assert "StateView(files=[...])" not in rendered_data
+    assert "objective" not in event.data
+    assert "success_condition" not in event.data
+
+
+async def test_profile_assignment_still_works_when_telemetry_sink_absent() -> None:
+    """Routing behavior remains unchanged when no telemetry sink is configured."""
+    planner = _plan_request()
+    assigner = _FixedProfileAssigner("fast")
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner, profile_assigner=assigner).run(
+        _base_state().add_nodes([DAGNode(request=planner)])
+    )
+
+    work_node = next(
+        node for node in final.dag.values() if node.request.agent_type is AgentType.WORK
+    )
+    assert work_node.request.model_profile == "fast"
+    assert work_node.node_state == NodeState.INTEGRATED

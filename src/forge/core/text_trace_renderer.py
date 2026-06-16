@@ -216,6 +216,24 @@ def _render_event(event: TraceEvent, *, indent: str, full: bool) -> list[str]:
         return [f"{indent}decompose requested: {event_summary(event)}"]
     if event_type == "node.decomposed":
         return [f"{indent}node.decomposed: {event_summary(event)}"]
+    if event_type == "node.profile_assigned":
+        data = dict_value(event.data.get("data"))
+        profile = str_value(data.get("model_profile")) or "default"
+        complexity = str_value(data.get("complexity"))
+        artifact = str_value(data.get("artifact"))
+        adapter = str_value(data.get("adapter"))
+        parts = [f"profile={profile}"]
+        if complexity:
+            parts.append(f"complexity={complexity}")
+        if artifact:
+            parts.append(f"artifact={artifact}")
+        if adapter:
+            parts.append(f"adapter={adapter}")
+        rationale = str_value(data.get("rationale"))
+        line = f"{indent}profile assigned: {' '.join(parts)}"
+        if rationale:
+            line += f" rationale={fit(rationale, 160)}"
+        return [line]
     if full:
         return [f"{indent}{event_type}: {event_summary(event)}"]
     return []
@@ -338,6 +356,7 @@ def interesting_events(evts: list[TraceEvent]) -> list[TraceEvent]:
         "node.failed",
         "pwc.decompose.requested",
         "node.decomposed",
+        "node.profile_assigned",
     }
     return [event for event in evts if event.data.get("event_type") in keep]
 

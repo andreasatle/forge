@@ -20,7 +20,8 @@ from forge.core.plan_expansion import (
     DecompositionConvergenceValidator,
     PlanExpansionBuilder,
 )
-from forge.core.profile_assignment import DefaultProfileAssigner
+from forge.core.profile_assignment import DefaultProfileAssigner, ProfileAssignmentResult
+from forge.core.task_complexity import TaskComplexity
 
 
 class FakeProfileAssigner:
@@ -33,6 +34,19 @@ class FakeProfileAssigner:
     async def assign(self, request: AgentRequest) -> str:
         self.requests.append(request)
         return self.profile
+
+
+class FakeProfileMetadataAssigner:
+    """Test double that returns fixed profile assignment metadata."""
+
+    def __init__(self, result: ProfileAssignmentResult) -> None:
+        self.result = result
+
+    async def assign(self, request: AgentRequest) -> str:
+        return self.result.model_profile
+
+    async def assign_with_metadata(self, request: AgentRequest) -> ProfileAssignmentResult:
+        return self.result
 
 
 def _plan_request() -> AgentRequest:
@@ -138,6 +152,32 @@ async def test_work_decision_uses_injected_profile_assigner_for_work_requests() 
     assert assigner.requests[0].agent_type == AgentType.WORK
     assert assigner.requests[0].model_profile == "default"
     assert requests[0].model_profile == "fast"
+
+
+async def test_work_decision_records_profile_assignment_metadata() -> None:
+    """PlanExpansionBuilder preserves routing metadata for generated WORK requests."""
+    assignment = ProfileAssignmentResult(
+        model_profile="strong",
+        complexity=TaskComplexity.HARD,
+        rationale="requires broad coordination",
+    )
+    builder = PlanExpansionBuilder(
+        _plan_request(),
+        profile_assigner=FakeProfileMetadataAssigner(assignment),
+    )
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="parser passes tests",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    requests = await builder.build_from_decision(decision)
+
+    assert requests[0].model_profile == "strong"
+    assert builder.profile_assignment_results[requests[0].id] == assignment
 
 
 # --- GraphSplitDecision expansion ---
