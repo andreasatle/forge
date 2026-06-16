@@ -69,7 +69,7 @@ def make_work_handler(
                 plugin = language_registry.get(spec.language) if spec.language else None
                 state_view = StateService(workspace, spec.artifact, plugin).build_state_view()
         else:
-            state_view = StateView(artifact_name="", language=None, files=[], dependencies=[])
+            state_view = StateView(artifact_name="", language=None, files=[])
         return await work_agent(
             request,
             registry,

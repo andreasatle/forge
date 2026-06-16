@@ -82,7 +82,7 @@ def _plan_request() -> AgentRequest:
 
 
 def _state_view() -> StateView:
-    return StateView(artifact_name="codebase", language=None, files=[], dependencies=[])
+    return StateView(artifact_name="codebase", language=None, files=[])
 
 
 def _adapter_spec(
@@ -1140,7 +1140,7 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
             work_noun="document",
         )
     )
-    sv = StateView(artifact_name="docs", language=None, files=[], dependencies=[])
+    sv = StateView(artifact_name="docs", language=None, files=[])
     engine = AttemptLifecycle[WorkOutput](
         request=request,
         state_view=sv,
@@ -1227,7 +1227,7 @@ async def test_work_output_validator_review_context_has_no_topology_rules() -> N
     adapters_dir = Path(__file__).parents[2] / "adapters"
     registry = AdapterRegistry()
     registry.load(adapters_dir)
-    state_view = StateView(artifact_name="codebase", language=None, files=[], dependencies=[])
+    state_view = StateView(artifact_name="codebase", language=None, files=[])
     context = WorkOutputValidator(registry.get("coding"), state_view).review_context()
 
     assert context.topology_rules == ""

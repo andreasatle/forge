@@ -52,15 +52,14 @@ def test_build_state_view_returns_correct_file_listing(tmp_path: Path) -> None:
     ]
 
 
-def test_build_state_view_returns_empty_lists_for_empty_artifact(tmp_path: Path) -> None:
-    """build_state_view returns empty files and dependencies for a freshly initialised artifact."""
+def test_build_state_view_returns_empty_files_for_empty_artifact(tmp_path: Path) -> None:
+    """build_state_view returns empty files for a freshly initialised artifact."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
 
     view = StateService(ws, "app").build_state_view()
 
     assert view.files == []
-    assert view.dependencies == []
 
 
 def test_build_state_view_excludes_noise_files(tmp_path: Path) -> None:

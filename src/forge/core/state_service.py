@@ -128,7 +128,6 @@ class StateService:
                 artifact_name=self._artifact_name,
                 language=language,
                 files=[],
-                dependencies=[],
                 version=self._version,
             )
 
@@ -150,7 +149,6 @@ class StateService:
             artifact_name=self._artifact_name,
             language=language,
             files=file_views,
-            dependencies=[],
             version=self._version,
             version_sha=version_sha,
         )

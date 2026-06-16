@@ -98,7 +98,7 @@ def _plan_request() -> AgentRequest:
 
 
 def _state_view() -> StateView:
-    return StateView(artifact_name="codebase", language="python", files=[], dependencies=[])
+    return StateView(artifact_name="codebase", language="python", files=[])
 
 
 def _rendered_output() -> str:

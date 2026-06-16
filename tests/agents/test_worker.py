@@ -104,7 +104,7 @@ def _language_registry_with_tests(name: str = "python") -> LanguageRegistry:
 
 
 def _state_view(artifact: str = "codebase", language: str | None = None) -> StateView:
-    return StateView(artifact_name=artifact, language=language, files=[], dependencies=[])
+    return StateView(artifact_name=artifact, language=language, files=[])
 
 
 def _work_request(adapter: str, language: str | None = None) -> AgentRequest:
@@ -471,7 +471,6 @@ async def test_worker_prompt_includes_state_version_and_file_context(tmp_path: P
         artifact_name="codebase",
         language=None,
         files=[FileView(path="src/app.py", content="print('hi')")],
-        dependencies=[],
         version=7,
     )
 
@@ -657,7 +656,6 @@ async def test_worker_prompt_uses_existing_files_not_codebase(tmp_path: Path) ->
         artifact_name="codebase",
         language=None,
         files=[FileView(path="README.md", content="hello")],
-        dependencies=[],
     )
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
@@ -1058,7 +1056,6 @@ async def test_worker_prompt_shows_state_version_without_base_version_instructio
         artifact_name="codebase",
         language=None,
         files=[],
-        dependencies=[],
         version=42,
     )
 
@@ -1086,7 +1083,6 @@ async def test_worker_prompt_includes_base_commit_sha_for_context(tmp_path: Path
         artifact_name="codebase",
         language=None,
         files=[],
-        dependencies=[],
         version=3,
         version_sha="deadbeef1234abcd",
     )
@@ -1214,9 +1210,7 @@ async def test_document_adapter_prompt_includes_concrete_work_output_example(
     )
     provider = MagicMock()
     provider.max_tokens = 8192
-    state_view = StateView(
-        artifact_name="docs", language=None, files=[], dependencies=[], version=0
-    )
+    state_view = StateView(artifact_name="docs", language=None, files=[], version=0)
 
     with patch("forge.agents.worker.run_agent", new_callable=AsyncMock) as mock_run_agent:
         mock_run_agent.return_value = AgentResponse(
@@ -1294,7 +1288,6 @@ async def test_version_zero_prompt_has_no_sha_and_no_base_version_instruction(
         artifact_name="codebase",
         language=None,
         files=[],
-        dependencies=[],
         version=0,
     )
 

@@ -115,7 +115,7 @@ Goal: {northstar}
 Produce output satisfying this contract.
 """
 
-_DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[], dependencies=[])
+_DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[])
 
 
 def _normalize_coding_task_language(

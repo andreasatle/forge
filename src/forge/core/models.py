@@ -29,7 +29,6 @@ class AgentMessageKind(StrEnum):
 
     TOOL_RESPONSE = "tool_response"
     WORK_OUTPUT = "work_output"
-    PLAN = "plan"
 
 
 class RequestSource(Enum):
@@ -297,13 +296,6 @@ def render_agent_contract(request: AgentRequest) -> str:
     return "\n".join(lines)
 
 
-class FileContent(BaseModel, frozen=True):
-    """A file to be written to the artifact directory — full content."""
-
-    path: str
-    content: str
-
-
 class WorkOutput(BaseModel, frozen=True):
     """Completion metadata for work already written to the assigned git worktree."""
 
@@ -312,18 +304,15 @@ class WorkOutput(BaseModel, frozen=True):
 
     @model_validator(mode="before")
     @classmethod
-    def _derive_summary_from_legacy_payload(cls, data: object) -> object:
+    def _reject_legacy_payload(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
         d = cast("dict[str, object]", data)
-        if d.get("summary"):
-            return d
-        files = d.get("files")
-        dependencies = d.get("dependencies")
-        if files or dependencies:
-            updated: dict[str, object] = dict(d)
-            updated["summary"] = "Completed worktree changes."
-            return updated
+        if "files" in d or "dependencies" in d:
+            raise ValueError(
+                "WorkOutput no longer accepts 'files' or 'dependencies' fields. "
+                "Write changes to the worktree directly and return a summary only."
+            )
         return d
 
 
@@ -349,14 +338,8 @@ class StateView(BaseModel, frozen=True):
     artifact_name: str
     language: str | None
     files: list[FileView]
-    dependencies: list[str]
-    test_summary: str | None = None
     version: int = 0
     version_sha: str = ""
-
-
-def _empty_ints() -> list[int]:
-    return []
 
 
 class TaskSpec(BaseModel, frozen=True):
@@ -373,7 +356,6 @@ class TaskSpec(BaseModel, frozen=True):
     adapter: str
     artifact: str
     language: str | None = None
-    depends_on: list[int] = Field(default_factory=_empty_ints)
 
 
 class DecompositionTask(BaseModel, frozen=True):

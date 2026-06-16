@@ -21,7 +21,6 @@ from forge.core.models import (
     DecompositionNodeSpec,
     DecompositionTask,
     FailureKind,
-    FileContent,
     FileView,
     FinalTurn,
     GraphSplitDecision,
@@ -307,16 +306,22 @@ def test_state_view_stores_files_as_file_views():
         artifact_name="myapp",
         language="python",
         files=files,
-        dependencies=["requests"],
     )
     assert view.files == files
+
+
+def test_state_view_has_no_dependencies_field():
+    """StateView.dependencies and StateView.test_summary have been removed."""
+    view = StateView(artifact_name="myapp", language=None, files=[])
+    assert not hasattr(view, "dependencies")
+    assert not hasattr(view, "test_summary")
 
 
 # --- TaskSpec ---
 
 
-def test_task_spec_defaults_depends_on_to_empty_list():
-    """TaskSpec.depends_on defaults to an empty list."""
+def test_task_spec_has_no_depends_on_field():
+    """TaskSpec.depends_on has been removed — graph expansion uses string node IDs."""
     ts = TaskSpec(
         objective="write tests",
         success_condition="tests pass",
@@ -324,7 +329,7 @@ def test_task_spec_defaults_depends_on_to_empty_list():
         artifact="codebase",
         language=None,
     )
-    assert ts.depends_on == []
+    assert not hasattr(ts, "depends_on")
 
 
 # --- ToolCallResponse ---
@@ -465,14 +470,14 @@ def test_referee_decision_override_true_when_overriding_critic():
     assert decision.override is True
 
 
-# --- FileContent ---
+# --- FileContent removed ---
 
 
-def test_file_content_stores_path_and_content():
-    """FileContent stores path and content correctly."""
-    fc = FileContent(path="src/main.py", content="x = 1")
-    assert fc.path == "src/main.py"
-    assert fc.content == "x = 1"
+def test_file_content_no_longer_exists():
+    """FileContent has been removed — it was unused after the worktree protocol replaced it."""
+    import forge.core.models as m
+
+    assert not hasattr(m, "FileContent")
 
 
 # --- WorkOutput ---
@@ -498,13 +503,16 @@ def test_work_output_is_frozen():
         wo.summary = "mutated"  # type: ignore[misc]
 
 
-def test_work_output_ignores_legacy_files_and_dependencies():
-    """WorkOutput no longer transports file contents or dependencies."""
-    fc = FileContent(path="src/lib.py", content="def f(): pass")
-    wo = WorkOutput.model_validate({"files": [fc.model_dump()], "dependencies": ["requests"]})
-    assert not hasattr(wo, "files")
-    assert not hasattr(wo, "dependencies")
-    assert wo.summary == "Completed worktree changes."
+def test_work_output_rejects_legacy_files_payload():
+    """WorkOutput raises ValueError when a 'files' key is present in the payload."""
+    with pytest.raises(Exception, match="files"):
+        WorkOutput.model_validate({"files": [{"path": "src/lib.py", "content": "x"}]})
+
+
+def test_work_output_rejects_legacy_dependencies_payload():
+    """WorkOutput raises ValueError when a 'dependencies' key is present in the payload."""
+    with pytest.raises(Exception, match="dependencies"):
+        WorkOutput.model_validate({"dependencies": ["requests"]})
 
 
 # --- ToolTurn ---
