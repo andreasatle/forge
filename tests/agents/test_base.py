@@ -1800,6 +1800,101 @@ async def test_tool_loop_identical_failing_verification_sets_verification_stable
     assert "verification_stable=True" in response.diagnostics[0].message
 
 
+async def test_tool_loop_identical_failing_verification_triggers_completion_pressure() -> None:
+    """Two identical failing verification results force the next turn to final output."""
+    registry = ToolRegistry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is False
+    assert provider.chat.call_count == 3
+
+    third_call_messages = provider.chat.call_args_list[2][0][0]
+    last_user_content = third_call_messages[-1]["content"]
+    assert (
+        "Verification produced the same failing result as before. "
+        "No new information was obtained. Stop calling tools and return final WorkOutput JSON "
+        "with your current findings."
+    ) in last_user_content
+
+
+async def test_tool_loop_removes_tools_after_verification_convergence_pressure() -> None:
+    """After failing verification converges, the next system prompt has no tool definitions."""
+    registry = ToolRegistry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    registry.register(_make_noop_write_file_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    third_call_messages = provider.chat.call_args_list[2][0][0]
+    system_content = third_call_messages[0]["content"]
+    assert "run_tests" not in system_content
+    assert "write_file" not in system_content
+    assert "WorkOutput" in system_content
+
+
+async def test_tool_loop_rejects_tool_call_after_verification_convergence_pressure() -> None:
+    """A ToolTurn after convergence pressure is rejected without executing the tool."""
+    registry, mock_fn = _make_registry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_retries=3,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.ran_tests_and_passed is False
+    assert mock_fn.call_count == 0
+
+
 async def test_tool_loop_changed_verification_result_resets_verification_stable_count() -> None:
     """Different failing run_tests results reset verification_stable_count to 0."""
     registry = ToolRegistry()
@@ -1822,6 +1917,7 @@ async def test_tool_loop_changed_verification_result_resets_verification_stable_
     msg = response.diagnostics[0].message
     assert "verification_stable=False" in msg
     assert "verification_stable_count=0" in msg
+    assert "final_response_only=False" in msg
 
 
 async def test_tool_loop_successful_mutation_updates_last_progress_iteration() -> None:
@@ -1920,7 +2016,7 @@ async def test_tool_loop_iteration_at_verification_stability_set_when_first_stab
 
 
 async def test_tool_loop_iteration_at_verification_stability_not_overwritten() -> None:
-    """Subsequent identical verification results do not overwrite the first stability iteration."""
+    """Completion pressure preserves the first stability iteration in diagnostics."""
     registry = ToolRegistry()
     registry.register(_make_fixed_failing_run_tests_tool())
     request = _work_request()
@@ -1932,13 +2028,12 @@ async def test_tool_loop_iteration_at_verification_stability_not_overwritten() -
         prompt="prompt",
         tools=registry,
         final_response_type=WorkOutput,
-        max_tool_iterations=3,
+        max_tool_iterations=2,
         max_retries=0,
     ).run()
 
     assert response.failure_kind == FailureKind.MAX_ITERATIONS
     assert response.diagnostics
-    # stability first occurred at iteration 1; iteration 2 repeats but must not overwrite
     assert "iteration_at_verification_stability=1" in response.diagnostics[0].message
 
 

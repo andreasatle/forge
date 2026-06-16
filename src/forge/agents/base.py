@@ -591,6 +591,15 @@ class ToolLoop:
                         coercion = (
                             "Tests passed. Stop calling tools and return final WorkOutput JSON now."
                         )
+                    elif state.verification_stable:
+                        state.final_response_only = True
+                        if state.iteration_at_completion_pressure == 0:
+                            state.iteration_at_completion_pressure = iteration
+                        coercion = (
+                            "Verification produced the same failing result as before. "
+                            "No new information was obtained. Stop calling tools and return "
+                            "final WorkOutput JSON with your current findings."
+                        )
                 messages.append({"role": "assistant", "content": raw})
                 messages.append({"role": "user", "content": tool_response.model_dump_json()})
                 if coercion is not None:
