@@ -1,5 +1,7 @@
 """Scheduler-owned conversion from DecompositionDecision to work AgentRequests."""
 
+from typing import assert_never
+
 from forge.core.models import (
     AgentContract,
     AgentRequest,
@@ -52,10 +54,13 @@ class DecompositionConvergenceValidator:
 
     def validate(self, parent_objective: str, decision: DecompositionDecision) -> None:
         """Raise DecompositionConvergenceError if decision is not reductive."""
-        if isinstance(decision, WorkDecision):
-            return
-
-        assert isinstance(decision, GraphSplitDecision)
+        match decision:
+            case WorkDecision():
+                return
+            case GraphSplitDecision():
+                pass
+            case _ as unreachable:
+                assert_never(unreachable)
         parent_norm = self._normalize(parent_objective)
         child_tasks: list[ChildTask] = [node.task for node in decision.nodes]
         child_norms: list[str] = []
@@ -153,15 +158,18 @@ class PlanExpansionBuilder:
         """Convert a DecompositionDecision into agent requests."""
         parent_objective = self.request.spec.contract.objective
         DecompositionConvergenceValidator().validate(parent_objective, decision)
-        if isinstance(decision, WorkDecision):
-            request = AgentRequest(
-                agent_type=AgentType.WORK,
-                source=RequestSource.PLANNER,
-                spec=decision.task,
-            )
-            return [await self._assign_work_profile(request)]
-        assert isinstance(decision, GraphSplitDecision)
-        return await self._build_from_graph_split(decision)
+        match decision:
+            case WorkDecision():
+                request = AgentRequest(
+                    agent_type=AgentType.WORK,
+                    source=RequestSource.PLANNER,
+                    spec=decision.task,
+                )
+                return [await self._assign_work_profile(request)]
+            case GraphSplitDecision():
+                return await self._build_from_graph_split(decision)
+            case _ as unreachable:
+                assert_never(unreachable)
 
     async def _build_from_graph_split(self, decision: GraphSplitDecision) -> list[AgentRequest]:
         """Expand a GraphSplitDecision into requests with RequestId dependencies."""
