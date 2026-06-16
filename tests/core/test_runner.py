@@ -28,6 +28,7 @@ from forge.core.models import (
 from forge.core.runner import (
     Runner,
     make_plan_handler,
+    make_profile_dispatch_handler,
     make_work_handler,
 )
 from forge.core.scheduler import Scheduler
@@ -676,3 +677,111 @@ async def test_validation_failed_work_response_does_not_call_apply_work_output(
 
     ss.apply_work_output.assert_not_called()
     assert final.dag[work.id].node_state == NodeState.FAILED
+
+
+# --- make_profile_dispatch_handler ---
+
+
+def _fast_work_request() -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do work", success_condition="done", adapter="coding", artifact="codebase"
+        ),
+        model_profile="fast",
+    )
+
+
+async def test_profile_dispatch_routes_fast_profile_to_fast_handler() -> None:
+    """request.model_profile='fast' is routed to the fast handler."""
+    called: list[str] = []
+
+    async def default_handler(request: AgentRequest) -> AgentResponse:
+        called.append("default")
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    async def fast_handler(request: AgentRequest) -> AgentResponse:
+        called.append("fast")
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    dispatch = make_profile_dispatch_handler({"default": default_handler, "fast": fast_handler})
+    await dispatch(_fast_work_request())
+
+    assert called == ["fast"]
+
+
+async def test_profile_dispatch_routes_default_profile_to_default_handler() -> None:
+    """request.model_profile='default' is routed to the default handler."""
+    called: list[str] = []
+
+    async def default_handler(request: AgentRequest) -> AgentResponse:
+        called.append("default")
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    async def fast_handler(request: AgentRequest) -> AgentResponse:
+        called.append("fast")
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    dispatch = make_profile_dispatch_handler({"default": default_handler, "fast": fast_handler})
+    await dispatch(_work_request())  # model_profile defaults to "default"
+
+    assert called == ["default"]
+
+
+async def test_profile_dispatch_unknown_profile_logs_warning_and_falls_back_to_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unknown profile emits a warning and routes to the default handler."""
+    import logging
+
+    called: list[str] = []
+
+    async def default_handler(request: AgentRequest) -> AgentResponse:
+        called.append("default")
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    dispatch = make_profile_dispatch_handler({"default": default_handler})
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do work", success_condition="done", adapter="coding", artifact="codebase"
+        ),
+        model_profile="nonexistent",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="forge.core.runner"):
+        await dispatch(request)
+
+    assert called == ["default"]
+    assert "nonexistent" in caplog.text
+    assert "default" in caplog.text
+
+
+async def test_profile_dispatch_passes_request_unchanged_to_handler() -> None:
+    """The exact request object is forwarded to the selected handler without copying."""
+    received: list[AgentRequest] = []
+
+    async def default_handler(request: AgentRequest) -> AgentResponse:
+        received.append(request)
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    dispatch = make_profile_dispatch_handler({"default": default_handler})
+    request = _work_request()
+    await dispatch(request)
+
+    assert received[0] is request
+
+
+async def test_profile_dispatch_does_not_modify_request_model_profile() -> None:
+    """Profile dispatch does not alter request.model_profile before or after routing."""
+
+    async def default_handler(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    dispatch = make_profile_dispatch_handler({"default": default_handler})
+    request = _work_request()
+    await dispatch(request)
+
+    assert request.model_profile == "default"

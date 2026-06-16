@@ -1,5 +1,6 @@
 """Runner that routes agent requests to registered runtime handlers."""
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from forge.adapters.registry import AdapterRegistry
@@ -20,6 +21,8 @@ from forge.languages.registry import LanguageRegistry
 from forge.llm.providers import LLMProvider
 
 Handler = Callable[[AgentRequest], Awaitable[AgentResponse]]
+
+logger = logging.getLogger(__name__)
 
 
 class Runner:
@@ -122,3 +125,28 @@ def make_plan_handler(
         )
 
     return plan_handler
+
+
+def make_profile_dispatch_handler(
+    profile_handlers: dict[str, Handler],
+    *,
+    default_profile: str = "default",
+) -> Handler:
+    """Return a handler that routes work requests to per-profile handlers.
+
+    Routes by request.model_profile. Falls back to default_profile with a
+    warning when the profile key is not found in profile_handlers.
+    """
+
+    async def dispatch(request: AgentRequest) -> AgentResponse:
+        handler = profile_handlers.get(request.model_profile)
+        if handler is None:
+            logger.warning(
+                "unknown model_profile %r — falling back to %r",
+                request.model_profile,
+                default_profile,
+            )
+            handler = profile_handlers[default_profile]
+        return await handler(request)
+
+    return dispatch
