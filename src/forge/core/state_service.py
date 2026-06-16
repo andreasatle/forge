@@ -3,14 +3,14 @@
 import subprocess
 from pathlib import Path
 
-from forge.core.models import FileView, RunResult, StateView, WorkOutput
-from forge.core.noise import (
+from forge.core.file_filters import (
     GENERATED_ARTIFACT_DIRS,
     GENERATED_ARTIFACT_SUFFIXES,
     NOISE_FILE_NAMES,
     STATE_VIEW_NOISE_DIRS,
     STATE_VIEW_NOISE_SUFFIXES,
 )
+from forge.core.models import FileView, RunResult, StateView, WorkOutput
 from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 

@@ -11,6 +11,11 @@ from forge.agents.attempt_telemetry import AttemptTelemetryReporter
 from forge.agents.critic import critic_agent
 from forge.agents.referee import referee_agent
 from forge.agents.revisions import RevisionHistory
+from forge.core.file_filters import (
+    CRITIC_EVIDENCE_NOISE_DIRS,
+    CRITIC_EVIDENCE_NOISE_SUFFIXES,
+    NOISE_FILE_NAMES,
+)
 from forge.core.models import (
     VALIDATION_EXHAUSTED_DIAGNOSTIC,
     AgentDiagnostic,
@@ -27,11 +32,6 @@ from forge.core.models import (
     TaskSpec,
     WorkDecision,
     WorkOutput,
-)
-from forge.core.noise import (
-    CRITIC_EVIDENCE_NOISE_DIRS,
-    CRITIC_EVIDENCE_NOISE_SUFFIXES,
-    NOISE_FILE_NAMES,
 )
 from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import run_git

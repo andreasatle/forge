@@ -1,4 +1,4 @@
-"""Noise, exclusion, and generated-artifact constants for Forge.
+"""File filter constants for Forge.
 
 Three semantically distinct groups — do not merge them:
 

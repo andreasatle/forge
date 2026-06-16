@@ -1,6 +1,6 @@
-"""Tests for forge.core.noise — noise/exclusion constant contracts."""
+"""Tests for forge.core.file_filters — file filter constant contracts."""
 
-from forge.core.noise import (
+from forge.core.file_filters import (
     CRITIC_EVIDENCE_NOISE_DIRS,
     CRITIC_EVIDENCE_NOISE_SUFFIXES,
     GENERATED_ARTIFACT_DIRS,
