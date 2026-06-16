@@ -663,11 +663,6 @@ class Scheduler:
 
             if not ready:
                 self._fire_state(self._callbacks.on_idle, state)
-                if not any(
-                    n.node_state in (NodeState.PENDING, NodeState.RUNNING)
-                    for n in state.dag.values()
-                ):
-                    break
                 break
 
             to_dispatch = ready[: state.max_concurrency]
