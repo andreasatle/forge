@@ -217,6 +217,10 @@ class StateService:
                     pass
             raise RuntimeError(_format_git_error(e)) from e
 
+    def remove_worktree(self, node_id: str) -> None:
+        """Remove the git worktree for a work node after integration."""
+        self._workspace.remove_worktree(self._artifact_name, node_id)
+
     def run_tests(self) -> RunResult:
         """Run the language plugin test command and return structured result."""
         if not self._plugin:

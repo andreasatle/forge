@@ -16,7 +16,6 @@ from forge.core.models import (
     WorkSpec,
     render_agent_contract,
 )
-from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetrySink
 from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
@@ -74,9 +73,7 @@ class WorkTaskExecutor:
         referee_provider: LLMProvider | None = None,
         max_attempts: int = 3,
         telemetry_sink: TelemetrySink | None = None,
-        state_service: StateService | None = None,
     ) -> None:
-        _ = state_service
         self.registry = registry
         self.workspace = workspace
         self.language_registry = language_registry
@@ -260,7 +257,6 @@ async def work_agent(
     max_attempts: int = 3,
     telemetry_sink: TelemetrySink | None = None,
     integration_revision: RevisionRequest | None = None,
-    state_service: StateService | None = None,
 ) -> AgentResponse:
     """Run the agentic tool loop for a work request using the specified adapter and artifact."""
     return await WorkTaskExecutor(
@@ -274,5 +270,4 @@ async def work_agent(
         referee_provider=referee_provider,
         max_attempts=max_attempts,
         telemetry_sink=telemetry_sink,
-        state_service=state_service,
     ).run(request, state_view, integration_revision=integration_revision)

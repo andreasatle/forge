@@ -30,7 +30,6 @@ from forge.core.models import (
     render_agent_contract,
 )
 from forge.core.plan_expansion import PlanExpansionBuilder
-from forge.core.state_service import StateService
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguagePlugin, LanguageRegistry
 from forge.tools.registry import ToolRegistry
@@ -178,14 +177,11 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
             ),
         ]
     )
-    ss = MagicMock(spec=StateService)
-    ss.apply_work_output = AsyncMock()
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
-        state_service=ss,
     )
 
     response = await executor.run(request, _state_view())
@@ -195,7 +191,6 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
         kind=AgentMessageKind.WORK_OUTPUT,
         summary="Wrote src/main.py in the worktree.",
     )
-    ss.apply_work_output.assert_not_called()
 
 
 async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:
@@ -1141,14 +1136,11 @@ async def test_document_adapter_writes_file_then_returns_metadata_only_work_outp
             ),
         ]
     )
-    ss = MagicMock(spec=StateService)
-    ss.apply_work_output = AsyncMock()
     executor = WorkTaskExecutor(
         registry=adapter_registry,
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
-        state_service=ss,
     )
 
     response = await executor.run(request, _state_view("docs"))
@@ -1157,7 +1149,6 @@ async def test_document_adapter_writes_file_then_returns_metadata_only_work_outp
     output = response.output
     assert isinstance(output, WorkOutput)
     assert output.summary == "Created README.md with API documentation."
-    ss.apply_work_output.assert_not_called()
     assert "# API Docs" not in output.summary
 
 
@@ -1363,14 +1354,11 @@ async def test_worktree_preserved_after_accepted_changed_work(tmp_path: Path) ->
         real_remove(artifact, node_id)
 
     workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
-    ss = MagicMock(spec=StateService)
-    ss.apply_work_output = AsyncMock()
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
-        state_service=ss,
     )
 
     with (
@@ -1385,7 +1373,6 @@ async def test_worktree_preserved_after_accepted_changed_work(tmp_path: Path) ->
         await executor.run(request, _state_view())
 
     assert removed == []
-    ss.apply_work_output.assert_not_called()
 
 
 async def test_worker_returns_accepted_work_output_without_state_service_integration(
@@ -1406,14 +1393,11 @@ async def test_worker_returns_accepted_work_output_without_state_service_integra
         real_remove(artifact, node_id)
 
     workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
-    ss = MagicMock(spec=StateService)
-    ss.apply_work_output = AsyncMock(side_effect=RuntimeError("tests failed"))
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
-        state_service=ss,
     )
 
     with (
@@ -1429,7 +1413,6 @@ async def test_worker_returns_accepted_work_output_without_state_service_integra
 
     assert response.status == ResponseStatus.COMPLETED
     assert response.output == WorkOutput(summary="done")
-    ss.apply_work_output.assert_not_called()
     assert removed == []
 
 
@@ -1540,14 +1523,11 @@ async def test_worker_does_not_cleanup_scheduler_owned_changed_worktree(
         real_remove(artifact, node_id)
 
     workspace.remove_worktree = tracking_remove  # type: ignore[method-assign]
-    ss = MagicMock(spec=StateService)
-    ss.apply_work_output = AsyncMock()
     executor = WorkTaskExecutor(
         registry=_registry(),
         workspace=workspace,
         language_registry=LanguageRegistry(),
         provider=provider,
-        state_service=ss,
     )
 
     with (
@@ -1561,7 +1541,6 @@ async def test_worker_does_not_cleanup_scheduler_owned_changed_worktree(
         )
         await executor.run(request, _state_view())
 
-    ss.apply_work_output.assert_not_called()
     assert removed == []
 
 
@@ -1703,3 +1682,22 @@ async def test_worker_receives_planner_normalized_language_guidance_and_run_test
     assert "PYTHON_NORMALIZED_EXAMPLE" in user_prompt
     tools = mock_run_agent.call_args.kwargs["tools"]
     assert "run_tests" in _tool_names(tools)
+
+
+# --- P1 ownership cleanup ---
+
+
+def test_work_agent_does_not_accept_state_service() -> None:
+    """work_agent no longer accepts a state_service parameter."""
+    import inspect
+
+    sig = inspect.signature(work_agent)
+    assert "state_service" not in sig.parameters
+
+
+def test_work_task_executor_does_not_accept_state_service() -> None:
+    """WorkTaskExecutor.__init__ no longer accepts a state_service parameter."""
+    import inspect
+
+    sig = inspect.signature(WorkTaskExecutor.__init__)
+    assert "state_service" not in sig.parameters

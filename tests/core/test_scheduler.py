@@ -47,6 +47,8 @@ class _FakeStateService:
     def __init__(self, error: RuntimeError | None = None) -> None:
         self.error = error
         self.calls: list[tuple[WorkOutput, str, str]] = []
+        self.remove_worktree_calls: list[str] = []
+        self.remove_worktree_error: Exception | None = None
 
     async def apply_work_output(
         self, output: WorkOutput, node_id: str, dispatch_sha: str = ""
@@ -54,6 +56,11 @@ class _FakeStateService:
         self.calls.append((output, node_id, dispatch_sha))
         if self.error is not None:
             raise self.error
+
+    def remove_worktree(self, node_id: str) -> None:
+        self.remove_worktree_calls.append(node_id)
+        if self.remove_worktree_error is not None:
+            raise self.remove_worktree_error
 
 
 # --- Helpers ---
@@ -575,6 +582,41 @@ async def test_integration_success_marks_node_integrated() -> None:
     assert state_service.calls == [
         (WorkOutput(summary="Completed worktree changes."), str(work.id), "abc123")
     ]
+
+
+async def test_scheduler_calls_remove_worktree_after_successful_integration() -> None:
+    """Scheduler calls state_service.remove_worktree(node_id) after successful integration."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+    ).run(state)
+
+    assert str(work.id) in state_service.remove_worktree_calls
+
+
+async def test_scheduler_marks_node_integrated_even_if_remove_worktree_raises() -> None:
+    """Scheduler marks the node INTEGRATED even when remove_worktree raises."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService()
+    state_service.remove_worktree_error = RuntimeError("disk error")
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+    ).run(state)
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
 
 
 async def test_scheduler_classifies_test_failure_from_integration() -> None:

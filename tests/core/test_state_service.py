@@ -244,6 +244,26 @@ def test_parse_test_result_failure_text_with_nonzero_exit_returns_false() -> Non
     assert result.passed is False
 
 
+# --- remove_worktree ---
+
+
+def test_remove_worktree_delegates_to_workspace(tmp_path: Path) -> None:
+    """StateService.remove_worktree delegates to Workspace.remove_worktree with the artifact name."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+
+    calls: list[tuple[str, str]] = []
+
+    def _capture(artifact_name: str, node_id: str) -> None:
+        calls.append((artifact_name, node_id))
+
+    with patch.object(ws, "remove_worktree", side_effect=_capture):
+        ss.remove_worktree("node-abc")
+
+    assert calls == [("app", "node-abc")]
+
+
 # --- apply_work_output ---
 
 

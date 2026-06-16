@@ -324,7 +324,7 @@ class SchedulerConsequenceHandler:
                 FailureKind.INTEGRATION_FAILED,
                 "completed without WorkOutput completion metadata",
             )
-            self._remove_integrated_worktree(state_service, spec.artifact, str(updated.request.id))
+            self._remove_integrated_worktree(state_service, str(updated.request.id))
             state = state.update_node(failed)
             return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
         if not work_output.summary.strip():
@@ -333,7 +333,7 @@ class SchedulerConsequenceHandler:
                 FailureKind.INTEGRATION_FAILED,
                 "completed with empty WorkOutput completion metadata",
             )
-            self._remove_integrated_worktree(state_service, spec.artifact, str(updated.request.id))
+            self._remove_integrated_worktree(state_service, str(updated.request.id))
             state = state.update_node(failed)
             return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
 
@@ -352,7 +352,7 @@ class SchedulerConsequenceHandler:
             state = state.update_node(failed)
             return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
         finally:
-            self._remove_integrated_worktree(state_service, spec.artifact, str(updated.request.id))
+            self._remove_integrated_worktree(state_service, str(updated.request.id))
 
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
@@ -391,14 +391,10 @@ class SchedulerConsequenceHandler:
     @staticmethod
     def _remove_integrated_worktree(
         state_service: StateService,
-        artifact: str,
         node_id: str,
     ) -> None:
-        workspace = getattr(state_service, "_workspace", None)
-        if workspace is None:
-            return
         try:
-            workspace.remove_worktree(artifact, node_id)
+            state_service.remove_worktree(node_id)
         except Exception:
             logger.exception("failed to remove worktree for integrated node %s", node_id)
 
