@@ -294,6 +294,11 @@ class SchedulerConsequenceHandler:
                     assignments=builder.profile_assignment_results,
                 )
                 return [DAGNode(request=request) for request in requests]
+            else:
+                raise PlanOutputValidationError(
+                    f"completed PLAN response contained {type(output).__name__} instead of"
+                    " WorkDecision or GraphSplitDecision"
+                )
         return []
 
     def _validate_plan_expansion_budget(

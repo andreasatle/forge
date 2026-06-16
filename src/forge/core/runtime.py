@@ -13,6 +13,7 @@ from forge.core.models import (
     AgentRequest,
     AgentType,
     DAGNode,
+    NodeState,
     PlanSpec,
     RequestSource,
     SchedulerState,
@@ -218,9 +219,9 @@ class ForgeRuntime:
         save_path = save_run(final, workspace)
         logger.info("run saved: %s", save_path)
 
-        completed = sum(1 for n in final.dag.values() if n.node_state.value == "integrated")
-        failed = sum(1 for n in final.dag.values() if n.node_state.value == "failed")
-        cancelled = sum(1 for n in final.dag.values() if n.node_state.value == "cancelled")
+        completed = sum(1 for n in final.dag.values() if n.node_state == NodeState.INTEGRATED)
+        failed = sum(1 for n in final.dag.values() if n.node_state == NodeState.FAILED)
+        cancelled = sum(1 for n in final.dag.values() if n.node_state == NodeState.CANCELLED)
         logger.info(
             "Done — integrated: %d, failed: %d, cancelled: %d", completed, failed, cancelled
         )

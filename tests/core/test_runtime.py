@@ -763,3 +763,83 @@ async def test_runtime_no_worker_profiles_default_request_routes_to_default_hand
     await runner(_work_request_with_profile("default"))  # type: ignore[operator]
 
     assert dispatched_to == ["ollama/worker"]
+
+
+# --- runtime summary enum comparisons ---
+
+
+async def test_runtime_summary_counts_integrated_nodes(
+    tmp_path: Path, monkeypatch: MonkeyPatch, caplog: object
+) -> None:
+    """Runtime summary counts INTEGRATED nodes using enum comparison."""
+    import logging
+
+    plan = AgentRequest(
+        agent_type=AgentType.PLAN,
+        source=RequestSource.USER,
+        spec=PlanSpec(northstar="build a tool"),
+    )
+    integrated_node = DAGNode(request=plan).with_state(NodeState.INTEGRATED)
+    pre_seeded = SchedulerState(northstar="build a tool", max_concurrency=1).add_nodes(
+        [integrated_node]
+    )
+
+    class _PreseededScheduler:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return pre_seeded
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _PreseededScheduler)
+
+    with caplog.at_level(logging.INFO, logger="forge.core.runtime"):  # type: ignore[attr-defined]
+        await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert "integrated: 1" in caplog.text  # type: ignore[attr-defined]
+    assert "failed: 0" in caplog.text  # type: ignore[attr-defined]
+    assert "cancelled: 0" in caplog.text  # type: ignore[attr-defined]
+
+
+async def test_runtime_summary_counts_failed_and_cancelled_nodes(
+    tmp_path: Path, monkeypatch: MonkeyPatch, caplog: object
+) -> None:
+    """Runtime summary counts FAILED and CANCELLED nodes using enum comparison."""
+    import logging
+
+    def _make_work_request() -> AgentRequest:
+        return AgentRequest(
+            agent_type=AgentType.WORK,
+            source=RequestSource.USER,
+            spec=WorkSpec(
+                objective="do work",
+                success_condition="done",
+                adapter="coding",
+                artifact="codebase",
+            ),
+        )
+
+    r1, r2 = _make_work_request(), _make_work_request()
+    state = (
+        SchedulerState(northstar="build a tool", max_concurrency=1)
+        .add_nodes([DAGNode(request=r1).with_state(NodeState.FAILED)])
+        .add_nodes([DAGNode(request=r2).with_state(NodeState.CANCELLED)])
+    )
+
+    class _PreseededScheduler:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        async def run(self, s: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _PreseededScheduler)
+
+    with caplog.at_level(logging.INFO, logger="forge.core.runtime"):  # type: ignore[attr-defined]
+        await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert "integrated: 0" in caplog.text  # type: ignore[attr-defined]
+    assert "failed: 1" in caplog.text  # type: ignore[attr-defined]
+    assert "cancelled: 1" in caplog.text  # type: ignore[attr-defined]

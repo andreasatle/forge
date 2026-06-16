@@ -1486,7 +1486,18 @@ async def test_decompose_transfers_dependents_to_new_plan_node() -> None:
         if request.id == work_a.id:
             return _decompose(request)
         if request.agent_type == AgentType.PLAN:
-            return _ok(request)
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkDecision(
+                    task=WorkSpec(
+                        objective="implement the feature",
+                        success_condition="tests pass",
+                        adapter="coding",
+                        artifact="codebase",
+                    )
+                ),
+            )
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
@@ -2260,7 +2271,18 @@ async def test_plan_node_decompose_disposition_creates_new_plan_node_not_failure
         if request.id == root_plan.id:
             return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
         if request.agent_type == AgentType.PLAN:
-            return _ok(request)
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkDecision(
+                    task=WorkSpec(
+                        objective="implement the feature",
+                        success_condition="tests pass",
+                        adapter="coding",
+                        artifact="codebase",
+                    )
+                ),
+            )
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(
@@ -2305,7 +2327,18 @@ async def test_child_plan_decompose_disposition_creates_new_plan_node() -> None:
             child_decomposed_once = True
             return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
         if request.agent_type == AgentType.PLAN:
-            return _ok(request)
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkDecision(
+                    task=WorkSpec(
+                        objective="implement the feature",
+                        success_condition="tests pass",
+                        adapter="coding",
+                        artifact="codebase",
+                    )
+                ),
+            )
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(
@@ -2471,6 +2504,19 @@ async def test_decompose_convergence_work_to_plan_is_allowed() -> None:
     async def runner(request: AgentRequest) -> AgentResponse:
         if request.id == work.id:
             return _decompose(request)
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkDecision(
+                    task=WorkSpec(
+                        objective="implement the feature",
+                        success_condition="tests pass",
+                        adapter="coding",
+                        artifact="codebase",
+                    )
+                ),
+            )
         return _ok(request)
 
     final = await Scheduler(runner=runner).run(state)
@@ -2837,3 +2883,46 @@ async def test_profile_assignment_failure_error_does_not_include_task_metadata()
     assert "StateView(files=[...])" not in response.error
     assert "objective" not in response.error
     assert "success_condition" not in response.error
+
+
+# --- _build_plan_expansion: wrong output type ---
+
+
+async def test_plan_response_with_work_output_fails_plan_node() -> None:
+    """A completed PLAN response containing WorkOutput fails the plan node instead of producing zero children."""
+    planner = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="some work was done"),
+        )
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    node = final.dag[planner.id]
+    assert node.node_state == NodeState.FAILED
+    assert node.response is not None
+    assert node.response.failure_kind == FailureKind.VALIDATION_REJECTED
+
+
+async def test_plan_response_with_work_output_error_message_names_types() -> None:
+    """Error message for wrong PLAN output type names WorkOutput and the expected types."""
+    planner = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="some work was done"),
+        )
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    error = final.dag[planner.id].response
+    assert error is not None
+    assert error.error is not None
+    assert "WorkOutput" in error.error
+    assert "WorkDecision" in error.error
+    assert "GraphSplitDecision" in error.error
