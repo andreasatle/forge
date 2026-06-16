@@ -140,7 +140,7 @@ class SchedulerConsequenceHandler:
 
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_PLAN:
             try:
-                plan_expansion = self._build_plan_expansion(node, response)
+                plan_expansion = await self._build_plan_expansion(node, response)
             except PlanOutputValidationError as exc:
                 failed_response = AgentResponse(
                     request_id=node.request.id,
@@ -206,7 +206,7 @@ class SchedulerConsequenceHandler:
 
         return self._handle_failed(state, updated, outcome.kind)
 
-    def _build_plan_expansion(
+    async def _build_plan_expansion(
         self,
         node: DAGNode,
         response: AgentResponse,
@@ -223,7 +223,9 @@ class SchedulerConsequenceHandler:
             if isinstance(output, (WorkDecision, GraphSplitDecision)):
                 return [
                     DAGNode(request=request)
-                    for request in PlanExpansionBuilder(node.request).build_from_decision(output)
+                    for request in await PlanExpansionBuilder(node.request).build_from_decision(
+                        output
+                    )
                 ]
         return []
 

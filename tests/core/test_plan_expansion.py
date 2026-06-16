@@ -30,7 +30,7 @@ class FakeProfileAssigner:
         self.profile = profile
         self.requests: list[AgentRequest] = []
 
-    def assign(self, request: AgentRequest) -> str:
+    async def assign(self, request: AgentRequest) -> str:
         self.requests.append(request)
         return self.profile
 
@@ -79,7 +79,7 @@ def _make_decomp_graph_node(
     )
 
 
-def test_work_decision_expands_to_one_work_node() -> None:
+async def test_work_decision_expands_to_one_work_node() -> None:
     """WorkDecision produces exactly one WORK request carrying the provided WorkSpec."""
     work_spec = WorkSpec(
         objective="implement parser",
@@ -89,7 +89,7 @@ def test_work_decision_expands_to_one_work_node() -> None:
     )
     decision = WorkDecision(task=work_spec)
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert len(requests) == 1
     assert requests[0].agent_type == AgentType.WORK
@@ -98,12 +98,12 @@ def test_work_decision_expands_to_one_work_node() -> None:
     assert requests[0].dependencies == frozenset()
 
 
-def test_default_profile_assigner_returns_default() -> None:
+async def test_default_profile_assigner_returns_default() -> None:
     """DefaultProfileAssigner always returns the default model profile."""
-    assert DefaultProfileAssigner().assign(_plan_request()) == "default"
+    assert await DefaultProfileAssigner().assign(_plan_request()) == "default"
 
 
-def test_work_decision_uses_default_profile_assigner_when_none_provided() -> None:
+async def test_work_decision_uses_default_profile_assigner_when_none_provided() -> None:
     """PlanExpansionBuilder preserves default profile behavior without injection."""
     work_spec = WorkSpec(
         objective="implement parser",
@@ -113,12 +113,12 @@ def test_work_decision_uses_default_profile_assigner_when_none_provided() -> Non
     )
     decision = WorkDecision(task=work_spec)
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert requests[0].model_profile == "default"
 
 
-def test_work_decision_uses_injected_profile_assigner_for_work_requests() -> None:
+async def test_work_decision_uses_injected_profile_assigner_for_work_requests() -> None:
     """Injected profile assigners set model_profile on generated WORK requests."""
     assigner = FakeProfileAssigner("fast")
     decision = WorkDecision(
@@ -130,9 +130,9 @@ def test_work_decision_uses_injected_profile_assigner_for_work_requests() -> Non
         )
     )
 
-    requests = PlanExpansionBuilder(_plan_request(), profile_assigner=assigner).build_from_decision(
-        decision
-    )
+    requests = await PlanExpansionBuilder(
+        _plan_request(), profile_assigner=assigner
+    ).build_from_decision(decision)
 
     assert len(assigner.requests) == 1
     assert assigner.requests[0].agent_type == AgentType.WORK
@@ -143,7 +143,7 @@ def test_work_decision_uses_injected_profile_assigner_for_work_requests() -> Non
 # --- GraphSplitDecision expansion ---
 
 
-def test_graph_split_no_edges_expands_to_independent_nodes() -> None:
+async def test_graph_split_no_edges_expands_to_independent_nodes() -> None:
     """GraphSplitDecision with all depends_on [] produces nodes with empty dependencies."""
     decision = GraphSplitDecision(
         nodes=[
@@ -153,14 +153,14 @@ def test_graph_split_no_edges_expands_to_independent_nodes() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert len(requests) == 3
     assert all(r.agent_type == AgentType.WORK for r in requests)
     assert all(r.dependencies == frozenset() for r in requests)
 
 
-def test_graph_split_chain_decision_expands_to_chained_work_nodes() -> None:
+async def test_graph_split_chain_decision_expands_to_chained_work_nodes() -> None:
     """GraphSplitDecision a→b→c produces three WORK nodes chained a->b->c."""
     decision = GraphSplitDecision(
         nodes=[
@@ -170,7 +170,7 @@ def test_graph_split_chain_decision_expands_to_chained_work_nodes() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
     node_a, node_b, node_c = requests
 
     assert len(requests) == 3
@@ -182,7 +182,7 @@ def test_graph_split_chain_decision_expands_to_chained_work_nodes() -> None:
     assert len(node_c.dependencies) == 1
 
 
-def test_graph_split_mixed_topology_exposes_concurrency() -> None:
+async def test_graph_split_mixed_topology_exposes_concurrency() -> None:
     """GraphSplitDecision: setup, docs run immediately; scraper after setup; cli after scraper."""
     decision = GraphSplitDecision(
         nodes=[
@@ -193,7 +193,7 @@ def test_graph_split_mixed_topology_exposes_concurrency() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
     by_obj = {r.spec.objective: r for r in requests if isinstance(r.spec, WorkSpec)}
 
     assert by_obj["setup environment"].dependencies == frozenset()
@@ -204,7 +204,7 @@ def test_graph_split_mixed_topology_exposes_concurrency() -> None:
     assert len(by_obj["implement CLI"].dependencies) == 1
 
 
-def test_graph_split_multiple_parents() -> None:
+async def test_graph_split_multiple_parents() -> None:
     """GraphSplitDecision node with two depends_on parents gets both as dependencies."""
     decision = GraphSplitDecision(
         nodes=[
@@ -214,7 +214,7 @@ def test_graph_split_multiple_parents() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
     node_a, node_b, node_c = requests
 
     assert node_a.dependencies == frozenset()
@@ -224,7 +224,7 @@ def test_graph_split_multiple_parents() -> None:
     assert len(node_c.dependencies) == 2
 
 
-def test_graph_split_propagates_artifact_and_language() -> None:
+async def test_graph_split_propagates_artifact_and_language() -> None:
     """Task artifact and language are copied into the generated WorkSpec."""
     decision = GraphSplitDecision(
         nodes=[
@@ -242,14 +242,14 @@ def test_graph_split_propagates_artifact_and_language() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert isinstance(requests[0].spec, WorkSpec)
     assert requests[0].spec.artifact == "api"
     assert requests[0].spec.language == "python"
 
 
-def test_graph_split_preserves_contract_fields() -> None:
+async def test_graph_split_preserves_contract_fields() -> None:
     """Planner-emitted contract fields are copied into the generated WorkSpec contract."""
     decision = GraphSplitDecision(
         nodes=[
@@ -272,7 +272,7 @@ def test_graph_split_preserves_contract_fields() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert isinstance(requests[0].spec, WorkSpec)
     assert requests[0].spec.contract.acceptance_criteria == [
@@ -285,11 +285,11 @@ def test_graph_split_preserves_contract_fields() -> None:
 # --- DecompositionTask expansion ---
 
 
-def test_decomposition_task_inside_graph_split_expands_to_plan_node() -> None:
+async def test_decomposition_task_inside_graph_split_expands_to_plan_node() -> None:
     """A DecompositionTask inside a GraphSplitDecision produces an AgentType.PLAN request."""
     decision = GraphSplitDecision(nodes=[_make_decomp_graph_node("sub", "plan the sub-system")])
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert len(requests) == 1
     assert requests[0].agent_type == AgentType.PLAN
@@ -299,7 +299,7 @@ def test_decomposition_task_inside_graph_split_expands_to_plan_node() -> None:
     assert requests[0].dependencies == frozenset()
 
 
-def test_graph_split_chain_mixed_children_creates_dependency_chain() -> None:
+async def test_graph_split_chain_mixed_children_creates_dependency_chain() -> None:
     """GraphSplitDecision chain with mixed work/decomposition children produces chained deps."""
     decision = GraphSplitDecision(
         nodes=[
@@ -309,7 +309,7 @@ def test_graph_split_chain_mixed_children_creates_dependency_chain() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
     node_a, node_b, node_c = requests
 
     assert node_a.agent_type == AgentType.WORK
@@ -322,7 +322,7 @@ def test_graph_split_chain_mixed_children_creates_dependency_chain() -> None:
     assert len(node_c.dependencies) == 1
 
 
-def test_graph_split_no_edges_mixed_children_creates_no_sibling_dependencies() -> None:
+async def test_graph_split_no_edges_mixed_children_creates_no_sibling_dependencies() -> None:
     """GraphSplitDecision with no edges and mixed children produces no sibling dependencies."""
     decision = GraphSplitDecision(
         nodes=[
@@ -331,7 +331,7 @@ def test_graph_split_no_edges_mixed_children_creates_no_sibling_dependencies() -
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert len(requests) == 2
     assert requests[0].agent_type == AgentType.WORK
@@ -339,7 +339,7 @@ def test_graph_split_no_edges_mixed_children_creates_no_sibling_dependencies() -
     assert all(r.dependencies == frozenset() for r in requests)
 
 
-def test_graph_split_assigns_profiles_to_work_children_only() -> None:
+async def test_graph_split_assigns_profiles_to_work_children_only() -> None:
     """Injected profile assignment is applied to WORK children, not PLAN children."""
     assigner = FakeProfileAssigner("fast")
     decision = GraphSplitDecision(
@@ -349,9 +349,9 @@ def test_graph_split_assigns_profiles_to_work_children_only() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request(), profile_assigner=assigner).build_from_decision(
-        decision
-    )
+    requests = await PlanExpansionBuilder(
+        _plan_request(), profile_assigner=assigner
+    ).build_from_decision(decision)
     work_request, plan_request = requests
 
     assert work_request.agent_type == AgentType.WORK
@@ -362,7 +362,7 @@ def test_graph_split_assigns_profiles_to_work_children_only() -> None:
     assert assigner.requests[0].agent_type == AgentType.WORK
 
 
-def test_graph_split_chain_all_work_produces_only_work_nodes() -> None:
+async def test_graph_split_chain_all_work_produces_only_work_nodes() -> None:
     """GraphSplitDecision chain with all TaskSpec nodes produces only WORK nodes."""
     decision = GraphSplitDecision(
         nodes=[
@@ -371,7 +371,7 @@ def test_graph_split_chain_all_work_produces_only_work_nodes() -> None:
         ]
     )
 
-    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
 
     assert all(r.agent_type == AgentType.WORK for r in requests)
     assert len(requests) == 2
@@ -384,7 +384,7 @@ def _make_validator() -> DecompositionConvergenceValidator:
     return DecompositionConvergenceValidator()
 
 
-def test_convergence_validator_accepts_narrower_children() -> None:
+async def test_convergence_validator_accepts_narrower_children() -> None:
     """Valid decomposition with distinct, narrower child objectives passes."""
     decision = GraphSplitDecision(
         nodes=[
@@ -397,7 +397,7 @@ def test_convergence_validator_accepts_narrower_children() -> None:
     _make_validator().validate("implement web scraper", decision)  # must not raise
 
 
-def test_convergence_validator_rejects_child_identical_to_parent() -> None:
+async def test_convergence_validator_rejects_child_identical_to_parent() -> None:
     """A child whose normalized objective matches the parent is rejected."""
     decision = GraphSplitDecision(
         nodes=[
@@ -410,7 +410,7 @@ def test_convergence_validator_rejects_child_identical_to_parent() -> None:
         _make_validator().validate("build a web scraper", decision)
 
 
-def test_convergence_validator_rejects_child_identical_to_parent_case_insensitive() -> None:
+async def test_convergence_validator_rejects_child_identical_to_parent_case_insensitive() -> None:
     """Normalization is case-insensitive — 'Build A Web Scraper' equals 'build a web scraper'."""
     decision = GraphSplitDecision(
         nodes=[
@@ -423,7 +423,7 @@ def test_convergence_validator_rejects_child_identical_to_parent_case_insensitiv
         _make_validator().validate("build a web scraper", decision)
 
 
-def test_convergence_validator_rejects_all_identical_children() -> None:
+async def test_convergence_validator_rejects_all_identical_children() -> None:
     """All children normalizing to the same objective is rejected."""
     decision = GraphSplitDecision(
         nodes=[
@@ -436,7 +436,7 @@ def test_convergence_validator_rejects_all_identical_children() -> None:
         _make_validator().validate("implement the system", decision)
 
 
-def test_convergence_validator_rejects_pairwise_identical_siblings() -> None:
+async def test_convergence_validator_rejects_pairwise_identical_siblings() -> None:
     """Any duplicate sibling objective is rejected, even when other siblings are distinct."""
     decision = GraphSplitDecision(
         nodes=[
@@ -450,7 +450,7 @@ def test_convergence_validator_rejects_pairwise_identical_siblings() -> None:
         _make_validator().validate("implement the system", decision)
 
 
-def test_convergence_validator_rejects_empty_child_objective() -> None:
+async def test_convergence_validator_rejects_empty_child_objective() -> None:
     """A child with an empty or near-empty objective is rejected."""
     decision = GraphSplitDecision(
         nodes=[
@@ -463,7 +463,7 @@ def test_convergence_validator_rejects_empty_child_objective() -> None:
         _make_validator().validate("build a web scraper", decision)
 
 
-def test_convergence_validator_accepts_work_decision() -> None:
+async def test_convergence_validator_accepts_work_decision() -> None:
     """WorkDecision is exempt from all convergence checks."""
     work_spec = WorkSpec(
         objective="build a web scraper",
@@ -477,14 +477,14 @@ def test_convergence_validator_accepts_work_decision() -> None:
     _make_validator().validate("build a web scraper", decision)  # must not raise
 
 
-def test_convergence_validator_single_child_not_identical_passes() -> None:
+async def test_convergence_validator_single_child_not_identical_passes() -> None:
     """A single child that is distinct from the parent is accepted."""
     decision = GraphSplitDecision(nodes=[_make_graph_node("a", "implement HTTP fetching")])
 
     _make_validator().validate("implement web scraper", decision)  # must not raise
 
 
-def test_build_from_decision_raises_on_identical_child_to_parent() -> None:
+async def test_build_from_decision_raises_on_identical_child_to_parent() -> None:
     """build_from_decision raises DecompositionConvergenceError when a child repeats the parent."""
     parent = AgentRequest(
         agent_type=AgentType.PLAN,
@@ -499,10 +499,10 @@ def test_build_from_decision_raises_on_identical_child_to_parent() -> None:
     )
 
     with pytest.raises(DecompositionConvergenceError):
-        PlanExpansionBuilder(parent).build_from_decision(decision)
+        await PlanExpansionBuilder(parent).build_from_decision(decision)
 
 
-def test_build_from_decision_work_decision_not_rejected_by_convergence() -> None:
+async def test_build_from_decision_work_decision_not_rejected_by_convergence() -> None:
     """WorkDecision passes through build_from_decision even when objective matches parent."""
     parent = AgentRequest(
         agent_type=AgentType.PLAN,
@@ -518,7 +518,7 @@ def test_build_from_decision_work_decision_not_rejected_by_convergence() -> None
         )
     )
 
-    requests = PlanExpansionBuilder(parent).build_from_decision(decision)
+    requests = await PlanExpansionBuilder(parent).build_from_decision(decision)
 
     assert len(requests) == 1
     assert requests[0].agent_type == AgentType.WORK

@@ -21,7 +21,7 @@ class FakeTaskComplexityClassifier:
     def __init__(self, complexity: TaskComplexity) -> None:
         self.complexity = complexity
 
-    def classify(self, request: AgentRequest) -> TaskComplexity:
+    async def classify(self, request: AgentRequest) -> TaskComplexity:
         """Return the configured complexity."""
         return self.complexity
 
@@ -39,14 +39,14 @@ def _work_request() -> AgentRequest:
     )
 
 
-def test_default_profile_assigner_returns_default() -> None:
-    """DefaultProfileAssigner preserves existing default profile behavior."""
-    assert DefaultProfileAssigner().assign(_work_request()) == "default"
+async def test_default_profile_assigner_returns_default() -> None:
+    """DefaultProfileAssigner is awaitable and preserves default behavior."""
+    assert await DefaultProfileAssigner().assign(_work_request()) == "default"
 
 
-def test_complexity_profile_assigner_default_mapping_returns_default() -> None:
+async def test_complexity_profile_assigner_default_mapping_returns_default() -> None:
     """Default complexity classification and mapping route to default."""
-    assert ComplexityProfileAssigner().assign(_work_request()) == "default"
+    assert await ComplexityProfileAssigner().assign(_work_request()) == "default"
 
 
 @pytest.mark.parametrize(
@@ -57,7 +57,7 @@ def test_complexity_profile_assigner_default_mapping_returns_default() -> None:
         (TaskComplexity.HARD, "strong"),
     ],
 )
-def test_complexity_profile_assigner_maps_classifier_result(
+async def test_complexity_profile_assigner_maps_classifier_result(
     complexity: TaskComplexity, profile: str
 ) -> None:
     """Injected classifier results map through supplied profile mappings."""
@@ -70,10 +70,10 @@ def test_complexity_profile_assigner_maps_classifier_result(
         },
     )
 
-    assert assigner.assign(_work_request()) == profile
+    assert await assigner.assign(_work_request()) == profile
 
 
-def test_complexity_profile_assigner_missing_mapping_raises_value_error() -> None:
+async def test_complexity_profile_assigner_missing_mapping_raises_value_error() -> None:
     """Missing profile mappings fail clearly for the classified complexity."""
     assigner = ComplexityProfileAssigner(
         classifier=FakeTaskComplexityClassifier(TaskComplexity.HARD),
@@ -81,14 +81,14 @@ def test_complexity_profile_assigner_missing_mapping_raises_value_error() -> Non
     )
 
     with pytest.raises(ValueError, match="hard"):
-        assigner.assign(_work_request())
+        await assigner.assign(_work_request())
 
 
-def test_complexity_profile_assigner_does_not_mutate_request() -> None:
+async def test_complexity_profile_assigner_does_not_mutate_request() -> None:
     """Assigning a profile does not mutate the request object."""
     request = _work_request()
     before = request.model_dump()
 
-    ComplexityProfileAssigner().assign(request)
+    await ComplexityProfileAssigner().assign(request)
 
     assert request.model_dump() == before

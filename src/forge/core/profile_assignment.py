@@ -14,7 +14,7 @@ from forge.core.task_complexity import (
 class ProfileAssigner(Protocol):
     """Assign a model profile to an AgentRequest."""
 
-    def assign(self, request: AgentRequest) -> str:
+    async def assign(self, request: AgentRequest) -> str:
         """Return the model profile name for request."""
         ...
 
@@ -22,7 +22,7 @@ class ProfileAssigner(Protocol):
 class DefaultProfileAssigner:
     """Default profile assigner that preserves existing routing behavior."""
 
-    def assign(self, request: AgentRequest) -> str:
+    async def assign(self, request: AgentRequest) -> str:
         """Return the default worker profile."""
         return "default"
 
@@ -45,9 +45,9 @@ class ComplexityProfileAssigner:
             }
         )
 
-    def assign(self, request: AgentRequest) -> str:
+    async def assign(self, request: AgentRequest) -> str:
         """Return the profile mapped from the request's classified complexity."""
-        complexity = self.classifier.classify(request)
+        complexity = await self.classifier.classify(request)
         try:
             return self.complexity_to_profile[complexity]
         except KeyError as exc:

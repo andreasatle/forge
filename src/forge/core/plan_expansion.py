@@ -84,10 +84,11 @@ class PlanExpansionBuilder:
         self.request = request
         self.profile_assigner = profile_assigner or DefaultProfileAssigner()
 
-    def _assign_work_profile(self, request: AgentRequest) -> AgentRequest:
-        return request.model_copy(update={"model_profile": self.profile_assigner.assign(request)})
+    async def _assign_work_profile(self, request: AgentRequest) -> AgentRequest:
+        profile = await self.profile_assigner.assign(request)
+        return request.model_copy(update={"model_profile": profile})
 
-    def _task_spec_to_request(self, task: TaskSpec) -> AgentRequest:
+    async def _task_spec_to_request(self, task: TaskSpec) -> AgentRequest:
         request = AgentRequest(
             agent_type=AgentType.WORK,
             source=RequestSource.PLANNER,
@@ -106,7 +107,7 @@ class PlanExpansionBuilder:
                 language=task.language,
             ),
         )
-        return self._assign_work_profile(request)
+        return await self._assign_work_profile(request)
 
     def _decomposition_task_to_request(self, task: DecompositionTask) -> AgentRequest:
         return AgentRequest(
@@ -121,12 +122,12 @@ class PlanExpansionBuilder:
             ),
         )
 
-    def _child_task_to_request(self, task: TaskSpec | DecompositionTask) -> AgentRequest:
+    async def _child_task_to_request(self, task: TaskSpec | DecompositionTask) -> AgentRequest:
         if isinstance(task, DecompositionTask):
             return self._decomposition_task_to_request(task)
-        return self._task_spec_to_request(task)
+        return await self._task_spec_to_request(task)
 
-    def build_from_decision(self, decision: DecompositionDecision) -> list[AgentRequest]:
+    async def build_from_decision(self, decision: DecompositionDecision) -> list[AgentRequest]:
         """Convert a DecompositionDecision into agent requests."""
         parent_objective = self.request.spec.contract.objective
         DecompositionConvergenceValidator().validate(parent_objective, decision)
@@ -136,13 +137,13 @@ class PlanExpansionBuilder:
                 source=RequestSource.PLANNER,
                 spec=decision.task,
             )
-            return [self._assign_work_profile(request)]
+            return [await self._assign_work_profile(request)]
         assert isinstance(decision, GraphSplitDecision)
-        return self._build_from_graph_split(decision)
+        return await self._build_from_graph_split(decision)
 
-    def _build_from_graph_split(self, decision: GraphSplitDecision) -> list[AgentRequest]:
+    async def _build_from_graph_split(self, decision: GraphSplitDecision) -> list[AgentRequest]:
         """Expand a GraphSplitDecision into requests with RequestId dependencies."""
-        requests = [self._child_task_to_request(node.task) for node in decision.nodes]
+        requests = [await self._child_task_to_request(node.task) for node in decision.nodes]
         str_id_to_request_id: dict[str, RequestId] = {
             node.id: req.id for node, req in zip(decision.nodes, requests)
         }

@@ -1,9 +1,8 @@
 """Task complexity classification abstractions."""
 
-import inspect
 import json
 from enum import StrEnum
-from typing import Any, Protocol, cast
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -52,7 +51,7 @@ class TaskComplexityResponse(BaseModel):
 class TaskComplexityClassifier(Protocol):
     """Classify an AgentRequest by task complexity."""
 
-    def classify(self, request: AgentRequest) -> TaskComplexity:
+    async def classify(self, request: AgentRequest) -> TaskComplexity:
         """Return the task complexity for request."""
         ...
 
@@ -60,7 +59,7 @@ class TaskComplexityClassifier(Protocol):
 class DefaultTaskComplexityClassifier:
     """Default classifier that preserves behavior by returning a fixed complexity."""
 
-    def classify(self, request: AgentRequest) -> TaskComplexity:
+    async def classify(self, request: AgentRequest) -> TaskComplexity:
         """Return the default task complexity."""
         return TaskComplexity.MEDIUM
 
@@ -106,19 +105,12 @@ class LLMTaskComplexityClassifier:
     def __init__(self, provider: LLMProvider) -> None:
         self.provider = provider
 
-    def classify(self, request: AgentRequest) -> TaskComplexity:
+    async def classify(self, request: AgentRequest) -> TaskComplexity:
         """Return only the parsed complexity label for a WORK request."""
         metadata = task_complexity_input_from_request(request)
         messages: list[ChatMessage] = [
             {"role": "system", "content": _CLASSIFIER_SYSTEM_PROMPT},
             {"role": "user", "content": metadata.model_dump_json()},
         ]
-        raw = cast(Any, self.provider).chat(messages)
-        if inspect.isawaitable(raw):
-            raise RuntimeError(
-                "LLMProvider.chat is async; synchronous task complexity classification "
-                "requires an async integration decision before real providers can be used"
-            )
-        if not isinstance(raw, str):
-            raise ValueError("task complexity provider returned a non-string response")
+        raw = await self.provider.chat(messages)
         return parse_task_complexity_response(raw).complexity

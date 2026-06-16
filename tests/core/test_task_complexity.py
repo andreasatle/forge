@@ -64,8 +64,8 @@ def _plan_request() -> AgentRequest:
     )
 
 
-class _FakeSyncProvider:
-    """Synchronous fake for the unwired classifier slice."""
+class _FakeAsyncProvider:
+    """Async fake provider for classifier tests."""
 
     max_tokens = 128
 
@@ -73,7 +73,7 @@ class _FakeSyncProvider:
         self.response = response
         self.messages: list[ChatMessage] | None = None
 
-    def chat(self, messages: list[ChatMessage]) -> str:
+    async def chat(self, messages: list[ChatMessage]) -> str:
         self.messages = messages
         return self.response
 
@@ -85,16 +85,16 @@ def test_task_complexity_enum_values_are_correct() -> None:
     assert TaskComplexity.HARD == "hard"
 
 
-def test_default_task_complexity_classifier_returns_medium() -> None:
-    """DefaultTaskComplexityClassifier returns MEDIUM for a basic request."""
+async def test_default_task_complexity_classifier_returns_medium() -> None:
+    """DefaultTaskComplexityClassifier is awaitable and returns MEDIUM."""
     request = _work_request()
 
-    result = DefaultTaskComplexityClassifier().classify(request)
+    result = await DefaultTaskComplexityClassifier().classify(request)
 
     assert result is TaskComplexity.MEDIUM
 
 
-def test_default_task_complexity_classifier_ignores_explicit_request_contents() -> None:
+async def test_default_task_complexity_classifier_ignores_explicit_request_contents() -> None:
     """Explicit task details do not affect the default classifier result."""
     requests = [
         _work_request(
@@ -118,12 +118,12 @@ def test_default_task_complexity_classifier_ignores_explicit_request_contents() 
     ]
     classifier = DefaultTaskComplexityClassifier()
 
-    results = [classifier.classify(request) for request in requests]
+    results = [await classifier.classify(request) for request in requests]
 
     assert results == [TaskComplexity.MEDIUM, TaskComplexity.MEDIUM]
 
 
-def test_default_task_complexity_classifier_does_not_mutate_request() -> None:
+async def test_default_task_complexity_classifier_does_not_mutate_request() -> None:
     """Classifying a request leaves the immutable AgentRequest unchanged."""
     request = _work_request(
         objective="implement parser",
@@ -135,7 +135,7 @@ def test_default_task_complexity_classifier_does_not_mutate_request() -> None:
     )
     before = request.model_dump()
 
-    DefaultTaskComplexityClassifier().classify(request)
+    await DefaultTaskComplexityClassifier().classify(request)
 
     assert request.model_dump() == before
 
@@ -217,9 +217,9 @@ def test_parse_task_complexity_response_rejects_extra_fields() -> None:
         parse_task_complexity_response('{"complexity":"medium","rationale":"ok","profile":"fast"}')
 
 
-def test_llm_classifier_sends_compact_metadata_json_only() -> None:
+async def test_llm_classifier_sends_compact_metadata_json_only() -> None:
     """Classifier sends only the compact DTO JSON as the user message."""
-    provider = _FakeSyncProvider('{"complexity":"easy","rationale":"small edit"}')
+    provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small edit"}')
     request = _work_request(
         objective="fix typo",
         success_condition="copy is corrected",
@@ -231,7 +231,7 @@ def test_llm_classifier_sends_compact_metadata_json_only() -> None:
         non_goals=["rewrite the page"],
     )
 
-    LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(request)
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(request)
 
     assert provider.messages is not None
     payload = json.loads(provider.messages[1]["content"])
@@ -250,11 +250,11 @@ def test_llm_classifier_sends_compact_metadata_json_only() -> None:
     assert "model_profile" not in payload
 
 
-def test_llm_classifier_prompt_excludes_fake_file_and_stateview_content() -> None:
+async def test_llm_classifier_prompt_excludes_fake_file_and_stateview_content() -> None:
     """Prompt construction does not include file or StateView-shaped content."""
-    provider = _FakeSyncProvider('{"complexity":"medium","rationale":"bounded"}')
+    provider = _FakeAsyncProvider('{"complexity":"medium","rationale":"bounded"}')
 
-    LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
 
     assert provider.messages is not None
     rendered = "\n".join(message["content"] for message in provider.messages)
@@ -264,20 +264,22 @@ def test_llm_classifier_prompt_excludes_fake_file_and_stateview_content() -> Non
     assert "worktree" not in rendered
 
 
-def test_llm_classifier_returns_parsed_complexity() -> None:
+async def test_llm_classifier_returns_parsed_complexity() -> None:
     """The classifier returns only the parsed complexity value."""
-    provider = _FakeSyncProvider('{"complexity":"hard","rationale":"many moving parts"}')
+    provider = _FakeAsyncProvider('{"complexity":"hard","rationale":"many moving parts"}')
 
-    result = LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+    result = await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(
+        _work_request()
+    )
 
     assert result is TaskComplexity.HARD
 
 
-def test_llm_classifier_prompt_does_not_expose_profile_or_model_names() -> None:
+async def test_llm_classifier_prompt_does_not_expose_profile_or_model_names() -> None:
     """Classifier prompts do not include routing profile names or model names."""
-    provider = _FakeSyncProvider('{"complexity":"easy","rationale":"small"}')
+    provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small"}')
 
-    LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
 
     assert provider.messages is not None
     rendered = "\n".join(message["content"] for message in provider.messages)

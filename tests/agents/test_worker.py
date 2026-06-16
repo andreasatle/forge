@@ -1628,7 +1628,9 @@ async def test_worker_receives_planner_normalized_language_guidance_and_run_test
     plan_response = await planner.run(plan_request)
 
     assert isinstance(plan_response.output, GraphSplitDecision)
-    work_request = PlanExpansionBuilder(plan_request).build_from_decision(plan_response.output)[0]
+    work_request = (
+        await PlanExpansionBuilder(plan_request).build_from_decision(plan_response.output)
+    )[0]
     assert isinstance(work_request.spec, WorkSpec)
     assert work_request.spec.language == "python"
 
