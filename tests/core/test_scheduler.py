@@ -1555,6 +1555,128 @@ async def test_two_level_decomposition_grandchild_work_node_completes() -> None:
     assert work_nodes[0].request.spec.objective == "write the implementation"
 
 
+async def test_recursive_plan_depth_is_tracked() -> None:
+    """A PLAN child produced by DecompositionTask records parent depth + 1."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=GraphSplitDecision(
+                    nodes=[_graph_decomp_node("sub", "implement sub-system")]
+                ),
+            )
+        if request.agent_type == AgentType.PLAN:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=GraphSplitDecision(nodes=[_graph_node("impl", "write implementation")]),
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner).run(
+        _base_state().add_nodes([DAGNode(request=root_plan)])
+    )
+
+    root = final.dag[root_plan.id]
+    child_plan = next(
+        n
+        for n in final.dag.values()
+        if n.request.agent_type == AgentType.PLAN and n.request.id != root_plan.id
+    )
+    work_node = next(n for n in final.dag.values() if n.request.agent_type == AgentType.WORK)
+    assert root.decomposition_depth == 0
+    assert child_plan.decomposition_depth == 1
+    assert work_node.decomposition_depth == 1
+
+
+async def test_recursive_plan_expansion_fails_when_child_depth_exceeds_budget() -> None:
+    """Scheduler rejects PLAN children whose depth would exceed max_plan_depth."""
+    root_plan = _plan_request()
+    sink = _MemoryTelemetrySink()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=GraphSplitDecision(nodes=[_graph_decomp_node("sub", "too deep")]),
+        )
+
+    state = SchedulerState(
+        northstar="test northstar",
+        max_plan_depth=0,
+        max_dag_nodes=1000,
+    ).add_nodes([DAGNode(request=root_plan)])
+    final = await Scheduler(runner=runner, telemetry_sink=sink, run_id=sink.run_id).run(state)
+
+    failed = final.dag[root_plan.id]
+    assert failed.node_state == NodeState.FAILED
+    assert failed.response is not None
+    assert failed.response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "max_plan_depth" in (failed.response.error or "")
+    assert len(final.dag) == 1
+    convergence_events = [e for e in sink.events if e.event_type == "node.convergence_failed"]
+    assert len(convergence_events) == 1
+    assert convergence_events[0].data["reason"] == failed.response.error
+    assert convergence_events[0].data["depth"] == 1
+    assert convergence_events[0].data["max_depth"] == 0
+    assert convergence_events[0].data["dag_size"] == 1
+    assert convergence_events[0].data["max_dag_nodes"] == 1000
+
+
+async def test_plan_expansion_fails_before_adding_children_when_dag_budget_exceeded() -> None:
+    """Scheduler rejects oversized expansions without inserting any child nodes."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=GraphSplitDecision(nodes=[_graph_node("impl", "write implementation")]),
+        )
+
+    state = SchedulerState(
+        northstar="test northstar",
+        max_plan_depth=8,
+        max_dag_nodes=1,
+    ).add_nodes([DAGNode(request=root_plan)])
+    final = await Scheduler(runner=runner).run(state)
+
+    failed = final.dag[root_plan.id]
+    assert failed.node_state == NodeState.FAILED
+    assert failed.response is not None
+    assert failed.response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "max_dag_nodes" in (failed.response.error or "")
+    assert len(final.dag) == 1
+    assert all(node.request.id == root_plan.id for node in final.dag.values())
+
+
+async def test_non_recursive_plan_expansion_passes_with_zero_plan_depth_budget() -> None:
+    """max_plan_depth only constrains recursive PLAN children, not WORK children."""
+    root_plan = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == root_plan.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=GraphSplitDecision(nodes=[_graph_node("impl", "write implementation")]),
+            )
+        return _ok(request)
+
+    state = SchedulerState(northstar="test northstar", max_plan_depth=0).add_nodes(
+        [DAGNode(request=root_plan)]
+    )
+    final = await Scheduler(runner=runner).run(state)
+
+    assert final.dag[root_plan.id].node_state == NodeState.INTEGRATED
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert len(work_nodes) == 1
+    assert work_nodes[0].node_state == NodeState.INTEGRATED
+
+
 async def test_child_plan_node_uses_same_acceptance_path_as_root() -> None:
     """Child PLAN node accepted via GraphSplitDecision expands children identically to root."""
     root_plan = _plan_request()

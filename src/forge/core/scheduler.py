@@ -95,6 +95,26 @@ class PlanOutputValidationError(ValueError):
     """Raised when a completed PLAN response does not contain a planner decision."""
 
 
+class DecompositionBudgetError(ValueError):
+    """Raised when a planner expansion would exceed scheduler-owned budgets."""
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        current_depth: int,
+        max_plan_depth: int,
+        dag_size: int,
+        max_dag_nodes: int,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.current_depth = current_depth
+        self.max_plan_depth = max_plan_depth
+        self.dag_size = dag_size
+        self.max_dag_nodes = max_dag_nodes
+
+
 def _has_validation_exhausted_diagnostic(response: AgentResponse) -> bool:
     return any(
         diagnostic.kind == VALIDATION_EXHAUSTED_DIAGNOSTIC for diagnostic in response.diagnostics
@@ -161,6 +181,33 @@ class SchedulerConsequenceHandler:
                 return self._handle_failed(
                     state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
                 )
+            try:
+                self._validate_plan_expansion_budget(state, updated, plan_expansion)
+            except DecompositionBudgetError as exc:
+                logger.warning(
+                    "decomposition budget check failed for node %s: %s",
+                    node.request.id,
+                    exc,
+                )
+                self._emit_convergence_failure(
+                    node,
+                    exc.reason,
+                    current_depth=exc.current_depth,
+                    max_plan_depth=exc.max_plan_depth,
+                    dag_size=exc.dag_size,
+                    max_dag_nodes=exc.max_dag_nodes,
+                )
+                failed_response = AgentResponse(
+                    request_id=node.request.id,
+                    status=ResponseStatus.FAILED,
+                    failure_kind=FailureKind.VALIDATION_REJECTED,
+                    error=exc.reason,
+                )
+                failed_updated = current.with_response(failed_response)
+                state = state.update_node(failed_updated)
+                return self._handle_failed(
+                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                )
             return self._handle_accepted_plan(state, updated, plan_expansion)
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_WORK:
             return await self._handle_accepted_work(state, updated)
@@ -190,6 +237,41 @@ class SchedulerConsequenceHandler:
                 ]
         return []
 
+    def _validate_plan_expansion_budget(
+        self,
+        state: SchedulerState,
+        parent: DAGNode,
+        plan_expansion: list[DAGNode],
+    ) -> None:
+        dag_size_after_expansion = len(state.dag) + len(plan_expansion)
+        if dag_size_after_expansion > state.max_dag_nodes:
+            raise DecompositionBudgetError(
+                (
+                    "Decomposition expansion would exceed max_dag_nodes: "
+                    f"{dag_size_after_expansion} > {state.max_dag_nodes}"
+                ),
+                current_depth=parent.decomposition_depth,
+                max_plan_depth=state.max_plan_depth,
+                dag_size=len(state.dag),
+                max_dag_nodes=state.max_dag_nodes,
+            )
+
+        child_plan_depth = parent.decomposition_depth + 1
+        if any(
+            child.request.agent_type == AgentType.PLAN and child_plan_depth > state.max_plan_depth
+            for child in plan_expansion
+        ):
+            raise DecompositionBudgetError(
+                (
+                    "Decomposition expansion would exceed max_plan_depth: "
+                    f"{child_plan_depth} > {state.max_plan_depth}"
+                ),
+                current_depth=child_plan_depth,
+                max_plan_depth=state.max_plan_depth,
+                dag_size=len(state.dag),
+                max_dag_nodes=state.max_dag_nodes,
+            )
+
     def _handle_accepted_plan(
         self,
         state: SchedulerState,
@@ -197,9 +279,18 @@ class SchedulerConsequenceHandler:
         plan_expansion: list[DAGNode],
     ) -> SchedulerState:
         if plan_expansion:
-            state = state.add_nodes(plan_expansion)
+            state = state.add_nodes(
+                [self._with_child_decomposition_depth(updated, child) for child in plan_expansion]
+            )
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
+
+    @staticmethod
+    def _with_child_decomposition_depth(parent: DAGNode, child: DAGNode) -> DAGNode:
+        depth = parent.decomposition_depth
+        if child.request.agent_type == AgentType.PLAN:
+            depth += 1
+        return child.model_copy(update={"decomposition_depth": depth})
 
     async def _handle_accepted_work(
         self,
@@ -378,7 +469,9 @@ class SchedulerConsequenceHandler:
                 ),
             ),
         )
-        state = state.add_nodes([DAGNode(request=new_plan_request)])
+        state = state.add_nodes(
+            [DAGNode(request=new_plan_request, decomposition_depth=updated.decomposition_depth)]
+        )
         state = self._transfer_dependents(state, updated.request.id, new_plan_request.id)
         self._emit_node_decomposed(updated, new_plan_request)
         return state
@@ -446,9 +539,27 @@ class SchedulerConsequenceHandler:
             ),
         )
 
-    def _emit_convergence_failure(self, node: DAGNode, reason: str) -> None:
+    def _emit_convergence_failure(
+        self,
+        node: DAGNode,
+        reason: str,
+        *,
+        current_depth: int | None = None,
+        max_plan_depth: int | None = None,
+        dag_size: int | None = None,
+        max_dag_nodes: int | None = None,
+    ) -> None:
         if self._run_id is None:
             return
+        data: dict[str, object] = {"reason": reason}
+        if current_depth is not None:
+            data["depth"] = current_depth
+        if max_plan_depth is not None:
+            data["max_depth"] = max_plan_depth
+        if dag_size is not None:
+            data["dag_size"] = dag_size
+        if max_dag_nodes is not None:
+            data["max_dag_nodes"] = max_dag_nodes
         safe_append_telemetry(
             self._telemetry_sink,
             TelemetryEvent(
@@ -461,7 +572,7 @@ class SchedulerConsequenceHandler:
                 event_type="node.convergence_failed",
                 status="failed",
                 summary="Decomposition rejected: not reductive",
-                data={"reason": reason},
+                data=data,
             ),
         )
 

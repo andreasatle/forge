@@ -63,11 +63,15 @@ class DecompositionConvergenceValidator:
 
             child_norms.append(norm)
 
-        if len(child_norms) >= 2 and len(set(child_norms)) == 1:
-            raise DecompositionConvergenceError(
-                f"Decomposition is not reductive: all child objectives normalize to "
-                f"{child_norms[0]!r}. Each child must address a distinct, narrower concern."
-            )
+        seen_child_norms: dict[str, str] = {}
+        for task, norm in zip(child_tasks, child_norms):
+            if norm in seen_child_norms:
+                raise DecompositionConvergenceError(
+                    f"Decomposition is not reductive: sibling objectives "
+                    f"{seen_child_norms[norm]!r} and {task.objective!r} normalize to "
+                    f"{norm!r}. Each child must address a distinct, narrower concern."
+                )
+            seen_child_norms[norm] = task.objective
 
 
 class PlanExpansionBuilder:

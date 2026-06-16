@@ -533,6 +533,7 @@ class DAGNode(BaseModel):
     node_state: NodeState = NodeState.PENDING
     response: AgentResponse | None = None
     integration_revision: RevisionRequest | None = None
+    decomposition_depth: int = 0
 
     def with_state(self, node_state: NodeState) -> "DAGNode":
         """Return a copy of this node with the given node_state."""
@@ -561,6 +562,8 @@ class SchedulerState(BaseModel):
     dag: dict[RequestId, DAGNode] = Field(default_factory=_empty_dag)
     northstar: str
     max_concurrency: int = 1
+    max_plan_depth: int = 8
+    max_dag_nodes: int = 1000
 
     def add_nodes(self, nodes: list[DAGNode]) -> "SchedulerState":
         """Return a new state with the given nodes merged into the DAG."""

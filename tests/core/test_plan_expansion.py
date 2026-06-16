@@ -358,6 +358,20 @@ def test_convergence_validator_rejects_all_identical_children() -> None:
         _make_validator().validate("implement the system", decision)
 
 
+def test_convergence_validator_rejects_pairwise_identical_siblings() -> None:
+    """Any duplicate sibling objective is rejected, even when other siblings are distinct."""
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("a", "write comprehensive tests"),
+            _make_graph_node("b", "implement parser"),
+            _make_graph_node("c", " Write   Comprehensive   Tests "),
+        ]
+    )
+
+    with pytest.raises(DecompositionConvergenceError, match="sibling objectives"):
+        _make_validator().validate("implement the system", decision)
+
+
 def test_convergence_validator_rejects_empty_child_objective() -> None:
     """A child with an empty or near-empty objective is rejected."""
     decision = GraphSplitDecision(
