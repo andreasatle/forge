@@ -8,7 +8,6 @@ from enum import Enum
 from uuid import UUID
 
 from forge.core.models import (
-    VALIDATION_EXHAUSTED_DIAGNOSTIC,
     AgentContract,
     AgentRequest,
     AgentResponse,
@@ -50,7 +49,6 @@ class TerminalOutcomeKind(Enum):
 
     ACCEPTED_PLAN = "accepted_plan"
     ACCEPTED_WORK = "accepted_work"
-    VALIDATION_EXHAUSTED = "validation_exhausted"
     INTEGRATION_FAILURE = "integration_failure"
     DECOMPOSITION_REQUEST = "decomposition_request"
     TERMINAL_FAILURE = "terminal_failure"
@@ -68,8 +66,6 @@ class TerminalNodeOutcome:
         """Classify an agent response into the scheduler's terminal outcome categories."""
         if response.status == ResponseStatus.DECOMPOSE:
             return cls(TerminalOutcomeKind.DECOMPOSITION_REQUEST, response)
-        if _has_validation_exhausted_diagnostic(response):
-            return cls(TerminalOutcomeKind.VALIDATION_EXHAUSTED, response)
         if response.status in (ResponseStatus.COMPLETED, ResponseStatus.ALREADY_DONE):
             if node.request.agent_type == AgentType.PLAN:
                 return cls(TerminalOutcomeKind.ACCEPTED_PLAN, response)
@@ -113,12 +109,6 @@ class DecompositionBudgetError(ValueError):
         self.max_plan_depth = max_plan_depth
         self.dag_size = dag_size
         self.max_dag_nodes = max_dag_nodes
-
-
-def _has_validation_exhausted_diagnostic(response: AgentResponse) -> bool:
-    return any(
-        diagnostic.kind == VALIDATION_EXHAUSTED_DIAGNOSTIC for diagnostic in response.diagnostics
-    )
 
 
 class SchedulerConsequenceHandler:

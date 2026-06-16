@@ -4,6 +4,7 @@ import asyncio
 from uuid import uuid4
 
 from forge.core.models import (
+    VALIDATION_EXHAUSTED_DIAGNOSTIC,
     AcceptanceCriterion,
     AgentContract,
     AgentDiagnostic,
@@ -26,7 +27,12 @@ from forge.core.models import (
     WorkOutput,
     WorkSpec,
 )
-from forge.core.scheduler import Scheduler, SchedulerCallbacks
+from forge.core.scheduler import (
+    Scheduler,
+    SchedulerCallbacks,
+    TerminalNodeOutcome,
+    TerminalOutcomeKind,
+)
 from forge.core.telemetry import TelemetryEvent
 
 
@@ -109,6 +115,28 @@ def _already_done(request: AgentRequest) -> AgentResponse:
 
 def _base_state(max_concurrency: int = 1) -> SchedulerState:
     return SchedulerState(northstar="test northstar", max_concurrency=max_concurrency)
+
+
+# --- TerminalNodeOutcome classification ---
+
+
+def test_validation_exhausted_diagnostic_classifies_as_terminal_failure() -> None:
+    """A response with a validation_exhausted diagnostic has no special routing — TERMINAL_FAILURE."""
+    work = _work_request()
+    node = DAGNode(request=work)
+    response = AgentResponse(
+        request_id=work.id,
+        status=ResponseStatus.FAILED,
+        failure_kind=FailureKind.VALIDATION_REJECTED,
+        diagnostics=[
+            AgentDiagnostic(
+                kind=VALIDATION_EXHAUSTED_DIAGNOSTIC,
+                message="maximum validation attempts exhausted",
+            )
+        ],
+    )
+    outcome = TerminalNodeOutcome.from_response(node, response)
+    assert outcome.kind == TerminalOutcomeKind.TERMINAL_FAILURE
 
 
 # --- Tests ---
