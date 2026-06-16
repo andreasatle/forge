@@ -18,7 +18,13 @@ from forge.core.models import (
     SchedulerState,
 )
 from forge.core.persistence import load_run, save_run
-from forge.core.runner import Runner, make_plan_handler, make_work_handler
+from forge.core.runner import (
+    Handler,
+    Runner,
+    make_plan_handler,
+    make_profile_dispatch_handler,
+    make_work_handler,
+)
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.state_service import StateService
 from forge.core.telemetry import JsonlTelemetrySink, TelemetrySink
@@ -124,17 +130,28 @@ class ForgeRuntime:
             if config.models.planner.referee
             else None
         )
-        worker_provider = make_provider(config.models.worker.producer, config.max_tokens)
-        worker_critic_provider = (
-            make_provider(config.models.worker.critic, config.max_tokens)
-            if config.models.worker.critic
-            else None
-        )
-        worker_referee_provider = (
-            make_provider(config.models.worker.referee, config.max_tokens)
-            if config.models.worker.referee
-            else None
-        )
+        all_worker_profiles = {
+            "default": config.models.worker,
+            **config.models.worker_profiles,
+        }
+        profile_handlers: dict[str, Handler] = {}
+        for _profile_name, pwc in all_worker_profiles.items():
+            p_producer = make_provider(pwc.producer, config.max_tokens)
+            p_critic = make_provider(pwc.critic, config.max_tokens) if pwc.critic else None
+            p_referee = make_provider(pwc.referee, config.max_tokens) if pwc.referee else None
+            profile_handlers[_profile_name] = make_work_handler(
+                registry,
+                workspace,
+                language_registry,
+                p_producer,
+                state_services=state_services,
+                max_retries=config.max_retries,
+                max_tool_iterations=config.max_tool_iterations,
+                critic_provider=p_critic,
+                referee_provider=p_referee,
+                telemetry_sink=telemetry_sink,
+                max_attempts=pwc.max_attempts,
+            )
 
         runner = Runner()
         runner.register(
@@ -156,19 +173,7 @@ class ForgeRuntime:
         )
         runner.register(
             AgentType.WORK,
-            make_work_handler(
-                registry,
-                workspace,
-                language_registry,
-                worker_provider,
-                state_services=state_services,
-                max_retries=config.max_retries,
-                max_tool_iterations=config.max_tool_iterations,
-                critic_provider=worker_critic_provider,
-                referee_provider=worker_referee_provider,
-                telemetry_sink=telemetry_sink,
-                max_attempts=config.models.worker.max_attempts,
-            ),
+            make_profile_dispatch_handler(profile_handlers),
         )
 
         state = initial_state or SchedulerState(

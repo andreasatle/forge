@@ -21,7 +21,9 @@ from forge.core.models import (
     NodeState,
     PlanSpec,
     RequestSource,
+    ResponseStatus,
     SchedulerState,
+    WorkSpec,
 )
 from forge.core.runtime import ForgeRuntime, StartResult
 from forge.core.scheduler import SchedulerCallbacks
@@ -255,6 +257,31 @@ async def test_runtime_seeds_root_node_into_empty_dag(
     assert root.node_state == NodeState.PENDING
 
 
+async def test_runtime_builds_planner_and_worker_providers_after_profile_refactor(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Provider construction order is unchanged after the profile-loop refactor."""
+    made_models: list[str] = []
+
+    def fake_make_provider(model: str, max_tokens: int) -> _FakeProvider:
+        made_models.append(model)
+        return _FakeProvider(model)
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
+
+    await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert made_models == [
+        "ollama/planner",
+        "ollama/planner-critic",
+        "ollama/planner-referee",
+        "ollama/worker",
+        "ollama/worker-critic",
+        "ollama/worker-referee",
+    ]
+
+
 async def test_runtime_does_not_seed_root_node_when_resuming(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
@@ -304,3 +331,250 @@ async def test_runtime_does_not_seed_root_node_when_resuming(
     state = captured_states[0]
     assert len(state.dag) == 1
     assert existing_plan.id in state.dag
+
+
+# --- worker_profiles runtime wiring ---
+
+
+def _config_with_fast_profile(tmp_path: Path) -> ForgeConfig:
+    return ForgeConfig(
+        northstar="build a tool",
+        workspace=tmp_path / "ws",
+        artifacts=[ArtifactConfig(name="codebase", type="coding", language="python")],
+        models=ModelsConfig(
+            planner=PwcModelConfig(producer="ollama/planner", critic=None, referee=None),
+            worker=PwcModelConfig(producer="ollama/worker", critic=None, referee=None),
+            worker_profiles={
+                "fast": PwcModelConfig(
+                    producer="ollama/fast-worker", critic=None, referee=None, max_attempts=1
+                ),
+            },
+        ),
+    )
+
+
+def _work_request_with_profile(profile: str) -> AgentRequest:
+    return AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="do work", success_condition="done", adapter="coding", artifact="codebase"
+        ),
+        model_profile=profile,
+    )
+
+
+async def test_runtime_no_worker_profiles_builds_one_work_handler(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """With no worker_profiles, exactly one make_work_handler call is made."""
+    call_count = [0]
+
+    def counting_make_work_handler(
+        registry: object,
+        workspace: object,
+        language_registry: object,
+        provider: object,
+        **kwargs: object,
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        call_count[0] += 1
+
+        async def handler(request: AgentRequest) -> AgentResponse:
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+        return handler
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.make_work_handler", counting_make_work_handler)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
+
+    await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert call_count[0] == 1
+
+
+async def test_runtime_with_fast_profile_builds_two_work_handlers(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """With a fast worker profile, two make_work_handler calls are made (default + fast)."""
+    call_count = [0]
+
+    def counting_make_work_handler(
+        registry: object,
+        workspace: object,
+        language_registry: object,
+        provider: object,
+        **kwargs: object,
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        call_count[0] += 1
+
+        async def handler(request: AgentRequest) -> AgentResponse:
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+        return handler
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.make_work_handler", counting_make_work_handler)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
+
+    await ForgeRuntime(_config_with_fast_profile(tmp_path)).start()
+
+    assert call_count[0] == 2
+
+
+async def test_runtime_explicit_default_profile_overrides_models_worker(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """worker_profiles['default'] overrides models.worker for provider construction."""
+    made_models: list[str] = []
+
+    def fake_make_provider(model: str, max_tokens: int) -> _FakeProvider:
+        made_models.append(model)
+        return _FakeProvider(model)
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
+
+    config = ForgeConfig(
+        northstar="build a tool",
+        workspace=tmp_path / "ws",
+        artifacts=[ArtifactConfig(name="codebase", type="coding", language="python")],
+        models=ModelsConfig(
+            planner=PwcModelConfig(producer="ollama/planner", critic=None, referee=None),
+            worker=PwcModelConfig(producer="ollama/worker", critic=None, referee=None),
+            worker_profiles={
+                "default": PwcModelConfig(producer="ollama/override", critic=None, referee=None),
+            },
+        ),
+    )
+    await ForgeRuntime(config).start()
+
+    assert "ollama/override" in made_models
+    assert "ollama/worker" not in made_models
+
+
+async def test_runtime_request_with_fast_profile_routes_to_fast_handler(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """A work request with model_profile='fast' is dispatched to the fast-profile handler."""
+    dispatched_to: list[str] = []
+    captured_runner: list[object] = []
+
+    def make_traceable_work_handler(
+        registry: object,
+        workspace: object,
+        language_registry: object,
+        provider: _FakeProvider,
+        **kwargs: object,
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        producer = provider.producer
+
+        async def handler(request: AgentRequest) -> AgentResponse:
+            dispatched_to.append(producer)
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+        return handler
+
+    class _RunnerCapturingScheduler:
+        def __init__(self, *, runner: object, **kwargs: object) -> None:
+            captured_runner.append(runner)
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.make_work_handler", make_traceable_work_handler)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _RunnerCapturingScheduler)
+
+    await ForgeRuntime(_config_with_fast_profile(tmp_path)).start()
+
+    runner = captured_runner[0]
+    await runner(_work_request_with_profile("fast"))  # type: ignore[operator]
+
+    assert dispatched_to == ["ollama/fast-worker"]
+
+
+async def test_runtime_request_with_unknown_profile_falls_back_to_default(
+    tmp_path: Path, monkeypatch: MonkeyPatch, caplog: object
+) -> None:
+    """A work request with an unknown model_profile falls back to the default handler."""
+    import logging
+
+    dispatched_to: list[str] = []
+    captured_runner: list[object] = []
+
+    def make_traceable_work_handler(
+        registry: object,
+        workspace: object,
+        language_registry: object,
+        provider: _FakeProvider,
+        **kwargs: object,
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        producer = provider.producer
+
+        async def handler(request: AgentRequest) -> AgentResponse:
+            dispatched_to.append(producer)
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+        return handler
+
+    class _RunnerCapturingScheduler:
+        def __init__(self, *, runner: object, **kwargs: object) -> None:
+            captured_runner.append(runner)
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.make_work_handler", make_traceable_work_handler)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _RunnerCapturingScheduler)
+
+    await ForgeRuntime(_config_with_fast_profile(tmp_path)).start()
+
+    runner = captured_runner[0]
+    with caplog.at_level(logging.WARNING, logger="forge.core.runner"):  # type: ignore[attr-defined]
+        await runner(_work_request_with_profile("nonexistent"))  # type: ignore[operator]
+
+    assert dispatched_to == ["ollama/worker"]
+    assert "nonexistent" in caplog.text  # type: ignore[attr-defined]
+
+
+async def test_runtime_no_worker_profiles_default_request_routes_to_default_handler(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Legacy configs with no worker_profiles route default requests to the single handler."""
+    dispatched_to: list[str] = []
+    captured_runner: list[object] = []
+
+    def make_traceable_work_handler(
+        registry: object,
+        workspace: object,
+        language_registry: object,
+        provider: _FakeProvider,
+        **kwargs: object,
+    ) -> Callable[[AgentRequest], Awaitable[AgentResponse]]:
+        producer = provider.producer
+
+        async def handler(request: AgentRequest) -> AgentResponse:
+            dispatched_to.append(producer)
+            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+        return handler
+
+    class _RunnerCapturingScheduler:
+        def __init__(self, *, runner: object, **kwargs: object) -> None:
+            captured_runner.append(runner)
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.make_work_handler", make_traceable_work_handler)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _RunnerCapturingScheduler)
+
+    await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    runner = captured_runner[0]
+    await runner(_work_request_with_profile("default"))  # type: ignore[operator]
+
+    assert dispatched_to == ["ollama/worker"]
