@@ -10,10 +10,15 @@ from forge.core.models import AcceptanceCriterion, AgentRequest, AgentType, Work
 from forge.llm.providers import ChatMessage, LLMProvider
 
 _CLASSIFIER_SYSTEM_PROMPT = (
-    "Classify the worker task complexity from the compact metadata provided. "
-    'Return strict JSON with exactly these keys: {"complexity":"easy|medium|hard",'
-    '"rationale":"short string"}. Do not include any other keys or prose.'
+    "Classify the worker task complexity from the compact metadata provided.\n"
+    "Return JSON only. Do not return prose, markdown, code fences, bullets, or commentary.\n"
+    'Return exactly two keys: "complexity" and "rationale". Do not include any other keys.\n'
+    'The "complexity" value must be exactly one of: "easy", "medium", "hard".\n'
+    'The "rationale" value must be a short string.\n'
+    "Do not include provider model names, routing profile names, or profile-selection hints.\n"
+    'Valid example: {"complexity":"medium","rationale":"requires coordinated but bounded changes"}'
 )
+_RAW_OUTPUT_EXCERPT_LIMIT = 240
 
 
 class TaskComplexity(StrEnum):
@@ -85,10 +90,16 @@ def task_complexity_input_from_request(request: AgentRequest) -> TaskComplexityI
 
 def parse_task_complexity_response(raw: str) -> TaskComplexityResponse:
     """Parse a strict task complexity classifier JSON response."""
+    raw_stripped = raw.strip()
+    if not raw_stripped:
+        raise ValueError("empty classifier output")
     try:
-        data = json.loads(raw)
+        data = json.loads(raw_stripped)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid task complexity JSON: {exc.msg}") from exc
+        raise ValueError(
+            f"invalid task complexity JSON: {exc.msg}; "
+            f"raw output excerpt: {_raw_output_excerpt(raw_stripped)}"
+        ) from exc
 
     if not isinstance(data, dict):
         raise ValueError("invalid task complexity response: expected a JSON object")
@@ -97,6 +108,13 @@ def parse_task_complexity_response(raw: str) -> TaskComplexityResponse:
         return TaskComplexityResponse.model_validate(data)
     except ValidationError as exc:
         raise ValueError(f"invalid task complexity response schema: {exc}") from exc
+
+
+def _raw_output_excerpt(raw: str, limit: int = _RAW_OUTPUT_EXCERPT_LIMIT) -> str:
+    excerpt = " ".join(raw.split())
+    if len(excerpt) <= limit:
+        return excerpt
+    return excerpt[: limit - 3].rstrip() + "..."
 
 
 class LLMTaskComplexityClassifier:

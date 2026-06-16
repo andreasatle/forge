@@ -280,7 +280,8 @@ async def test_runtime_completes_with_failed_state_when_classifier_output_is_inv
     assert plan_node.response is not None
     assert (
         plan_node.response.error
-        == "profile assignment failed: invalid task complexity JSON: Expecting value"
+        == "profile assignment failed: invalid task complexity JSON: Expecting value; "
+        "raw output excerpt: not json"
     )
 
 

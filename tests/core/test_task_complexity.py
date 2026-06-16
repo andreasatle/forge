@@ -199,6 +199,27 @@ def test_parse_task_complexity_response_rejects_invalid_json() -> None:
         parse_task_complexity_response("not json")
 
 
+def test_parse_task_complexity_response_rejects_empty_output() -> None:
+    """Empty classifier output gets a specific diagnostic."""
+    with pytest.raises(ValueError, match="empty classifier output"):
+        parse_task_complexity_response(" \n\t ")
+
+
+def test_parse_task_complexity_response_includes_bounded_raw_excerpt() -> None:
+    """Malformed non-empty output includes a compact raw-output excerpt."""
+    raw = "not json " + ("x" * 400)
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_task_complexity_response(raw)
+
+    message = str(exc_info.value)
+    assert "invalid task complexity JSON: Expecting value" in message
+    assert "raw output excerpt: not json" in message
+    excerpt = message.split("raw output excerpt: ", 1)[1]
+    assert len(excerpt) <= 240
+    assert excerpt.endswith("...")
+
+
 def test_parse_task_complexity_response_rejects_invalid_label() -> None:
     """Unknown complexity labels are rejected."""
     with pytest.raises(ValueError, match="invalid task complexity response schema"):
@@ -250,6 +271,48 @@ async def test_llm_classifier_sends_compact_metadata_json_only() -> None:
     assert "model_profile" not in payload
 
 
+async def test_llm_classifier_prompt_requires_json_only() -> None:
+    """Classifier system prompt explicitly requires JSON-only output."""
+    provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small"}')
+
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+
+    assert provider.messages is not None
+    prompt = provider.messages[0]["content"]
+    assert "Return JSON only" in prompt
+    assert "exactly two keys" in prompt
+    assert '"complexity"' in prompt
+    assert '"rationale"' in prompt
+    assert (
+        '{"complexity":"medium","rationale":"requires coordinated but bounded changes"}' in prompt
+    )
+
+
+async def test_llm_classifier_prompt_contains_exact_allowed_labels() -> None:
+    """Classifier system prompt lists the exact allowed complexity labels."""
+    provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small"}')
+
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+
+    assert provider.messages is not None
+    prompt = provider.messages[0]["content"]
+    assert '"easy", "medium", "hard"' in prompt
+
+
+async def test_llm_classifier_prompt_forbids_markdown_code_fences_and_prose() -> None:
+    """Classifier system prompt forbids non-JSON response wrappers."""
+    provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small"}')
+
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+
+    assert provider.messages is not None
+    prompt = provider.messages[0]["content"]
+    assert "Do not return prose" in prompt
+    assert "markdown" in prompt
+    assert "code fences" in prompt
+    assert "commentary" in prompt
+
+
 async def test_llm_classifier_prompt_excludes_fake_file_and_stateview_content() -> None:
     """Prompt construction does not include file or StateView-shaped content."""
     provider = _FakeAsyncProvider('{"complexity":"medium","rationale":"bounded"}')
@@ -262,6 +325,20 @@ async def test_llm_classifier_prompt_excludes_fake_file_and_stateview_content() 
     assert "StateView(files=[...])" not in rendered
     assert "dispatch_sha" not in rendered
     assert "worktree" not in rendered
+
+
+async def test_llm_classifier_prompt_does_not_include_profile_names() -> None:
+    """Classifier prompt does not include concrete routing profile names."""
+    provider = _FakeAsyncProvider('{"complexity":"easy","rationale":"small"}')
+
+    await LLMTaskComplexityClassifier(cast(LLMProvider, provider)).classify(_work_request())
+
+    assert provider.messages is not None
+    prompt = provider.messages[0]["content"]
+    assert "fast" not in prompt
+    assert "strong" not in prompt
+    assert "default" not in prompt
+    assert "model_profile" not in prompt
 
 
 async def test_llm_classifier_returns_parsed_complexity() -> None:
