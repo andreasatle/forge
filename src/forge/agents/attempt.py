@@ -302,21 +302,27 @@ class PlannerOutputValidator:
 
     def render_for_critic(self, output: _PlannerOutput) -> str:
         """Render planner output as a human-readable string for the critic."""
-        if isinstance(output, WorkDecision):
-            return (
-                f"Decision: work\n"
-                f"Objective: {output.task.objective}\n"
-                f"Success condition: {output.task.success_condition}\n"
-                f"Artifact: {output.task.artifact}"
-            )
-        lines = ["Decision: split_graph (mixed topology)"]
-        for node in output.nodes:
-            dep_str = f" (depends_on: {', '.join(node.depends_on)})" if node.depends_on else ""
-            lines.append(f"Node {node.id}{dep_str}: {node.task.objective}")
-            lines.append(f"  Success condition: {node.task.success_condition}")
-            if isinstance(node.task, TaskSpec) and node.task.artifact:
-                lines.append(f"  Artifact: {node.task.artifact}")
-        return "\n".join(lines)
+        match output:
+            case WorkDecision():
+                return (
+                    f"Decision: work\n"
+                    f"Objective: {output.task.objective}\n"
+                    f"Success condition: {output.task.success_condition}\n"
+                    f"Artifact: {output.task.artifact}"
+                )
+            case GraphSplitDecision():
+                lines = ["Decision: split_graph (mixed topology)"]
+                for node in output.nodes:
+                    dep_str = (
+                        f" (depends_on: {', '.join(node.depends_on)})" if node.depends_on else ""
+                    )
+                    lines.append(f"Node {node.id}{dep_str}: {node.task.objective}")
+                    lines.append(f"  Success condition: {node.task.success_condition}")
+                    if isinstance(node.task, TaskSpec) and node.task.artifact:
+                        lines.append(f"  Artifact: {node.task.artifact}")
+                return "\n".join(lines)
+            case _ as unreachable:
+                assert_never(unreachable)
 
     def work_noun(self) -> str:
         """Return 'plan'."""

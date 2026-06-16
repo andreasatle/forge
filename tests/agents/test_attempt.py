@@ -24,7 +24,9 @@ from forge.core.models import (
     AgentType,
     CriticDisposition,
     CriticFinding,
+    DecompositionNodeSpec,
     FailureKind,
+    GraphSplitDecision,
     PlanSpec,
     RefereeDecision,
     RequestSource,
@@ -32,6 +34,7 @@ from forge.core.models import (
     RevisionItem,
     RevisionRequest,
     StateView,
+    TaskSpec,
     WorkDecision,
     WorkOutput,
     WorkSpec,
@@ -1932,6 +1935,43 @@ async def test_plan_engine_goes_through_full_pwc_loop() -> None:
     assert mock_critic.call_args.args[2].startswith("Decision: work")
     assert mock_critic.call_args.kwargs["review_context"].output_noun == "plan"
     assert mock_referee.call_args.kwargs["review_context"].output_noun == "plan"
+
+
+async def test_planner_output_validator_render_for_critic_graph_split_decision() -> None:
+    """PlannerOutputValidator.render_for_critic formats GraphSplitDecision nodes correctly."""
+    decision = GraphSplitDecision(
+        nodes=[
+            DecompositionNodeSpec(
+                id="a",
+                task=TaskSpec(
+                    objective="implement storage",
+                    success_condition="tests pass",
+                    adapter="coding",
+                    artifact="codebase",
+                ),
+                depends_on=[],
+            ),
+            DecompositionNodeSpec(
+                id="b",
+                task=TaskSpec(
+                    objective="implement api",
+                    success_condition="endpoint works",
+                    adapter="coding",
+                    artifact="codebase",
+                ),
+                depends_on=["a"],
+            ),
+        ]
+    )
+
+    text = PlannerOutputValidator().render_for_critic(decision)
+
+    assert text.startswith("Decision: split_graph (mixed topology)")
+    assert "Node a:" in text
+    assert "implement storage" in text
+    assert "Node b (depends_on: a):" in text
+    assert "implement api" in text
+    assert "Success condition: tests pass" in text
 
 
 async def test_decompose_disposition_returns_decompose_status_immediately() -> None:

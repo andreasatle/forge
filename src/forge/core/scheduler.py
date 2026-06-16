@@ -552,10 +552,13 @@ class SchedulerConsequenceHandler:
 
     def _handle_decompose(self, state: SchedulerState, updated: DAGNode) -> SchedulerState:
         spec = updated.request.spec
-        if isinstance(spec, WorkSpec):
-            northstar = spec.objective
-        else:
-            northstar = spec.northstar
+        match spec:
+            case WorkSpec():
+                northstar = spec.objective
+            case PlanSpec():
+                northstar = spec.northstar
+            case _ as unreachable:
+                assert_never(unreachable)
 
         replacement_objective = spec.contract.objective
         if self._prior_decompose_plan_exists(state, updated.request.id, replacement_objective):
