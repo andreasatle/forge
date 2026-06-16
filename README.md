@@ -148,13 +148,13 @@ When a WORK node reaches a terminal failure, an optional `ProfileEscalationPolic
 
 The default policy is `NoProfileEscalationPolicy`, which disables escalation. Escalation is not wired to config yet.
 
-## Integration-Test Retries
+## Post-Merge Test Retries
 
-After `StateService.apply_work_output` merges accepted worker output and runs tests, a test failure raises `IntegrationTestFailure` containing a bounded output excerpt, summary, and rollback SHA. The scheduler catches this and, when retries are enabled (`max_integration_test_retries > 0`), creates a replacement WORK node with the same contract, profile, and dependencies.
+After `StateService.apply_work_output` accepts work, merges it into the artifact repository, and runs verification tests, a test failure raises `PostMergeTestFailure` containing a bounded output excerpt, summary, and rollback SHA. The scheduler catches this and, when retries are enabled (`max_integration_test_retries > 0`), creates a replacement WORK node with the same contract, profile, and dependencies.
 
 The replacement node receives an `initial_revision` — a structured `RevisionRequest` containing the bounded test output — so it enters the normal worker revision path rather than a separate code path. Dependents are transferred to the retry node. Telemetry emits `node.integration_revision_requested`.
 
-Integration-test retries are disabled by default (`max_integration_test_retries = 0`) and are not yet wired to config.
+Post-merge test retries are disabled by default (`max_integration_test_retries = 0`) and are not yet wired to config.
 
 ## Typed Outputs
 

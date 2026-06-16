@@ -38,8 +38,8 @@ from forge.core.scheduler import (
     TerminalOutcomeKind,
 )
 from forge.core.state_service import (
-    MAX_INTEGRATION_TEST_OUTPUT_CHARS,
-    IntegrationTestFailure,
+    MAX_POST_MERGE_TEST_OUTPUT_CHARS,
+    PostMergeTestFailure,
 )
 from forge.core.task_complexity import TaskComplexity
 from forge.core.telemetry import TelemetryEvent
@@ -952,13 +952,13 @@ async def test_scheduler_classifies_test_failure_from_integration() -> None:
     assert response.failure_kind == FailureKind.TEST_FAILED
 
 
-async def test_typed_integration_test_failure_creates_retry_node() -> None:
-    """Typed integration test failure creates a replacement retry node when enabled."""
+async def test_typed_post_merge_test_failure_creates_retry_node() -> None:
+    """Typed post-merge test failure creates a replacement retry node when enabled."""
     work = _work_request(model_profile="fast")
     state = _base_state().add_nodes([DAGNode(request=work)])
     state_service = _FakeStateService(
         errors=[
-            IntegrationTestFailure(
+            PostMergeTestFailure(
                 summary="FAILED tests/test_app.py::test_app",
                 output="pytest output",
                 rollback_sha="abc123",
@@ -989,15 +989,15 @@ async def test_typed_integration_test_failure_creates_retry_node() -> None:
     assert "FAILED tests/test_app.py::test_app" in retry.request.initial_revision.rationale
 
 
-async def test_integration_test_retry_preserves_contract_and_dependencies() -> None:
-    """Integration retry preserves WorkSpec, source, dependencies, and profile."""
+async def test_post_merge_test_retry_preserves_contract_and_dependencies() -> None:
+    """Post-merge test retry preserves WorkSpec, source, dependencies, and profile."""
     prerequisite = _work_request()
     prerequisite_node = DAGNode(request=prerequisite).with_response(_already_done(prerequisite))
     work = _work_request(deps=frozenset({prerequisite.id}), model_profile="fast")
     state = _base_state().add_nodes([prerequisite_node, DAGNode(request=work)])
     state_service = _FakeStateService(
         errors=[
-            IntegrationTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123"),
+            PostMergeTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123"),
             None,
         ]
     )
@@ -1019,14 +1019,14 @@ async def test_integration_test_retry_preserves_contract_and_dependencies() -> N
     assert retry.request.model_profile == work.model_profile
 
 
-async def test_integration_test_retry_transfers_dependents_without_cancelling() -> None:
-    """Pending dependents are repointed to the integration retry node."""
+async def test_post_merge_test_retry_transfers_dependents_without_cancelling() -> None:
+    """Pending dependents are repointed to the post-merge test retry node."""
     work_a = _work_request()
     work_b = _work_request(deps=frozenset({work_a.id}))
     state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
     state_service = _FakeStateService(
         errors=[
-            IntegrationTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123"),
+            PostMergeTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123"),
             None,
         ]
     )
@@ -1046,13 +1046,13 @@ async def test_integration_test_retry_transfers_dependents_without_cancelling() 
     assert dependent.request.dependencies == frozenset({retry.request.id})
 
 
-async def test_integration_test_retry_exhaustion_cancels_dependents() -> None:
-    """Typed test failure is terminal when integration retry attempts are exhausted."""
+async def test_post_merge_test_retry_exhaustion_cancels_dependents() -> None:
+    """Typed post-merge test failure is terminal when retry attempts are exhausted."""
     work_a = _work_request()
     work_b = _work_request(deps=frozenset({work_a.id}))
     state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
     state_service = _FakeStateService(
-        IntegrationTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123")
+        PostMergeTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123")
     )
 
     async def runner(request: AgentRequest) -> AgentResponse:
@@ -1091,13 +1091,13 @@ async def test_non_test_integration_failure_remains_terminal() -> None:
 
 
 async def test_integration_revision_requested_telemetry_contains_bounded_output() -> None:
-    """Integration test retry telemetry includes bounded test output and retry metadata."""
+    """Post-merge test retry telemetry includes bounded test output and retry metadata."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
     sink = _MemoryTelemetrySink()
-    raw_output = "x" * (MAX_INTEGRATION_TEST_OUTPUT_CHARS + 10)
+    raw_output = "x" * (MAX_POST_MERGE_TEST_OUTPUT_CHARS + 10)
     state_service = _FakeStateService(
-        IntegrationTestFailure(summary="FAILED", output=raw_output, rollback_sha="abc123")
+        PostMergeTestFailure(summary="FAILED", output=raw_output, rollback_sha="abc123")
     )
 
     async def runner(request: AgentRequest) -> AgentResponse:

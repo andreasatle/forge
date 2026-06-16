@@ -81,7 +81,7 @@ Important concepts:
 * RevisionRequest
 * AgentResponse.output
 * WorkOutput
-* StateService (raises `IntegrationTestFailure` on post-merge test failures)
+* StateService (raises `PostMergeTestFailure` on post-merge test failures)
 * Language plugin
 * Adapter registry
 * TelemetryService / RunLedger (implemented — see `core/telemetry.py` and trace commands)

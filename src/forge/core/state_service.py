@@ -15,11 +15,11 @@ from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 
 _TEST_TIMEOUT = 60
-MAX_INTEGRATION_TEST_OUTPUT_CHARS = 4000
+MAX_POST_MERGE_TEST_OUTPUT_CHARS = 4000
 
 
-class IntegrationTestFailure(RuntimeError):
-    """Raised when post-merge integration tests fail and rollback succeeds."""
+class PostMergeTestFailure(RuntimeError):
+    """Raised when post-merge verification tests fail and rollback succeeds."""
 
     def __init__(self, *, summary: str, output: str, rollback_sha: str) -> None:
         self.summary = summary
@@ -29,10 +29,10 @@ class IntegrationTestFailure(RuntimeError):
 
 
 def _bounded_test_output(output: str) -> str:
-    if len(output) <= MAX_INTEGRATION_TEST_OUTPUT_CHARS:
+    if len(output) <= MAX_POST_MERGE_TEST_OUTPUT_CHARS:
         return output
-    omitted = len(output) - MAX_INTEGRATION_TEST_OUTPUT_CHARS
-    return output[:MAX_INTEGRATION_TEST_OUTPUT_CHARS].rstrip() + (
+    omitted = len(output) - MAX_POST_MERGE_TEST_OUTPUT_CHARS
+    return output[:MAX_POST_MERGE_TEST_OUTPUT_CHARS].rstrip() + (
         f"\n...[truncated {omitted} chars]"
     )
 
@@ -224,7 +224,7 @@ class StateService:
                     capture_output=True,
                     text=True,
                 )
-                raise IntegrationTestFailure(
+                raise PostMergeTestFailure(
                     summary=result.summary,
                     output=result.output,
                     rollback_sha=pre_merge_sha,

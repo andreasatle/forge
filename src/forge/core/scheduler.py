@@ -42,16 +42,16 @@ from forge.core.profile_escalation import (
     NoProfileEscalationPolicy,
     ProfileEscalationPolicy,
 )
-from forge.core.state_service import IntegrationTestFailure, StateService
+from forge.core.state_service import PostMergeTestFailure, StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
 logger = logging.getLogger(__name__)
 
-_INTEGRATION_TEST_REQUIRED_CHANGE = (
+_POST_MERGE_TEST_REQUIRED_CHANGE = (
     "Fix the implementation so the assigned worktree satisfies the task and passes the "
-    "integration test command. The previous accepted work was rolled back because tests "
+    "post-merge verification command. The previous accepted work was rolled back because tests "
     "failed after merge."
 )
 
@@ -407,14 +407,14 @@ class SchedulerConsequenceHandler:
                 str(updated.request.id),
                 dispatch_sha=response.dispatch_sha,
             )
-        except IntegrationTestFailure as exc:
+        except PostMergeTestFailure as exc:
             failed = self._integration_failed_node(
                 updated,
                 FailureKind.TEST_FAILED,
                 f"integration failed: {exc}",
             )
             state = state.update_node(failed)
-            return self._handle_integration_test_failure(state, failed, exc)
+            return self._handle_post_merge_test_failure(state, failed, exc)
         except RuntimeError as exc:
             failed = self._integration_failed_node(
                 updated,
@@ -460,13 +460,13 @@ class SchedulerConsequenceHandler:
             return FailureKind.VALIDATION_REJECTED
         return FailureKind.INTEGRATION_FAILED
 
-    def _handle_integration_test_failure(
+    def _handle_post_merge_test_failure(
         self,
         state: SchedulerState,
         failed: DAGNode,
-        error: IntegrationTestFailure,
+        error: PostMergeTestFailure,
     ) -> SchedulerState:
-        retry = self._integration_test_retry_node(failed, error)
+        retry = self._post_merge_test_retry_node(failed, error)
         if retry is None:
             return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
         state = state.add_nodes([retry])
@@ -474,16 +474,16 @@ class SchedulerConsequenceHandler:
         self._emit_integration_revision_requested(failed, retry, error)
         return state
 
-    def _integration_test_retry_node(
+    def _post_merge_test_retry_node(
         self,
         node: DAGNode,
-        error: IntegrationTestFailure,
+        error: PostMergeTestFailure,
     ) -> DAGNode | None:
         if node.request.agent_type is not AgentType.WORK:
             return None
         if node.integration_retry_attempt >= self._max_integration_test_retries:
             return None
-        revision = self._integration_test_revision(error, node.integration_retry_attempt + 1)
+        revision = self._post_merge_test_revision(error, node.integration_retry_attempt + 1)
         retry_request = AgentRequest(
             agent_type=node.request.agent_type,
             source=node.request.source,
@@ -502,12 +502,12 @@ class SchedulerConsequenceHandler:
         )
 
     @staticmethod
-    def _integration_test_revision(
-        error: IntegrationTestFailure,
+    def _post_merge_test_revision(
+        error: PostMergeTestFailure,
         prior_attempts: int,
     ) -> RevisionRequest:
         rationale = (
-            "Integration tests failed after the accepted work was merged and rolled back.\n"
+            "Post-merge verification tests failed after the accepted work was merged and rolled back.\n"
             f"Summary: {error.summary}\n"
             "Bounded test output:\n"
             f"{error.output_excerpt}"
@@ -517,7 +517,7 @@ class SchedulerConsequenceHandler:
             prior_attempts=prior_attempts,
             items=[
                 RevisionItem(
-                    required_change=_INTEGRATION_TEST_REQUIRED_CHANGE,
+                    required_change=_POST_MERGE_TEST_REQUIRED_CHANGE,
                     rationale=rationale,
                 )
             ],
@@ -824,7 +824,7 @@ class SchedulerConsequenceHandler:
         self,
         failed: DAGNode,
         retry: DAGNode,
-        error: IntegrationTestFailure,
+        error: PostMergeTestFailure,
     ) -> None:
         if self._run_id is None:
             return
@@ -841,7 +841,7 @@ class SchedulerConsequenceHandler:
                 phase="scheduler",
                 event_type="node.integration_revision_requested",
                 status="retry",
-                summary="integration tests failed; retry requested",
+                summary="post-merge tests failed; retry requested",
                 data={
                     "failed_node_id": str(failed.request.id),
                     "retry_node_id": str(retry.request.id),
