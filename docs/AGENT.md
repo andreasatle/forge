@@ -64,6 +64,8 @@ Do not:
 * Disable critic/referee to make a run pass.
 * Move code into classes if the class does not represent a real framework concept.
 * Preserve a bad abstraction just because it is cheaper to patch.
+* Use `if isinstance` fallthrough or bare `else` for enum dispatch — use `match` + `assert_never`.
+* Compare enum values as strings — use direct enum comparisons.
 
 ## Current Architecture Direction
 
@@ -71,7 +73,7 @@ Important concepts:
 
 * Scheduler
 * DAG node
-* AgentRequest
+* AgentRequest (carries `initial_revision` for scheduler-generated revision entry points)
 * AgentContract
 * Producer
 * Critic
@@ -79,28 +81,27 @@ Important concepts:
 * RevisionRequest
 * AgentResponse.output
 * WorkOutput
-* StateService
+* StateService (raises `IntegrationTestFailure` on post-merge test failures)
 * Language plugin
 * Adapter registry
-* Future: TelemetryService / RunLedger
+* TelemetryService / RunLedger (implemented — see `core/telemetry.py` and trace commands)
+* ProfileAssigner / ComplexityProfileAssigner (complexity-to-profile routing for WORK nodes)
+* TaskComplexityClassifier (Protocol; LLMTaskComplexityClassifier is the LLM-backed impl)
+* ProfileEscalationPolicy / StaticProfileEscalationPolicy (retry on stronger profile after failure)
+* `match` + `assert_never` — required for all enum and tagged-union dispatch
 
 ## Current Known Direction
 
-Next major future feature:
+Telemetry / RunLedger is implemented. Immutable run events are written under
+`workspaces/<workspace>/telemetry/runs/<run_id>/` and surfaced via `uv run forge trace`.
 
-Telemetry / RunLedger.
+Current areas of active development:
 
-This should store immutable run events for replay and a future web UI:
-
-* run started/completed
-* node dispatched/completed/failed
-* producer prompt/raw response/parsed output
-* critic finding
-* referee decision
-* revision request
-* integration result
-* test output
-* state version changes
+* Complexity routing — LLM-based task classification and profile mapping (wired; config-driven)
+* Profile escalation — retry failed WORK nodes with a stronger model profile (implemented; not yet config-wired)
+* Integration-test retries — scheduler-driven retry after post-merge test failures (implemented; not yet config-wired)
+* Hierarchical planning — planning tasks that emit further planning tasks (not implemented)
+* Versioned integration and conflict classification (partial)
 
 ## Required Development Discipline
 

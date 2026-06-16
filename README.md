@@ -120,6 +120,42 @@ A node is intentionally narrower. It receives a request and returns a response. 
 
 This keeps the graph legible. If a node causes more work to exist, that consequence is represented as scheduler-owned graph structure, not hidden agent state.
 
+## Complexity Routing
+
+When the scheduler expands a planner response into WORK nodes, it can classify each task by complexity and assign a model profile accordingly.
+
+Complexity labels are `easy`, `medium`, or `hard`. A `ComplexityProfileAssigner` maps each label to a named model profile. If a `complexity_classifier` is configured in the `models` block, an `LLMTaskComplexityClassifier` sends compact task metadata to an LLM and parses the label from a strict JSON response. Without a configured classifier, all tasks receive the default profile.
+
+Profile assignment is recorded as `node.profile_assigned` telemetry, including the selected profile, complexity label, and rationale. Classifier or provider failures surface as bounded `ProfileAssignmentError` diagnostics and are treated as scheduler failures — no silent fallback.
+
+Config example:
+
+```yaml
+models:
+  complexity_classifier:
+    model: some-model-name
+    complexity_to_profile:
+      easy: fast
+      medium: default
+      hard: strong
+```
+
+## Profile Escalation
+
+When a WORK node reaches a terminal failure, an optional `ProfileEscalationPolicy` can produce a replacement node with a stronger model profile.
+
+`StaticProfileEscalationPolicy` checks whether the failure kind is escalatable and whether the node has remaining escalation budget, then advances the current profile to the next entry in a configured chain. The replacement node carries the same task contract, spec, and dependencies; dependents are transferred from the failed node to the retry. The failed node is preserved in history via `retry_of`. Telemetry emits `node.profile_escalated` with the old and new profiles, the failure reason, and the retry metadata.
+
+The default policy is `NoProfileEscalationPolicy`, which disables escalation. Escalation is not wired to config yet.
+
+## Integration-Test Retries
+
+After `StateService.apply_work_output` merges accepted worker output and runs tests, a test failure raises `IntegrationTestFailure` containing a bounded output excerpt, summary, and rollback SHA. The scheduler catches this and, when retries are enabled (`max_integration_test_retries > 0`), creates a replacement WORK node with the same contract, profile, and dependencies.
+
+The replacement node receives an `initial_revision` — a structured `RevisionRequest` containing the bounded test output — so it enters the normal worker revision path rather than a separate code path. Dependents are transferred to the retry node. Telemetry emits `node.integration_revision_requested`.
+
+Integration-test retries are disabled by default (`max_integration_test_retries = 0`) and are not yet wired to config.
+
 ## Typed Outputs
 
 Forge treats agent output as a boundary, not a suggestion.
@@ -276,3 +312,30 @@ Forge development should preserve the core boundaries:
 - keep runtime boundaries typed.
 
 The framework is easiest to reason about when every consequential state transition has one owner.
+
+## Match-Based Dispatch
+
+Forge uses `match` with `assert_never` for all enum and tagged-union dispatch. This converts unhandled cases from silent runtime fallthrough into type-check errors caught by Pyright.
+
+The major state machines using this pattern are:
+
+- `ResponseStatus` → `NodeState` in `DAGNode.with_response`
+- `CriticDisposition` in `AttemptLifecycle.run` (both critic and referee arms)
+- `TerminalOutcomeKind` in `SchedulerConsequenceHandler.apply`
+- `AgentType` in `TerminalNodeOutcome.from_response`
+
+Tagged unions dispatched with `match` + `assert_never`:
+
+- `WorkDecision | GraphSplitDecision` in `plan_expansion` and `PlannerOutputValidator.render_for_critic`
+- `PlanSpec | WorkSpec` in `SchedulerConsequenceHandler._handle_decompose`
+
+New enum variants must be handled explicitly everywhere they are dispatched; Pyright will reject unhandled cases.
+
+## Latent Bugs Discovered and Fixed
+
+The `match` + `assert_never` sweep surfaced several silent fallthrough bugs:
+
+- **ALREADY_DONE fallthrough** — `DAGNode.with_response` previously had an `else` branch that mapped any unrecognized `ResponseStatus` to `NodeState.FAILED`, silently treating `ALREADY_DONE` as a failure.
+- **Empty-output ACCEPT/DECOMPOSE fallthrough** — Critic `ACCEPT` on empty output was retrying instead of returning `ALREADY_DONE`; critic `DECOMPOSE` on empty output was retrying instead of propagating `DECOMPOSE`.
+- **PLAN returning WorkOutput** — A PLAN node whose runner returned `WorkOutput` (or any non-plan type) was silently treated as done with zero children instead of raising a validation error. This is now `PlanOutputValidationError`.
+- **Enum string comparisons** — Several sites compared `node_state.value == "..."` string literals against enum members; these are now direct enum comparisons.
