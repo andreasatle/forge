@@ -13,7 +13,12 @@ from forge.core.models import (
     RunResult,
     WorkOutput,
 )
-from forge.core.state_service import StateService, _parse_test_result
+from forge.core.state_service import (
+    MAX_INTEGRATION_TEST_OUTPUT_CHARS,
+    IntegrationTestFailure,
+    StateService,
+    _parse_test_result,
+)
 from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 
@@ -340,7 +345,7 @@ async def test_apply_work_output_does_not_increment_version_on_fail(tmp_path: Pa
                     "run_tests",
                     return_value=RunResult(passed=False, summary="FAIL", output="FAIL"),
                 ):
-                    with pytest.raises(RuntimeError, match="tests failed"):
+                    with pytest.raises(IntegrationTestFailure, match="tests failed"):
                         await ss.apply_work_output(output, "node3")
 
     assert ss.current_version == 0
@@ -718,11 +723,64 @@ async def test_apply_work_output_resets_to_pre_merge_sha_on_test_failure(
     with patch.object(
         ss, "run_tests", return_value=RunResult(passed=False, summary="FAIL", output="FAIL")
     ):
-        with pytest.raises(RuntimeError, match="tests failed"):
+        with pytest.raises(IntegrationTestFailure, match="tests failed"):
             await ss.apply_work_output(WorkOutput(summary="added file"), "node-rollback")
 
     assert ws.get_current_sha("app") == pre_merge_sha
     assert ss.current_version == 0
+
+
+async def test_apply_work_output_test_failure_exposes_typed_details(
+    tmp_path: Path,
+) -> None:
+    """Post-merge test failure raises IntegrationTestFailure with summary, excerpt, and rollback SHA."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    pre_merge_sha = ws.get_current_sha("app")
+    worktree_path = ws.create_worktree("app", "node-typed-test-fail")
+    (worktree_path / "new_file.py").write_text("x = 1\n")
+    ss = StateService(ws, "app")
+
+    with patch.object(
+        ss,
+        "run_tests",
+        return_value=RunResult(
+            passed=False,
+            summary="FAILED tests/test_app.py::test_app",
+            output="pytest failure output",
+        ),
+    ):
+        with pytest.raises(IntegrationTestFailure) as exc_info:
+            await ss.apply_work_output(WorkOutput(summary="added file"), "node-typed-test-fail")
+
+    error = exc_info.value
+    assert error.summary == "FAILED tests/test_app.py::test_app"
+    assert error.output_excerpt == "pytest failure output"
+    assert error.rollback_sha == pre_merge_sha
+    assert ws.get_current_sha("app") == pre_merge_sha
+
+
+async def test_apply_work_output_test_failure_output_excerpt_is_bounded(
+    tmp_path: Path,
+) -> None:
+    """IntegrationTestFailure output_excerpt is bounded near StateService."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    worktree_path = ws.create_worktree("app", "node-bounded-test-fail")
+    (worktree_path / "new_file.py").write_text("x = 1\n")
+    ss = StateService(ws, "app")
+    raw_output = "x" * (MAX_INTEGRATION_TEST_OUTPUT_CHARS + 200)
+
+    with patch.object(
+        ss,
+        "run_tests",
+        return_value=RunResult(passed=False, summary="FAILED", output=raw_output),
+    ):
+        with pytest.raises(IntegrationTestFailure) as exc_info:
+            await ss.apply_work_output(WorkOutput(summary="added file"), "node-bounded-test-fail")
+
+    assert len(exc_info.value.output_excerpt) < len(raw_output)
+    assert "[truncated 200 chars]" in exc_info.value.output_excerpt
 
 
 async def test_apply_work_output_does_not_abort_completed_merge_on_test_failure(

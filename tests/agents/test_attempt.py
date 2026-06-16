@@ -30,6 +30,7 @@ from forge.core.models import (
     RequestSource,
     ResponseStatus,
     RevisionItem,
+    RevisionRequest,
     StateView,
     WorkDecision,
     WorkOutput,
@@ -1158,6 +1159,49 @@ async def test_empty_work_output_no_critic_first_attempt_retries_not_already_don
     assert result.output == work_output
     assert len(prompts) == 2
     assert "produced no implementation" in prompts[1]
+
+
+async def test_initial_revision_is_rendered_in_first_producer_prompt() -> None:
+    """AttemptLifecycle includes initial RevisionRequest in the first producer prompt."""
+    request = _work_request()
+    revision = RevisionRequest(
+        rationale="Integration tests failed after merge.\nSummary: FAILED test_scraper",
+        prior_attempts=1,
+        items=[
+            RevisionItem(
+                required_change="Fix the implementation so tests pass.",
+                rationale="pytest failed",
+            )
+        ],
+    )
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            )
+        ]
+    )
+    engine = AttemptLifecycle[WorkOutput](
+        request=request,
+        state_view=_state_view(),
+        validator=WorkOutputValidator(_adapter_spec(), _state_view()),
+        run_fn=run_fn,
+        registry=_registry_with(),
+        critic_provider=None,
+        referee_provider=None,
+        initial_revision=revision,
+    )
+
+    result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 1
+    assert "REQUIRED REVISION" in prompts[0]
+    assert "Summary: FAILED test_scraper" in prompts[0]
+    assert "1. Required change: Fix the implementation so tests pass." in prompts[0]
 
 
 async def test_empty_work_output_no_critic_last_attempt_requires_nonempty_false_returns_already_done() -> (

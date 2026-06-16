@@ -249,6 +249,7 @@ class AgentRequest(BaseModel):
     spec: AgentSpec
     dependencies: frozenset[RequestId] = Field(default_factory=_empty_request_ids)
     model_profile: str = "default"
+    initial_revision: RevisionRequest | None = None
 
 
 def _render_list_section(title: str, values: list[str]) -> list[str]:
@@ -517,6 +518,7 @@ class DAGNode(BaseModel):
     decomposition_depth: int = 0
     retry_of: RequestId | None = None
     profile_escalation_attempt: int = 0
+    integration_retry_attempt: int = 0
     prior_profiles: tuple[str, ...] = ()
 
     def with_state(self, node_state: NodeState) -> "DAGNode":

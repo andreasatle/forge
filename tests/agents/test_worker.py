@@ -24,6 +24,8 @@ from forge.core.models import (
     RefereeDecision,
     RequestSource,
     ResponseStatus,
+    RevisionItem,
+    RevisionRequest,
     StateView,
     WorkOutput,
     WorkSpec,
@@ -1015,6 +1017,44 @@ async def test_run_agent_failure_propagates_as_failed_response(tmp_path: Path) -
     assert response.status == ResponseStatus.FAILED
     assert response.failure_kind == FailureKind.PROVIDER_ERROR
     assert response.error == "provider error"
+
+
+async def test_work_agent_passes_request_initial_revision_to_attempt_lifecycle(
+    tmp_path: Path,
+) -> None:
+    """work_agent forwards AgentRequest.initial_revision into AttemptLifecycle."""
+    workspace = Workspace(tmp_path / "ws")
+    workspace.init()
+    workspace.init_artifact("codebase")
+    revision = RevisionRequest(
+        rationale="tests failed",
+        prior_attempts=1,
+        items=[RevisionItem(required_change="fix tests", rationale="pytest failed")],
+    )
+    request = _request().model_copy(update={"initial_revision": revision})
+    provider = MagicMock()
+    provider.max_tokens = 8192
+    captured_revision: RevisionRequest | None = None
+
+    class _FakeLifecycle:
+        def __init__(self, **kwargs: object) -> None:
+            nonlocal captured_revision
+            captured_revision = kwargs["initial_revision"]  # type: ignore[assignment]
+
+        async def run(self, prompt: str) -> AgentResponse:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                error="stop after constructor capture",
+            )
+
+    with patch("forge.agents.worker.AttemptLifecycle", _FakeLifecycle):
+        await work_agent(
+            request, _registry(), workspace, LanguageRegistry(), provider, _state_view()
+        )
+
+    assert captured_revision == revision
 
 
 async def test_successful_engine_result_wrapped_in_completed_response(tmp_path: Path) -> None:

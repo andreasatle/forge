@@ -29,6 +29,8 @@ from forge.core.models import (
     RefereeDecision,
     RequestSource,
     ResponseStatus,
+    RevisionItem,
+    RevisionRequest,
     SchedulerState,
     StateView,
     TaskSpec,
@@ -78,6 +80,38 @@ def test_agent_request_tolerates_extra_integration_revision_in_json():
     }
     restored = AgentRequest.model_validate(data)
     assert not hasattr(restored, "integration_revision")
+
+
+def test_agent_request_initial_revision_defaults_to_none():
+    """AgentRequest.initial_revision is absent by default for backward compatibility."""
+    req = _make_request()
+
+    assert req.initial_revision is None
+
+
+def test_agent_request_old_json_without_initial_revision_loads_as_none():
+    """Old serialized AgentRequest payloads without initial_revision load with None."""
+    req = _make_request()
+    data = req.model_dump()
+    del data["initial_revision"]
+
+    restored = AgentRequest.model_validate(data)
+
+    assert restored.initial_revision is None
+
+
+def test_agent_request_initial_revision_roundtrips():
+    """AgentRequest.initial_revision serializes and deserializes as active retry feedback."""
+    revision = RevisionRequest(
+        rationale="tests failed",
+        prior_attempts=1,
+        items=[RevisionItem(required_change="fix tests", rationale="pytest failed")],
+    )
+    req = _make_request().model_copy(update={"initial_revision": revision})
+
+    restored = AgentRequest.model_validate(req.model_dump())
+
+    assert restored.initial_revision == revision
 
 
 def test_dag_node_tolerates_extra_integration_revision_in_json():

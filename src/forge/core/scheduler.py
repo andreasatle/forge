@@ -20,6 +20,8 @@ from forge.core.models import (
     RequestId,
     RequestSource,
     ResponseStatus,
+    RevisionItem,
+    RevisionRequest,
     SchedulerState,
     WorkDecision,
     WorkOutput,
@@ -39,12 +41,18 @@ from forge.core.profile_escalation import (
     NoProfileEscalationPolicy,
     ProfileEscalationPolicy,
 )
-from forge.core.state_service import StateService
+from forge.core.state_service import IntegrationTestFailure, StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
 
 logger = logging.getLogger(__name__)
+
+_INTEGRATION_TEST_REQUIRED_CHANGE = (
+    "Fix the implementation so the assigned worktree satisfies the task and passes the "
+    "integration test command. The previous accepted work was rolled back because tests "
+    "failed after merge."
+)
 
 
 def _short_rationale(value: str, limit: int = 240) -> str:
@@ -143,6 +151,7 @@ class SchedulerConsequenceHandler:
         state_services: dict[str, StateService] | None = None,
         profile_assigner: ProfileAssigner | None = None,
         profile_escalation_policy: ProfileEscalationPolicy | None = None,
+        max_integration_test_retries: int = 0,
     ) -> None:
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
@@ -150,6 +159,7 @@ class SchedulerConsequenceHandler:
         self._state_services = state_services or {}
         self._profile_assigner = profile_assigner or DefaultProfileAssigner()
         self._profile_escalation_policy = profile_escalation_policy or NoProfileEscalationPolicy()
+        self._max_integration_test_retries = max_integration_test_retries
 
     async def apply(
         self,
@@ -381,6 +391,14 @@ class SchedulerConsequenceHandler:
                 str(updated.request.id),
                 dispatch_sha=response.dispatch_sha,
             )
+        except IntegrationTestFailure as exc:
+            failed = self._integration_failed_node(
+                updated,
+                FailureKind.TEST_FAILED,
+                f"integration failed: {exc}",
+            )
+            state = state.update_node(failed)
+            return self._handle_integration_test_failure(state, failed, exc)
         except RuntimeError as exc:
             failed = self._integration_failed_node(
                 updated,
@@ -425,6 +443,69 @@ class SchedulerConsequenceHandler:
         if "no worktree changes produced" in message:
             return FailureKind.VALIDATION_REJECTED
         return FailureKind.INTEGRATION_FAILED
+
+    def _handle_integration_test_failure(
+        self,
+        state: SchedulerState,
+        failed: DAGNode,
+        error: IntegrationTestFailure,
+    ) -> SchedulerState:
+        retry = self._integration_test_retry_node(failed, error)
+        if retry is None:
+            return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
+        state = state.add_nodes([retry])
+        state = self._transfer_dependents(state, failed.request.id, retry.request.id)
+        self._emit_integration_revision_requested(failed, retry, error)
+        return state
+
+    def _integration_test_retry_node(
+        self,
+        node: DAGNode,
+        error: IntegrationTestFailure,
+    ) -> DAGNode | None:
+        if node.request.agent_type is not AgentType.WORK:
+            return None
+        if node.integration_retry_attempt >= self._max_integration_test_retries:
+            return None
+        revision = self._integration_test_revision(error, node.integration_retry_attempt + 1)
+        retry_request = AgentRequest(
+            agent_type=node.request.agent_type,
+            source=node.request.source,
+            spec=node.request.spec,
+            dependencies=node.request.dependencies,
+            model_profile=node.request.model_profile,
+            initial_revision=revision,
+        )
+        return DAGNode(
+            request=retry_request,
+            decomposition_depth=node.decomposition_depth,
+            retry_of=node.request.id,
+            profile_escalation_attempt=node.profile_escalation_attempt,
+            integration_retry_attempt=node.integration_retry_attempt + 1,
+            prior_profiles=node.prior_profiles,
+        )
+
+    @staticmethod
+    def _integration_test_revision(
+        error: IntegrationTestFailure,
+        prior_attempts: int,
+    ) -> RevisionRequest:
+        rationale = (
+            "Integration tests failed after the accepted work was merged and rolled back.\n"
+            f"Summary: {error.summary}\n"
+            "Bounded test output:\n"
+            f"{error.output_excerpt}"
+        )
+        return RevisionRequest(
+            rationale=rationale,
+            prior_attempts=prior_attempts,
+            items=[
+                RevisionItem(
+                    required_change=_INTEGRATION_TEST_REQUIRED_CHANGE,
+                    rationale=rationale,
+                )
+            ],
+        )
 
     @staticmethod
     def _remove_integrated_worktree(
@@ -720,6 +801,40 @@ class SchedulerConsequenceHandler:
             ),
         )
 
+    def _emit_integration_revision_requested(
+        self,
+        failed: DAGNode,
+        retry: DAGNode,
+        error: IntegrationTestFailure,
+    ) -> None:
+        if self._run_id is None:
+            return
+        spec = failed.request.spec
+        artifact = spec.artifact if isinstance(spec, WorkSpec) else None
+        safe_append_telemetry(
+            self._telemetry_sink,
+            TelemetryEvent(
+                run_id=self._run_id,
+                node_id=retry.request.id,
+                request_id=retry.request.id,
+                agent_type=retry.request.agent_type.value,
+                role="scheduler",
+                phase="scheduler",
+                event_type="node.integration_revision_requested",
+                status="retry",
+                summary="integration tests failed; retry requested",
+                data={
+                    "failed_node_id": str(failed.request.id),
+                    "retry_node_id": str(retry.request.id),
+                    "artifact": artifact,
+                    "reason": "test_failed",
+                    "test_summary": error.summary,
+                    "test_output_excerpt": error.output_excerpt,
+                    "attempt": retry.integration_retry_attempt,
+                },
+            ),
+        )
+
     def emit_node_dispatched(self, node: DAGNode) -> None:
         """Emit node.dispatched with the node's contract so traces expose planner intent."""
         if self._run_id is None:
@@ -803,6 +918,7 @@ class Scheduler:
         state_services: dict[str, StateService] | None = None,
         profile_assigner: ProfileAssigner | None = None,
         profile_escalation_policy: ProfileEscalationPolicy | None = None,
+        max_integration_test_retries: int = 0,
     ) -> None:
         self._runner = runner
         self._callbacks = callbacks or SchedulerCallbacks()
@@ -813,6 +929,7 @@ class Scheduler:
             state_services=state_services,
             profile_assigner=profile_assigner,
             profile_escalation_policy=profile_escalation_policy,
+            max_integration_test_retries=max_integration_test_retries,
         )
 
     async def run(

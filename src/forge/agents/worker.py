@@ -204,7 +204,7 @@ class WorkTaskExecutor:
                 max_attempts=self.max_attempts,
                 telemetry_sink=self.telemetry_sink,
                 run_id=getattr(self.telemetry_sink, "run_id", None),
-                initial_revision=None,
+                initial_revision=contract_request.initial_revision,
             )
 
             try:

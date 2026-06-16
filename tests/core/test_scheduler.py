@@ -37,6 +37,10 @@ from forge.core.scheduler import (
     TerminalNodeOutcome,
     TerminalOutcomeKind,
 )
+from forge.core.state_service import (
+    MAX_INTEGRATION_TEST_OUTPUT_CHARS,
+    IntegrationTestFailure,
+)
 from forge.core.task_complexity import TaskComplexity
 from forge.core.telemetry import TelemetryEvent
 
@@ -55,8 +59,11 @@ class _MemoryTelemetrySink:
 class _FakeStateService:
     """Minimal async fake for scheduler-owned integration tests."""
 
-    def __init__(self, error: RuntimeError | None = None) -> None:
+    def __init__(
+        self, error: RuntimeError | None = None, errors: list[RuntimeError | None] | None = None
+    ) -> None:
         self.error = error
+        self.errors = list(errors or [])
         self.calls: list[tuple[WorkOutput, str, str]] = []
         self.remove_worktree_calls: list[str] = []
         self.remove_worktree_error: Exception | None = None
@@ -65,6 +72,11 @@ class _FakeStateService:
         self, output: WorkOutput, node_id: str, dispatch_sha: str = ""
     ) -> None:
         self.calls.append((output, node_id, dispatch_sha))
+        if self.errors:
+            error = self.errors.pop(0)
+            if error is not None:
+                raise error
+            return
         if self.error is not None:
             raise self.error
 
@@ -893,6 +905,181 @@ async def test_scheduler_classifies_test_failure_from_integration() -> None:
     assert final.dag[work.id].node_state == NodeState.FAILED
     assert response is not None
     assert response.failure_kind == FailureKind.TEST_FAILED
+
+
+async def test_typed_integration_test_failure_creates_retry_node() -> None:
+    """Typed integration test failure creates a replacement retry node when enabled."""
+    work = _work_request(model_profile="fast")
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService(
+        errors=[
+            IntegrationTestFailure(
+                summary="FAILED tests/test_app.py::test_app",
+                output="pytest output",
+                rollback_sha="abc123",
+            ),
+            None,
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+        max_integration_test_retries=1,
+    ).run(state)
+
+    original = final.dag[work.id]
+    retries = [node for node in final.dag.values() if node.retry_of == work.id]
+    assert original.node_state == NodeState.FAILED
+    assert original.response is not None
+    assert original.response.failure_kind == FailureKind.TEST_FAILED
+    assert len(retries) == 1
+    retry = retries[0]
+    assert retry.request.model_profile == "fast"
+    assert retry.integration_retry_attempt == 1
+    assert retry.request.initial_revision is not None
+    assert "FAILED tests/test_app.py::test_app" in retry.request.initial_revision.rationale
+
+
+async def test_integration_test_retry_preserves_contract_and_dependencies() -> None:
+    """Integration retry preserves WorkSpec, source, dependencies, and profile."""
+    prerequisite = _work_request()
+    prerequisite_node = DAGNode(request=prerequisite).with_response(_already_done(prerequisite))
+    work = _work_request(deps=frozenset({prerequisite.id}), model_profile="fast")
+    state = _base_state().add_nodes([prerequisite_node, DAGNode(request=work)])
+    state_service = _FakeStateService(
+        errors=[
+            IntegrationTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123"),
+            None,
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+        max_integration_test_retries=1,
+    ).run(state)
+
+    retry = next(node for node in final.dag.values() if node.retry_of == work.id)
+    assert retry.request.id != work.id
+    assert retry.request.spec == work.spec
+    assert retry.request.source == work.source
+    assert retry.request.dependencies == work.dependencies
+    assert retry.request.model_profile == work.model_profile
+
+
+async def test_integration_test_retry_transfers_dependents_without_cancelling() -> None:
+    """Pending dependents are repointed to the integration retry node."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+    state_service = _FakeStateService(
+        errors=[
+            IntegrationTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123"),
+            None,
+        ]
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+        max_integration_test_retries=1,
+    ).run(state)
+
+    retry = next(node for node in final.dag.values() if node.retry_of == work_a.id)
+    dependent = final.dag[work_b.id]
+    assert dependent.node_state == NodeState.INTEGRATED
+    assert dependent.request.dependencies == frozenset({retry.request.id})
+
+
+async def test_integration_test_retry_exhaustion_cancels_dependents() -> None:
+    """Typed test failure is terminal when integration retry attempts are exhausted."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+    state_service = _FakeStateService(
+        IntegrationTestFailure(summary="FAILED", output="pytest output", rollback_sha="abc123")
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+        max_integration_test_retries=0,
+    ).run(state)
+
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+    assert all(node.retry_of != work_a.id for node in final.dag.values())
+
+
+async def test_non_test_integration_failure_remains_terminal() -> None:
+    """Merge conflicts and other non-test integration failures do not create retry nodes."""
+    work_a = _work_request()
+    work_b = _work_request(deps=frozenset({work_a.id}))
+    state = _base_state().add_nodes([DAGNode(request=work_a), DAGNode(request=work_b)])
+    state_service = _FakeStateService(RuntimeError("git command failed: merge conflict"))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+        max_integration_test_retries=1,
+    ).run(state)
+
+    assert final.dag[work_a.id].node_state == NodeState.FAILED
+    assert final.dag[work_b.id].node_state == NodeState.CANCELLED
+    assert all(node.retry_of != work_a.id for node in final.dag.values())
+
+
+async def test_integration_revision_requested_telemetry_contains_bounded_output() -> None:
+    """Integration test retry telemetry includes bounded test output and retry metadata."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    sink = _MemoryTelemetrySink()
+    raw_output = "x" * (MAX_INTEGRATION_TEST_OUTPUT_CHARS + 10)
+    state_service = _FakeStateService(
+        IntegrationTestFailure(summary="FAILED", output=raw_output, rollback_sha="abc123")
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+        max_integration_test_retries=1,
+    ).run(state)
+
+    retry = next(node for node in final.dag.values() if node.retry_of == work.id)
+    events = [
+        event for event in sink.events if event.event_type == "node.integration_revision_requested"
+    ]
+    assert len(events) == 1
+    event = events[0]
+    assert event.node_id == retry.request.id
+    assert event.data["failed_node_id"] == str(work.id)
+    assert event.data["retry_node_id"] == str(retry.request.id)
+    assert event.data["artifact"] == "codebase"
+    assert event.data["reason"] == "test_failed"
+    assert event.data["test_summary"] == "FAILED"
+    assert "[truncated 10 chars]" in event.data["test_output_excerpt"]
+    assert event.data["attempt"] == 1
 
 
 async def test_scheduler_classifies_stale_work_output_from_integration() -> None:
