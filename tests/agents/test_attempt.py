@@ -1515,3 +1515,66 @@ async def test_render_for_critic_without_worktree_omits_git_and_untracked_sectio
     assert "Git status:" not in text
     assert "Git diff:" not in text
     assert "New file:" not in text
+
+
+async def test_render_for_critic_excludes_pycache_untracked_files(
+    git_worktree: Path,
+) -> None:
+    """__pycache__ files are not included as 'New file:' content blocks in critic evidence."""
+    (git_worktree / "__pycache__").mkdir()
+    (git_worktree / "__pycache__" / "module.cpython-312.pyc").write_bytes(b"pyc")
+    # A real source file that should appear.
+    (git_worktree / "real.py").write_text("x = 1\n")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Did something."))
+
+    assert "New file: __pycache__/module.cpython-312.pyc" not in text
+    assert "New file: real.py" in text
+
+
+async def test_render_for_critic_excludes_pyc_suffix_files(
+    git_worktree: Path,
+) -> None:
+    """Untracked .pyc files do not appear as 'New file:' content blocks in critic evidence."""
+    (git_worktree / "compiled.pyc").write_bytes(b"pyc")
+    (git_worktree / "real.py").write_text("x = 1\n")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Did something."))
+
+    assert "New file: compiled.pyc" not in text
+    assert "New file: real.py" in text
+
+
+async def test_render_for_critic_excludes_noise_file_names(
+    git_worktree: Path,
+) -> None:
+    """NOISE_FILE_NAMES entries (e.g. pyvenv.cfg) do not appear as 'New file:' blocks."""
+    (git_worktree / "pyvenv.cfg").write_text("[python]\nversion = 3.12\n")
+    (git_worktree / "real.py").write_text("x = 1\n")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Did something."))
+
+    assert "New file: pyvenv.cfg" not in text
+    assert "New file: real.py" in text
+
+
+async def test_render_for_critic_excludes_venv_untracked_files(
+    git_worktree: Path,
+) -> None:
+    """Files inside .venv do not appear as 'New file:' content blocks in critic evidence."""
+    (git_worktree / ".venv").mkdir()
+    (git_worktree / ".venv" / "pyvenv.cfg").write_text("[python]\nversion = 3.12\n")
+    (git_worktree / "real.py").write_text("x = 1\n")
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Did something."))
+
+    assert "New file: .venv/pyvenv.cfg" not in text
+    assert "New file: real.py" in text

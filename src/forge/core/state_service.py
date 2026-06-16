@@ -4,26 +4,26 @@ import subprocess
 from pathlib import Path
 
 from forge.core.models import FileView, RunResult, StateView, WorkOutput
+from forge.core.noise import (
+    GENERATED_ARTIFACT_DIRS,
+    GENERATED_ARTIFACT_SUFFIXES,
+    NOISE_FILE_NAMES,
+    STATE_VIEW_NOISE_DIRS,
+    STATE_VIEW_NOISE_SUFFIXES,
+)
 from forge.core.workspace import Workspace, run_git
 from forge.languages.registry import LanguagePlugin
 
-_EXCLUDED_DIR_NAMES = frozenset({"__pycache__", "node_modules", "dist", "build"})
-_EXCLUDED_FILE_NAMES = frozenset({"CACHEDIR.TAG", "pyvenv.cfg"})
-_EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyo", ".lock", ".egg-info"})
-
 _TEST_TIMEOUT = 60
-
-_GENERATED_DIR_NAMES = frozenset({"__pycache__", ".pytest_cache", ".ruff_cache", ".venv"})
-_GENERATED_SUFFIXES = frozenset({".pyc", ".pyo", ".pyd"})
 
 
 def _is_noise(path: Path, root: Path) -> bool:
     parts = path.relative_to(root).parts
     return (
         any(p.startswith(".") for p in parts)
-        or any(p in _EXCLUDED_DIR_NAMES for p in parts)
-        or path.name in _EXCLUDED_FILE_NAMES
-        or path.suffix in _EXCLUDED_SUFFIXES
+        or any(p in STATE_VIEW_NOISE_DIRS for p in parts)
+        or path.name in NOISE_FILE_NAMES
+        or path.suffix in STATE_VIEW_NOISE_SUFFIXES
     )
 
 
@@ -45,8 +45,9 @@ def _parse_test_result(raw: str, returncode: int = 0) -> RunResult:
 
 def _is_generated_artifact_path(path: str) -> bool:
     parts = Path(path).parts
-    return any(part in _GENERATED_DIR_NAMES for part in parts) or Path(path).suffix in (
-        _GENERATED_SUFFIXES
+    return (
+        any(part in GENERATED_ARTIFACT_DIRS for part in parts)
+        or Path(path).suffix in GENERATED_ARTIFACT_SUFFIXES
     )
 
 
