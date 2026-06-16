@@ -3,7 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -287,22 +287,46 @@ async def test_runner_satisfies_agent_runner_type(tmp_path: Path) -> None:
     assert final is not None
 
 
-async def test_make_plan_handler_planner_source_returns_completed() -> None:
-    """make_plan_handler returns completed for PLANNER-source requests without calling the LLM."""
-    handler = make_plan_handler(
-        _mock_registry(),
-        artifact_names=["codebase"],
-        artifact_languages={},
-        provider=_mock_provider(),
-    )
+async def test_make_plan_handler_planner_source_invokes_plan_agent() -> None:
+    """make_plan_handler invokes plan_agent for PLANNER-source PLAN requests."""
     request = AgentRequest(
         agent_type=AgentType.PLAN,
         source=RequestSource.PLANNER,
         spec=PlanSpec(northstar="test northstar"),
     )
-    response = await handler(request)
+    expected = AgentResponse(
+        request_id=request.id,
+        status=ResponseStatus.COMPLETED,
+        output=GraphSplitDecision(
+            nodes=[
+                DecompositionNodeSpec(
+                    id="work",
+                    task=TaskSpec(
+                        objective="do work",
+                        success_condition="done",
+                        adapter="coding",
+                        artifact="codebase",
+                    ),
+                )
+            ]
+        ),
+    )
 
-    assert response.status == ResponseStatus.COMPLETED
+    plan_agent = AsyncMock(return_value=expected)
+    with patch("forge.core.runner.plan_agent", plan_agent):
+        handler = make_plan_handler(
+            _mock_registry(),
+            artifact_names=["codebase"],
+            artifact_languages={},
+            provider=_mock_provider(),
+        )
+        response = await handler(request)
+
+    assert response is expected
+    plan_agent.assert_awaited_once()
+    await_args = plan_agent.await_args
+    assert await_args is not None
+    assert await_args.args[0] is request
 
 
 async def test_scripted_plan_handler_user_source_emits_three_graph_nodes() -> None:
@@ -375,6 +399,53 @@ async def test_scheduler_dispatches_global_planner_with_user_source() -> None:
     await Scheduler(runner=runner).run(state)
 
     assert RequestSource.USER in captured_sources
+
+
+async def test_recursive_plan_node_runs_through_production_plan_handler() -> None:
+    """A DecompositionTask child PLAN is handled by make_plan_handler and expands to WORK."""
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind":"final","output":{"kind":"split_graph","nodes":['
+            '{"id":"sub","task":{"kind":"decomposition_task",'
+            '"objective":"plan the sub-system","success_condition":"planned"},'
+            '"depends_on":[]}'
+            "]}}",
+            '{"kind":"final","output":{"kind":"work","task":{'
+            '"objective":"write the implementation","success_condition":"tests pass",'
+            '"adapter":"coding","artifact":"codebase"}'
+            "}}",
+        ]
+    )
+
+    async def work_handler(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    runner = Runner()
+    runner.register(
+        AgentType.PLAN,
+        make_plan_handler(
+            _mock_registry(),
+            artifact_names=["codebase"],
+            artifact_languages={"codebase": "python"},
+            provider=provider,
+        ),
+    )
+    runner.register(AgentType.WORK, work_handler)
+
+    plan = _plan_request()
+    state = SchedulerState(northstar="test northstar").add_nodes([DAGNode(request=plan)])
+    final = await Scheduler(runner=runner).run(state)
+
+    plan_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.PLAN]
+    work_nodes = [n for n in final.dag.values() if n.request.agent_type == AgentType.WORK]
+    assert provider.chat.call_count == 2
+    assert len(plan_nodes) == 2
+    assert len(work_nodes) == 1
+    assert all(n.node_state == NodeState.INTEGRATED for n in plan_nodes)
+    assert work_nodes[0].node_state == NodeState.INTEGRATED
+    assert isinstance(work_nodes[0].request.spec, WorkSpec)
+    assert work_nodes[0].request.spec.objective == "write the implementation"
 
 
 async def test_scripted_plan_handler_work_nodes_execute_in_dependency_order() -> None:

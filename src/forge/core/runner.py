@@ -9,7 +9,6 @@ from forge.core.models import (
     AgentRequest,
     AgentResponse,
     AgentType,
-    RequestSource,
     ResponseStatus,
     StateView,
     WorkSpec,
@@ -104,11 +103,9 @@ def make_plan_handler(
     telemetry_sink: TelemetrySink | None = None,
     max_attempts: int = 3,
 ) -> Handler:
-    """Return a handler that delegates user-source plan requests to plan_agent."""
+    """Return a handler that delegates plan requests to plan_agent."""
 
     async def plan_handler(request: AgentRequest) -> AgentResponse:
-        if request.source == RequestSource.PLANNER:
-            return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
         return await plan_agent(
             request,
             artifact_names,

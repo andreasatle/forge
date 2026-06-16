@@ -1234,6 +1234,24 @@ async def test_scheduler_expands_work_decision_via_build_from_decision() -> None
     assert work_nodes[0].node_state == NodeState.INTEGRATED
 
 
+async def test_scheduler_rejects_completed_plan_without_output() -> None:
+    """A COMPLETED PLAN response with output=None is failed, not integrated as a plan."""
+    planner = _plan_request()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED)
+
+    final = await Scheduler(runner=runner).run(_base_state().add_nodes([DAGNode(request=planner)]))
+
+    plan_node = final.dag[planner.id]
+    assert plan_node.node_state == NodeState.FAILED
+    assert plan_node.response is not None
+    assert plan_node.response.status == ResponseStatus.FAILED
+    assert plan_node.response.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "did not include WorkDecision or GraphSplitDecision" in (plan_node.response.error or "")
+    assert len(final.dag) == 1
+
+
 async def test_scheduler_expands_dependent_split_decision_into_chained_work_nodes() -> None:
     """Planner returning GraphSplitDecision chain creates chained WORK nodes."""
     planner = _plan_request()

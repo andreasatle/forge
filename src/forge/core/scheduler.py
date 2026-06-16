@@ -91,6 +91,10 @@ class TerminalNodeOutcome:
         )
 
 
+class PlanOutputValidationError(ValueError):
+    """Raised when a completed PLAN response does not contain a planner decision."""
+
+
 def _has_validation_exhausted_diagnostic(response: AgentResponse) -> bool:
     return any(
         diagnostic.kind == VALIDATION_EXHAUSTED_DIAGNOSTIC for diagnostic in response.diagnostics
@@ -127,6 +131,18 @@ class SchedulerConsequenceHandler:
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_PLAN:
             try:
                 plan_expansion = self._build_plan_expansion(node, response)
+            except PlanOutputValidationError as exc:
+                failed_response = AgentResponse(
+                    request_id=node.request.id,
+                    status=ResponseStatus.FAILED,
+                    failure_kind=FailureKind.VALIDATION_REJECTED,
+                    error=str(exc),
+                )
+                failed_updated = current.with_response(failed_response)
+                state = state.update_node(failed_updated)
+                return self._handle_failed(
+                    state, failed_updated, TerminalOutcomeKind.TERMINAL_FAILURE
+                )
             except DecompositionConvergenceError as exc:
                 logger.warning(
                     "decomposition convergence check failed for node %s: %s",
@@ -163,6 +179,10 @@ class SchedulerConsequenceHandler:
             and response.status == ResponseStatus.COMPLETED
         ):
             output = response.output
+            if output is None:
+                raise PlanOutputValidationError(
+                    "completed PLAN response did not include WorkDecision or GraphSplitDecision output"
+                )
             if isinstance(output, (WorkDecision, GraphSplitDecision)):
                 return [
                     DAGNode(request=request)
