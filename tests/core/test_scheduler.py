@@ -1,8 +1,10 @@
 """Tests for Scheduler DAG execution, concurrency, callbacks, and termination."""
 
 import asyncio
+import inspect
 from uuid import uuid4
 
+import forge.core.scheduler as scheduler_module
 from forge.core.models import (
     VALIDATION_EXHAUSTED_DIAGNOSTIC,
     AcceptanceCriterion,
@@ -67,6 +69,18 @@ class _FakeStateService:
         self.remove_worktree_calls.append(node_id)
         if self.remove_worktree_error is not None:
             raise self.remove_worktree_error
+
+
+class _FixedProfileAssigner:
+    """Profile assigner fake for scheduler injection tests."""
+
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
+        self.calls: list[AgentRequest] = []
+
+    async def assign(self, request: AgentRequest) -> str:
+        self.calls.append(request)
+        return self.profile
 
 
 # --- Helpers ---
@@ -2103,3 +2117,39 @@ async def test_decompose_convergence_emits_convergence_failed_telemetry() -> Non
     assert convergence_events[0].status == "failed"
     assert "reason" in convergence_events[0].data
     assert "not reductive" in convergence_events[0].data["reason"]
+
+
+async def test_scheduler_uses_injected_profile_assigner_without_model_wiring() -> None:
+    """Scheduler receives a ProfileAssigner abstraction and remains provider-agnostic."""
+    planner = _plan_request()
+    assigner = _FixedProfileAssigner("fast")
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="tests pass",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        if request.id == planner.id:
+            return AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=decision,
+            )
+        return _ok(request)
+
+    final = await Scheduler(runner=runner, profile_assigner=assigner).run(
+        _base_state().add_nodes([DAGNode(request=planner)])
+    )
+
+    work_nodes = [node for node in final.dag.values() if node.request.agent_type is AgentType.WORK]
+    assert len(work_nodes) == 1
+    assert work_nodes[0].request.model_profile == "fast"
+    assert len(assigner.calls) == 1
+    assert assigner.calls[0].id == work_nodes[0].request.id
+
+    scheduler_source = inspect.getsource(scheduler_module)
+    assert "make_provider" not in scheduler_source

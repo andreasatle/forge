@@ -11,6 +11,7 @@ from forge.core.config import (
     ModelsConfig,
     load_config,
 )
+from forge.core.task_complexity import TaskComplexity
 
 
 def _write_yaml(tmp_path: Path, content: str) -> Path:
@@ -615,6 +616,7 @@ def test_worker_profiles_absent_gives_empty_dict(tmp_path: Path) -> None:
 def test_models_config_defaults_worker_profiles_to_empty_dict() -> None:
     """ModelsConfig() default-constructs with worker_profiles == {}."""
     assert ModelsConfig().worker_profiles == {}
+    assert ModelsConfig().complexity_classifier is None
 
 
 def test_worker_profiles_full_pwc_parsed(tmp_path: Path) -> None:
@@ -712,3 +714,116 @@ def test_worker_profiles_default_name_allowed(tmp_path: Path) -> None:
     assert "default" in config.models.worker_profiles
     assert config.models.worker_profiles["default"].producer == "openai/gpt-4o-mini"
     assert config.models.worker_profiles["default"].critic is None
+
+
+# --- complexity_classifier ---
+
+
+def test_complexity_classifier_absent_gives_none(tmp_path: Path) -> None:
+    """Old configs without complexity_classifier load cleanly and give None."""
+    p = _write_yaml(tmp_path, "northstar: 'goal'\nworkspace: ./ws\n" + _ARTIFACTS_YAML)
+    config = ForgeConfig.load(p)
+    assert config.models.complexity_classifier is None
+
+
+def test_complexity_classifier_valid_config_parses(tmp_path: Path) -> None:
+    """complexity_classifier parses model, max_tokens, and complexity profile mapping."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker_profiles:\n"
+        + "    fast:\n"
+        + "      producer: openai/fast\n"
+        + "    strong:\n"
+        + "      producer: openai/strong\n"
+        + "  complexity_classifier:\n"
+        + "    model: openai/gpt-4o-mini\n"
+        + "    max_tokens: 512\n"
+        + "    complexity_to_profile:\n"
+        + "      easy: fast\n"
+        + "      medium: default\n"
+        + "      hard: strong\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    config = ForgeConfig.load(p)
+    classifier = config.models.complexity_classifier
+    assert classifier is not None
+    assert classifier.model == "openai/gpt-4o-mini"
+    assert classifier.max_tokens == 512
+    assert classifier.complexity_to_profile == {
+        TaskComplexity.EASY: "fast",
+        TaskComplexity.MEDIUM: "default",
+        TaskComplexity.HARD: "strong",
+    }
+
+
+def test_complexity_classifier_malformed_config_rejected(tmp_path: Path) -> None:
+    """complexity_classifier must be a mapping."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  complexity_classifier:\n"
+        + "    - openai/gpt-4o-mini\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    with pytest.raises(ValueError, match="complexity_classifier"):
+        ForgeConfig.load(p)
+
+
+def test_complexity_classifier_empty_model_rejected(tmp_path: Path) -> None:
+    """complexity_classifier.model must be non-empty."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  complexity_classifier:\n"
+        + "    model: ''\n"
+        + "    complexity_to_profile:\n"
+        + "      easy: default\n"
+        + "      medium: default\n"
+        + "      hard: default\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    with pytest.raises(ValueError, match="model"):
+        ForgeConfig.load(p)
+
+
+def test_complexity_classifier_invalid_complexity_key_rejected(tmp_path: Path) -> None:
+    """complexity_to_profile keys must be exactly easy, medium, hard."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  complexity_classifier:\n"
+        + "    model: openai/gpt-4o-mini\n"
+        + "    complexity_to_profile:\n"
+        + "      easy: default\n"
+        + "      medium: default\n"
+        + "      impossible: default\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    with pytest.raises(ValueError, match="easy, medium, hard"):
+        ForgeConfig.load(p)
+
+
+def test_complexity_classifier_unknown_profile_reference_rejected(tmp_path: Path) -> None:
+    """complexity_to_profile values must reference default or configured worker profiles."""
+    yaml = (
+        "northstar: 'goal'\nworkspace: ./ws\n"
+        + _ARTIFACTS_YAML
+        + "models:\n"
+        + "  worker_profiles:\n"
+        + "    fast:\n"
+        + "      producer: openai/fast\n"
+        + "  complexity_classifier:\n"
+        + "    model: openai/gpt-4o-mini\n"
+        + "    complexity_to_profile:\n"
+        + "      easy: fast\n"
+        + "      medium: default\n"
+        + "      hard: strong\n"
+    )
+    p = _write_yaml(tmp_path, yaml)
+    with pytest.raises(ValueError, match="unknown worker profile"):
+        ForgeConfig.load(p)

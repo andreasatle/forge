@@ -18,6 +18,11 @@ from forge.core.models import (
     SchedulerState,
 )
 from forge.core.persistence import load_run, save_run
+from forge.core.profile_assignment import (
+    ComplexityProfileAssigner,
+    DefaultProfileAssigner,
+    ProfileAssigner,
+)
 from forge.core.runner import (
     Handler,
     Runner,
@@ -27,6 +32,7 @@ from forge.core.runner import (
 )
 from forge.core.scheduler import Scheduler, SchedulerCallbacks
 from forge.core.state_service import StateService
+from forge.core.task_complexity import LLMTaskComplexityClassifier
 from forge.core.telemetry import JsonlTelemetrySink, TelemetrySink
 from forge.core.workspace import Workspace
 from forge.languages.registry import LanguageRegistry
@@ -175,6 +181,7 @@ class ForgeRuntime:
             AgentType.WORK,
             make_profile_dispatch_handler(profile_handlers),
         )
+        profile_assigner = _make_profile_assigner(config)
 
         state = initial_state or SchedulerState(
             northstar=northstar, max_concurrency=config.concurrency
@@ -205,6 +212,7 @@ class ForgeRuntime:
             telemetry_sink=telemetry_sink,
             run_id=run_id,
             state_services=state_services,
+            profile_assigner=profile_assigner,
         ).run(state)
 
         save_path = save_run(final, workspace)
@@ -235,3 +243,17 @@ class ForgeRuntime:
                 )
 
         return StartResult(final_state=final, save_path=save_path)
+
+
+def _make_profile_assigner(config: ForgeConfig) -> ProfileAssigner:
+    """Build the scheduler-owned profile assigner from runtime config."""
+    classifier_config = config.models.complexity_classifier
+    if classifier_config is None:
+        return DefaultProfileAssigner()
+
+    classifier_provider = make_provider(classifier_config.model, classifier_config.max_tokens)
+    classifier = LLMTaskComplexityClassifier(classifier_provider)
+    return ComplexityProfileAssigner(
+        classifier=classifier,
+        complexity_to_profile=classifier_config.complexity_to_profile,
+    )

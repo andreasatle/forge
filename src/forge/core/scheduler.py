@@ -26,6 +26,7 @@ from forge.core.models import (
     WorkSpec,
 )
 from forge.core.plan_expansion import DecompositionConvergenceError, PlanExpansionBuilder
+from forge.core.profile_assignment import DefaultProfileAssigner, ProfileAssigner
 from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
@@ -120,11 +121,13 @@ class SchedulerConsequenceHandler:
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
         state_services: dict[str, StateService] | None = None,
+        profile_assigner: ProfileAssigner | None = None,
     ) -> None:
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
         self._state_services = state_services or {}
+        self._profile_assigner = profile_assigner or DefaultProfileAssigner()
 
     async def apply(
         self,
@@ -223,9 +226,9 @@ class SchedulerConsequenceHandler:
             if isinstance(output, (WorkDecision, GraphSplitDecision)):
                 return [
                     DAGNode(request=request)
-                    for request in await PlanExpansionBuilder(node.request).build_from_decision(
-                        output
-                    )
+                    for request in await PlanExpansionBuilder(
+                        node.request, profile_assigner=self._profile_assigner
+                    ).build_from_decision(output)
                 ]
         return []
 
@@ -645,6 +648,7 @@ class Scheduler:
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
         state_services: dict[str, StateService] | None = None,
+        profile_assigner: ProfileAssigner | None = None,
     ) -> None:
         self._runner = runner
         self._callbacks = callbacks or SchedulerCallbacks()
@@ -653,6 +657,7 @@ class Scheduler:
             telemetry_sink=telemetry_sink,
             run_id=run_id,
             state_services=state_services,
+            profile_assigner=profile_assigner,
         )
 
     async def run(

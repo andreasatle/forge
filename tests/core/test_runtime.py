@@ -9,6 +9,7 @@ from pytest import MonkeyPatch
 
 from forge.core.config import (
     ArtifactConfig,
+    ComplexityClassifierConfig,
     ForgeConfig,
     ModelsConfig,
     PwcModelConfig,
@@ -25,8 +26,10 @@ from forge.core.models import (
     SchedulerState,
     WorkSpec,
 )
+from forge.core.profile_assignment import ComplexityProfileAssigner, DefaultProfileAssigner
 from forge.core.runtime import ForgeRuntime, StartResult
 from forge.core.scheduler import SchedulerCallbacks
+from forge.core.task_complexity import LLMTaskComplexityClassifier, TaskComplexity
 from forge.core.telemetry import TelemetrySink
 
 
@@ -73,10 +76,12 @@ class _FakeScheduler:
         callbacks: SchedulerCallbacks | None = None,
         telemetry_sink: TelemetrySink | None = None,
         run_id: object | None = None,
+        profile_assigner: object | None = None,
     ) -> None:
         self.runner = runner
         self.run_id = run_id
         self.telemetry_sink = telemetry_sink
+        self.profile_assigner = profile_assigner
 
     async def run(self, state: SchedulerState) -> SchedulerState:
         return state
@@ -130,6 +135,96 @@ async def test_runtime_builds_planner_and_worker_providers(
     ]
 
 
+async def test_runtime_without_classifier_config_uses_default_profile_assigner(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Without complexity_classifier, Scheduler receives DefaultProfileAssigner."""
+    captured_assigners: list[object] = []
+
+    class _CapturingScheduler:
+        def __init__(self, *, profile_assigner: object | None = None, **kwargs: object) -> None:
+            captured_assigners.append(profile_assigner)
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _CapturingScheduler)
+
+    await ForgeRuntime(_minimal_config(tmp_path)).start()
+
+    assert len(captured_assigners) == 1
+    assert isinstance(captured_assigners[0], DefaultProfileAssigner)
+
+
+async def test_runtime_with_classifier_config_builds_llm_complexity_profile_assigner(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """With complexity_classifier, Scheduler receives a ComplexityProfileAssigner."""
+    captured_assigners: list[object] = []
+
+    class _CapturingScheduler:
+        def __init__(self, *, profile_assigner: object | None = None, **kwargs: object) -> None:
+            captured_assigners.append(profile_assigner)
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _CapturingScheduler)
+
+    config = _config_with_classifier(tmp_path)
+    await ForgeRuntime(config).start()
+
+    assigner = captured_assigners[0]
+    assert isinstance(assigner, ComplexityProfileAssigner)
+    assert isinstance(assigner.classifier, LLMTaskComplexityClassifier)
+    assert assigner.complexity_to_profile == {
+        TaskComplexity.EASY: "fast",
+        TaskComplexity.MEDIUM: "default",
+        TaskComplexity.HARD: "strong",
+    }
+
+
+async def test_runtime_classifier_provider_constructed_once(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Runtime constructs the configured classifier provider once."""
+    made_models: list[tuple[str, int]] = []
+
+    def fake_make_provider(model: str, max_tokens: int) -> _FakeProvider:
+        made_models.append((model, max_tokens))
+        return _FakeProvider(model)
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _FakeScheduler)
+
+    await ForgeRuntime(_config_with_classifier(tmp_path)).start()
+
+    assert made_models.count(("openai/gpt-4o-mini", 512)) == 1
+
+
+async def test_runtime_scheduler_receives_profile_assigner(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    """Runtime passes the composed profile assigner into Scheduler."""
+    captured_assigners: list[object] = []
+
+    class _CapturingScheduler:
+        def __init__(self, *, profile_assigner: object | None = None, **kwargs: object) -> None:
+            captured_assigners.append(profile_assigner)
+
+        async def run(self, state: SchedulerState) -> SchedulerState:
+            return state
+
+    monkeypatch.setattr("forge.core.runtime.make_provider", _fake_make_provider)
+    monkeypatch.setattr("forge.core.runtime.Scheduler", _CapturingScheduler)
+
+    await ForgeRuntime(_config_with_classifier(tmp_path)).start()
+
+    assert isinstance(captured_assigners[0], ComplexityProfileAssigner)
+
+
 async def test_runtime_creates_telemetry_sink(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     """ForgeRuntime creates a JsonlTelemetrySink and passes it to the Scheduler."""
     captured_sink: list[object] = []
@@ -143,6 +238,7 @@ async def test_runtime_creates_telemetry_sink(tmp_path: Path, monkeypatch: Monke
             callbacks: object = None,
             telemetry_sink: object = None,
             run_id: object = None,
+            profile_assigner: object = None,
         ) -> None:
             captured_sink.append(telemetry_sink)
 
@@ -235,6 +331,7 @@ async def test_runtime_seeds_root_node_into_empty_dag(
             telemetry_sink: object = None,
             run_id: object = None,
             state_services: object = None,
+            profile_assigner: object = None,
         ) -> None:
             pass
 
@@ -305,6 +402,7 @@ async def test_runtime_does_not_seed_root_node_when_resuming(
             telemetry_sink: object = None,
             run_id: object = None,
             state_services: object = None,
+            profile_assigner: object = None,
         ) -> None:
             pass
 
@@ -349,6 +447,33 @@ def _config_with_fast_profile(tmp_path: Path) -> ForgeConfig:
                     producer="ollama/fast-worker", critic=None, referee=None, max_attempts=1
                 ),
             },
+        ),
+    )
+
+
+def _config_with_classifier(tmp_path: Path) -> ForgeConfig:
+    return ForgeConfig(
+        northstar="build a tool",
+        workspace=tmp_path / "ws",
+        artifacts=[ArtifactConfig(name="codebase", type="coding", language="python")],
+        models=ModelsConfig(
+            planner=PwcModelConfig(producer="ollama/planner", critic=None, referee=None),
+            worker=PwcModelConfig(producer="ollama/worker", critic=None, referee=None),
+            worker_profiles={
+                "fast": PwcModelConfig(producer="ollama/fast-worker", critic=None, referee=None),
+                "strong": PwcModelConfig(
+                    producer="ollama/strong-worker", critic=None, referee=None
+                ),
+            },
+            complexity_classifier=ComplexityClassifierConfig(
+                model="openai/gpt-4o-mini",
+                max_tokens=512,
+                complexity_to_profile={
+                    TaskComplexity.EASY: "fast",
+                    TaskComplexity.MEDIUM: "default",
+                    TaskComplexity.HARD: "strong",
+                },
+            ),
         ),
     )
 

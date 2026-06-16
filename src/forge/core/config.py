@@ -8,6 +8,8 @@ from typing import cast
 
 import yaml
 
+from forge.core.task_complexity import TaskComplexity
+
 _ARTIFACT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -31,6 +33,21 @@ class PwcModelConfig:
     max_attempts: int = 3
 
 
+def _empty_complexity_to_profile() -> dict[TaskComplexity, str]:
+    return {}
+
+
+@dataclass
+class ComplexityClassifierConfig:
+    """Optional model configuration for worker task complexity classification."""
+
+    model: str
+    max_tokens: int = 512
+    complexity_to_profile: dict[TaskComplexity, str] = field(
+        default_factory=_empty_complexity_to_profile
+    )
+
+
 def _empty_worker_profiles() -> dict[str, PwcModelConfig]:
     return {}
 
@@ -42,6 +59,7 @@ class ModelsConfig:
     planner: PwcModelConfig = field(default_factory=PwcModelConfig)
     worker: PwcModelConfig = field(default_factory=PwcModelConfig)
     worker_profiles: dict[str, PwcModelConfig] = field(default_factory=_empty_worker_profiles)
+    complexity_classifier: ComplexityClassifierConfig | None = None
 
 
 @dataclass
@@ -128,6 +146,11 @@ class ForgeConfigLoader:
         models = _as_mapping(raw, "models")
         flat_critic = _optional_model(models.get("critic"), "models.critic")
         flat_referee = _optional_model(models.get("referee"), "models.referee")
+        worker_profiles = self._load_worker_profiles(
+            models.get("worker_profiles"),
+            fallback_critic=flat_critic,
+            fallback_referee=flat_referee,
+        )
         return ModelsConfig(
             planner=self._load_pwc_model_config(
                 models.get("planner"),
@@ -141,11 +164,55 @@ class ForgeConfigLoader:
                 fallback_critic=flat_critic,
                 fallback_referee=flat_referee,
             ),
-            worker_profiles=self._load_worker_profiles(
-                models.get("worker_profiles"),
-                fallback_critic=flat_critic,
-                fallback_referee=flat_referee,
+            worker_profiles=worker_profiles,
+            complexity_classifier=self._load_complexity_classifier_config(
+                models.get("complexity_classifier"),
+                worker_profiles=worker_profiles,
             ),
+        )
+
+    def _load_complexity_classifier_config(
+        self,
+        value: object,
+        *,
+        worker_profiles: Mapping[str, PwcModelConfig],
+    ) -> ComplexityClassifierConfig | None:
+        """Parse optional complexity_classifier mapping."""
+        if value is None:
+            return None
+        raw = _as_mapping(value, "models.complexity_classifier")
+        mapping_raw = _as_mapping(
+            raw.get("complexity_to_profile"),
+            "models.complexity_classifier.complexity_to_profile",
+        )
+        expected_keys = {complexity.value for complexity in TaskComplexity}
+        actual_keys = set(mapping_raw)
+        if actual_keys != expected_keys:
+            raise ValueError(
+                "models.complexity_classifier.complexity_to_profile keys must be exactly "
+                "easy, medium, hard"
+            )
+
+        valid_profiles = {"default", *worker_profiles.keys()}
+        complexity_to_profile: dict[TaskComplexity, str] = {}
+        for key, profile_value in mapping_raw.items():
+            profile = _required_string(
+                profile_value,
+                f"models.complexity_classifier.complexity_to_profile.{key}",
+            )
+            if profile not in valid_profiles:
+                raise ValueError(
+                    f"models.complexity_classifier.complexity_to_profile.{key} "
+                    f"references unknown worker profile {profile!r}"
+                )
+            complexity_to_profile[TaskComplexity(key)] = profile
+
+        return ComplexityClassifierConfig(
+            model=_required_model(raw.get("model"), "models.complexity_classifier.model"),
+            max_tokens=_optional_int(
+                raw.get("max_tokens"), 512, "models.complexity_classifier.max_tokens"
+            ),
+            complexity_to_profile=complexity_to_profile,
         )
 
     def _load_worker_profiles(
