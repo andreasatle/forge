@@ -763,3 +763,139 @@ async def test_apply_work_output_does_not_abort_completed_merge_on_test_failure(
                     await ss.apply_work_output(WorkOutput(summary="test"), "no-abort")
 
     assert not abort_called
+
+
+# --- Concurrency: two nodes targeting the same artifact ---
+
+
+async def test_same_artifact_orthogonal_nodes_second_is_stale_or_integrates(
+    tmp_path: Path,
+) -> None:
+    """Two nodes dispatched from the same SHA each write to different files.
+
+    With dispatch_sha provided, the second node is always rejected as stale
+    once the first integration advances HEAD.  The 'or integrates' branch of the
+    contract applies when dispatch_sha is omitted — orthogonal file changes would
+    merge cleanly because there is no three-way conflict.
+
+    Verifies:
+    - stale error names both the dispatch SHA and the current HEAD SHA,
+    - node A's file is present on main after A integrates,
+    - node B's file is absent (node B was rejected before integration),
+    - main HEAD does not change after node B is rejected,
+    - version counter does not increment after the stale rejection,
+    - worktree removal succeeds for both nodes (merged and uncommitted).
+    """
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    sha0 = ws.get_current_sha("app")
+    artifact_dir = ws.artifact_dir("app")
+
+    # Both worktrees branched from the same base — mirrors parallel dispatch
+    worktree_a = ws.create_worktree("app", "node-orth-a")
+    worktree_b = ws.create_worktree("app", "node-orth-b")
+    (worktree_a / "file_a.py").write_text("a = 1\n")
+    (worktree_b / "file_b.py").write_text("b = 2\n")
+
+    ss = StateService(ws, "app")
+
+    # Node A integrates cleanly — HEAD advances from sha0 to sha1
+    await ss.apply_work_output(WorkOutput(summary="added file_a"), "node-orth-a", dispatch_sha=sha0)
+    sha1 = ws.get_current_sha("app")
+    assert sha1 != sha0
+    assert ss.current_version == 1
+
+    # Node B was dispatched at sha0; HEAD is now sha1 — stale rejection
+    with pytest.raises(RuntimeError, match="stale") as exc_info:
+        await ss.apply_work_output(
+            WorkOutput(summary="added file_b"), "node-orth-b", dispatch_sha=sha0
+        )
+
+    # Diagnostic: error names both SHAs so the caller knows what changed under it
+    err = str(exc_info.value)
+    assert sha0 in err
+    assert sha1 in err
+
+    # Main branch is valid and unchanged by the stale rejection
+    assert ws.get_current_sha("app") == sha1
+    assert ss.current_version == 1
+
+    tree = run_git(
+        ["ls-tree", "-r", "--name-only", "HEAD"],
+        cwd=artifact_dir,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert "file_a.py" in tree
+    assert "file_b.py" not in tree  # node B was rejected before integration
+
+    # Worktree cleanup is preserved — merged (A) and uncommitted-dirty (B)
+    ws.remove_worktree("app", "node-orth-a")
+    ws.remove_worktree("app", "node-orth-b")
+
+
+async def test_same_artifact_conflicting_nodes_second_is_stale_or_fails_with_merge_conflict(
+    tmp_path: Path,
+) -> None:
+    """Two nodes dispatched from the same SHA both modify the same file.
+
+    When the stale check is bypassed (no dispatch_sha), a three-way git merge
+    conflict is detected at integration time and raised as RuntimeError with
+    git diagnostics.  With dispatch_sha the same scenario is caught earlier
+    (stale), but this test exercises the merge-conflict path to confirm git
+    output is preserved in the error and that main is not left in a dirty state.
+
+    Verifies:
+    - RuntimeError is raised with git failure text,
+    - main HEAD stays at sha1 (node A's work) — aborted merge leaves no residue,
+    - version counter stays at 1 after the failed integration,
+    - worktree removal succeeds for both nodes (merged and committed-but-not-merged).
+    """
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    artifact_dir = ws.artifact_dir("app")
+
+    # Commit a base file that both nodes will divergently modify
+    (artifact_dir / "conflict.py").write_text("value = 'base'\n")
+    run_git(["add", "conflict.py"], cwd=artifact_dir)
+    run_git(["commit", "-m", "fixture: base conflict file"], cwd=artifact_dir)
+    sha0 = ws.get_current_sha("app")
+
+    # Both worktrees branched from sha0 — mirrors parallel dispatch
+    worktree_a = ws.create_worktree("app", "node-conf-a")
+    worktree_b = ws.create_worktree("app", "node-conf-b")
+    (worktree_a / "conflict.py").write_text("value = 'version_a'\n")
+    (worktree_b / "conflict.py").write_text("value = 'version_b'\n")
+
+    ss = StateService(ws, "app")
+
+    # Node A integrates from sha0 — main now has "version_a"
+    await ss.apply_work_output(WorkOutput(summary="conflict A"), "node-conf-a", dispatch_sha=sha0)
+    sha1 = ws.get_current_sha("app")
+    assert sha1 != sha0
+    assert ss.current_version == 1
+
+    # Node B bypasses the stale check (no dispatch_sha).  The commit in the
+    # worktree succeeds, but the merge into main ("version_a") detects a
+    # three-way conflict against the common ancestor ("base").
+    with pytest.raises(RuntimeError) as exc_info:
+        await ss.apply_work_output(WorkOutput(summary="conflict B"), "node-conf-b")
+
+    err = str(exc_info.value)
+    # Either stale (if the stale-detection path fires) or merge conflict — both are
+    # explicit, loud failures with enough information to diagnose the problem.
+    assert "stale" in err or "git command failed" in err
+
+    # When a merge conflict fires, git output must be present in the error message
+    if "git command failed" in err:
+        assert any(
+            s.lower() in err.lower() for s in ("CONFLICT", "Automatic merge failed", "conflict")
+        )
+
+    # Main HEAD must be at sha1 — the failed merge was aborted, not left dirty
+    assert ws.get_current_sha("app") == sha1
+    assert ss.current_version == 1
+
+    # Worktree cleanup succeeds for both — merged (A) and committed-but-not-merged (B)
+    ws.remove_worktree("app", "node-conf-a")
+    ws.remove_worktree("app", "node-conf-b")
