@@ -1829,9 +1829,8 @@ async def test_tool_loop_identical_failing_verification_triggers_completion_pres
     third_call_messages = provider.chat.call_args_list[2][0][0]
     last_user_content = third_call_messages[-1]["content"]
     assert (
-        "Verification produced the same failing result as before. "
-        "No new information was obtained. Stop calling tools and return final WorkOutput JSON "
-        "with your current findings."
+        "Verification results have stabilized with the same failing result. "
+        "Stop calling tools and return final WorkOutput JSON now."
     ) in last_user_content
 
 
@@ -1892,6 +1891,39 @@ async def test_tool_loop_rejects_tool_call_after_verification_convergence_pressu
 
     assert response.status == ResponseStatus.COMPLETED
     assert response.ran_tests_and_passed is False
+    assert mock_fn.call_count == 0
+
+
+async def test_tool_loop_stable_failing_rejection_uses_stabilized_wording() -> None:
+    """Tool call rejected after stable-failing convergence uses stabilized wording, not 'File changes are complete'."""
+    registry, mock_fn = _make_registry()
+    registry.register(_make_fixed_failing_run_tests_tool())
+    request = _work_request()
+    provider = _mock_provider()
+    provider.chat = AsyncMock(
+        side_effect=[
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "run_tests", "arguments": {}}',
+            '{"kind": "tool", "name": "do_thing", "arguments": {}}',
+            _NONEMPTY_WORK_OUTPUT,
+        ]
+    )
+
+    response = await ToolLoop(
+        request=request,
+        provider=provider,
+        prompt="prompt",
+        tools=registry,
+        final_response_type=WorkOutput,
+        max_retries=3,
+    ).run()
+
+    assert response.status == ResponseStatus.COMPLETED
+    # The rejection message injected before the final turn must use stabilized wording.
+    fourth_call_messages = provider.chat.call_args_list[3][0][0]
+    last_user_content = fourth_call_messages[-1]["content"]
+    assert "Verification results have stabilized" in last_user_content
+    assert "File changes are complete" not in last_user_content
     assert mock_fn.call_count == 0
 
 
