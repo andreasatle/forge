@@ -517,3 +517,86 @@ def test_loader_invalid_bool_scalar_raises() -> None:
     data: dict[str, object] = {**_MINIMAL_DATA, "verbose": "yes"}
     with pytest.raises(ValueError, match="verbose"):
         ForgeConfigLoader().load_data(data)
+
+
+# --- P0: artifact name validation ---
+
+
+def test_artifact_name_simple_letters_accepted(tmp_path: Path) -> None:
+    """Artifact names consisting solely of letters are valid."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: codebase\n    type: document\n",
+    )
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].name == "codebase"
+
+
+def test_artifact_name_with_hyphen_and_underscore_accepted(tmp_path: Path) -> None:
+    """Artifact names with hyphens and underscores are valid."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: my-app_v2\n    type: document\n",
+    )
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].name == "my-app_v2"
+
+
+def test_artifact_name_with_digits_accepted(tmp_path: Path) -> None:
+    """Artifact names with digits are valid."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: app2\n    type: document\n",
+    )
+    config = ForgeConfig.load(p)
+    assert config.artifacts[0].name == "app2"
+
+
+def test_artifact_name_with_space_rejected(tmp_path: Path) -> None:
+    """Artifact names containing spaces are rejected at load time."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: 'my app'\n    type: document\n",
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        ForgeConfig.load(p)
+
+
+def test_artifact_name_with_slash_rejected(tmp_path: Path) -> None:
+    """Artifact names containing slashes are rejected at load time."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: foo/bar\n    type: document\n",
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        ForgeConfig.load(p)
+
+
+def test_artifact_name_with_semicolon_rejected(tmp_path: Path) -> None:
+    """Artifact names containing semicolons are rejected at load time."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: foo;bar\n    type: document\n",
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        ForgeConfig.load(p)
+
+
+def test_artifact_name_with_shell_metachar_rejected(tmp_path: Path) -> None:
+    """Artifact names containing shell metacharacters are rejected at load time."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: 'foo$bar'\n    type: document\n",
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        ForgeConfig.load(p)
+
+
+def test_artifact_name_path_traversal_rejected(tmp_path: Path) -> None:
+    """Artifact names containing path traversal sequences are rejected at load time."""
+    p = _write_yaml(
+        tmp_path,
+        "northstar: 'goal'\nworkspace: ./ws\nartifacts:\n  - name: ../secret\n    type: document\n",
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        ForgeConfig.load(p)

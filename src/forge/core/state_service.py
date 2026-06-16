@@ -133,7 +133,7 @@ class StateService:
             )
 
         version_sha = ""
-        if self._plugin:
+        if (artifact_dir / ".git").exists():
             version_sha = self._workspace.get_current_sha(self._artifact_name)
 
         file_views: list[FileView] = []
@@ -172,39 +172,49 @@ class StateService:
         if not worktree_path.exists():
             raise RuntimeError(f"worktree not found for node {node_id}: {worktree_path}")
         artifact_dir = self._workspace.artifact_dir(self._artifact_name)
+        merge_completed = False
         try:
             _clean_ignored_files(worktree_path)
             _restore_tracked_generated_changes(worktree_path)
             if not _status_lines(worktree_path):
                 raise RuntimeError("no worktree changes produced")
 
-            run_git(["add", "-A", "--", "."], cwd=worktree_path)
+            run_git(["add", "-A", "--", "."], cwd=worktree_path, capture_output=True, text=True)
             run_git(
                 ["commit", "-m", f"work: {node_id}"],
                 cwd=worktree_path,
+                capture_output=True,
+                text=True,
             )
 
             _ensure_clean_for_merge(artifact_dir)
+            pre_merge_sha = self._workspace.get_current_sha(self._artifact_name)
             run_git(
                 ["merge", "--no-ff", f"work/{node_id}", "-m", f"integrated: {node_id}"],
                 cwd=artifact_dir,
+                capture_output=True,
+                text=True,
             )
+            merge_completed = True
 
             result = self.run_tests()
             if not result.passed:
                 run_git(
-                    ["reset", "--hard", "HEAD~1"],
+                    ["reset", "--hard", pre_merge_sha],
                     cwd=artifact_dir,
+                    capture_output=True,
+                    text=True,
                 )
                 raise RuntimeError(f"tests failed after work output: {result.output}")
 
             self._version += 1
 
         except subprocess.CalledProcessError as e:
-            try:
-                run_git(["merge", "--abort"], cwd=artifact_dir)
-            except subprocess.CalledProcessError:
-                pass
+            if not merge_completed:
+                try:
+                    run_git(["merge", "--abort"], cwd=artifact_dir)
+                except subprocess.CalledProcessError:
+                    pass
             raise RuntimeError(_format_git_error(e)) from e
 
     def run_tests(self) -> RunResult:

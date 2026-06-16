@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -420,7 +421,7 @@ async def test_apply_work_output_accepts_matching_dispatch_sha(tmp_path: Path) -
 
 
 async def test_apply_work_output_skips_stale_check_when_no_dispatch_sha(tmp_path: Path) -> None:
-    """apply_work_output skips staleness check when dispatch_sha is empty."""
+    """apply_work_output skips the staleness rejection when dispatch_sha is empty."""
     ws = _ws(tmp_path)
     ws.init_artifact("app")
     plugin = _plugin()
@@ -430,15 +431,15 @@ async def test_apply_work_output_skips_stale_check_when_no_dispatch_sha(tmp_path
     worktree_path.mkdir()
     output = WorkOutput()
 
-    mock_get_sha = MagicMock()
-    with patch.object(ws, "get_current_sha", mock_get_sha):
-        with patch.object(ws, "worktree_path", return_value=worktree_path):
-            with patch.object(ws, "remove_worktree"):
-                with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
-                    with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
-                        await ss.apply_work_output(output, "node-empty")
+    # Integration must succeed regardless of what get_current_sha returns, because
+    # the staleness check is skipped when dispatch_sha is empty.  (get_current_sha is
+    # still called internally for the pre-merge SHA, so we do not assert_not_called.)
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
+        with patch.object(ws, "remove_worktree"):
+            with patch("subprocess.run", side_effect=_mock_subprocess_apply(worktree_path)):
+                with patch.object(ss, "run_tests", return_value=RunResult(passed=True)):
+                    await ss.apply_work_output(output, "node-empty")
 
-    mock_get_sha.assert_not_called()
     assert ss.current_version == 1
 
 
@@ -584,3 +585,161 @@ async def test_apply_work_output_real_merge_conflict_raises_runtime_error(
     ss = StateService(ws, "app", _plugin("python"))
     with pytest.raises(RuntimeError, match="git command failed"):
         await ss.apply_work_output(WorkOutput(summary="conflicting change"), "node-conflict")
+
+
+# --- P0 fixes ---
+
+
+def test_build_state_view_populates_version_sha_without_plugin(tmp_path: Path) -> None:
+    """build_state_view returns a non-empty version_sha when the artifact has a git repo, even with no language plugin."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+
+    view = StateService(ws, "app").build_state_view()
+
+    assert view.version_sha != ""
+
+
+async def test_apply_work_output_commit_failure_includes_git_diagnostics(
+    tmp_path: Path,
+) -> None:
+    """apply_work_output includes stdout/stderr from a failed git commit in the RuntimeError message."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+    worktree_path = tmp_path / "app-work-commit-diag"
+    worktree_path.mkdir()
+
+    commit_error = subprocess.CalledProcessError(
+        returncode=1,
+        cmd=["git", "commit", "-m", "work: node-commit-diag"],
+        output="nothing to commit, working tree clean\n",
+        stderr="error: pre-commit hook failed\n",
+    )
+
+    def _run(cmd: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = (
+            " M src/main.py\n"
+            if isinstance(cmd, list)
+            and cmd[:3] == ["git", "status", "--porcelain"]
+            and kwargs.get("cwd") == worktree_path
+            else ""
+        )
+        result.stderr = ""
+        if isinstance(cmd, list) and "commit" in cmd:
+            raise commit_error
+        return result
+
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
+        with patch("subprocess.run", side_effect=_run):
+            with pytest.raises(RuntimeError) as exc_info:
+                await ss.apply_work_output(WorkOutput(summary="test"), "node-commit-diag")
+
+    msg = str(exc_info.value)
+    assert "nothing to commit" in msg
+    assert "pre-commit hook failed" in msg
+
+
+async def test_apply_work_output_merge_failure_includes_git_diagnostics(
+    tmp_path: Path,
+) -> None:
+    """apply_work_output includes stdout/stderr from a failed git merge in the RuntimeError message."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+    worktree_path = tmp_path / "app-work-merge-diag"
+    worktree_path.mkdir()
+
+    merge_error = subprocess.CalledProcessError(
+        returncode=1,
+        cmd=["git", "merge", "--no-ff", "work/node-merge-diag"],
+        output="CONFLICT (content): Merge conflict in foo.py\n",
+        stderr="Automatic merge failed; fix conflicts and then commit the result.\n",
+    )
+
+    def _run(cmd: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = (
+            " M src/main.py\n"
+            if isinstance(cmd, list)
+            and cmd[:3] == ["git", "status", "--porcelain"]
+            and kwargs.get("cwd") == worktree_path
+            else ""
+        )
+        result.stderr = ""
+        if isinstance(cmd, list) and "merge" in cmd and "--abort" not in cmd:
+            raise merge_error
+        return result
+
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
+        with patch("subprocess.run", side_effect=_run):
+            with pytest.raises(RuntimeError) as exc_info:
+                await ss.apply_work_output(WorkOutput(summary="test"), "node-merge-diag")
+
+    msg = str(exc_info.value)
+    assert "CONFLICT" in msg
+    assert "Automatic merge failed" in msg
+
+
+async def test_apply_work_output_resets_to_pre_merge_sha_on_test_failure(
+    tmp_path: Path,
+) -> None:
+    """apply_work_output resets to the pre-merge SHA (not HEAD~1) when tests fail after a successful merge."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    pre_merge_sha = ws.get_current_sha("app")
+
+    worktree_path = ws.create_worktree("app", "node-rollback")
+    (worktree_path / "new_file.py").write_text("x = 1\n")
+
+    ss = StateService(ws, "app")
+    with patch.object(
+        ss, "run_tests", return_value=RunResult(passed=False, summary="FAIL", output="FAIL")
+    ):
+        with pytest.raises(RuntimeError, match="tests failed"):
+            await ss.apply_work_output(WorkOutput(summary="added file"), "node-rollback")
+
+    assert ws.get_current_sha("app") == pre_merge_sha
+    assert ss.current_version == 0
+
+
+async def test_apply_work_output_does_not_abort_completed_merge_on_test_failure(
+    tmp_path: Path,
+) -> None:
+    """apply_work_output does not call merge --abort when the merge has already committed."""
+    ws = _ws(tmp_path)
+    ws.init_artifact("app")
+    ss = StateService(ws, "app")
+    worktree_path = tmp_path / "app-work-no-abort"
+    worktree_path.mkdir()
+
+    abort_called = False
+
+    def _tracking_run(cmd: object, **kwargs: object) -> MagicMock:
+        nonlocal abort_called
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = (
+            " M src/main.py\n"
+            if isinstance(cmd, list)
+            and cmd[:3] == ["git", "status", "--porcelain"]
+            and kwargs.get("cwd") == worktree_path
+            else ""
+        )
+        result.stderr = ""
+        if isinstance(cmd, list) and "--abort" in cmd:
+            abort_called = True
+        return result
+
+    with patch.object(ws, "worktree_path", return_value=worktree_path):
+        with patch("subprocess.run", side_effect=_tracking_run):
+            with patch.object(
+                ss, "run_tests", return_value=RunResult(passed=False, summary="FAIL", output="FAIL")
+            ):
+                with pytest.raises(RuntimeError, match="tests failed"):
+                    await ss.apply_work_output(WorkOutput(summary="test"), "no-abort")
+
+    assert not abort_called

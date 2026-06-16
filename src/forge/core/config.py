@@ -1,11 +1,14 @@
 """ForgeConfig dataclass for loading and validating the forge YAML config file."""
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
 import yaml
+
+_ARTIFACT_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 @dataclass
@@ -99,9 +102,11 @@ class ForgeConfigLoader:
         artifacts: list[ArtifactConfig] = []
         for index, item in enumerate(artifacts_data):
             artifact = _as_mapping(item, f"artifacts[{index}]")
+            name = _required_string(artifact.get("name"), f"artifacts[{index}].name")
+            _validate_artifact_name(name, f"artifacts[{index}].name")
             artifacts.append(
                 ArtifactConfig(
-                    name=_required_string(artifact.get("name"), f"artifacts[{index}].name"),
+                    name=name,
                     type=_required_string(artifact.get("type"), f"artifacts[{index}].type"),
                     language=_optional_string(
                         artifact.get("language"), f"artifacts[{index}].language"
@@ -172,6 +177,14 @@ class ForgeConfigLoader:
 def load_config(path: Path) -> ForgeConfig:
     """Load a ForgeConfig from a YAML file at path."""
     return ForgeConfigLoader().load_path(path)
+
+
+def _validate_artifact_name(name: str, field: str) -> None:
+    if not _ARTIFACT_NAME_RE.match(name):
+        raise ValueError(
+            f"{field}: artifact name {name!r} is invalid — "
+            "only letters, digits, underscore, and hyphen are permitted"
+        )
 
 
 def _as_mapping(value: object, field: str) -> dict[str, object]:
