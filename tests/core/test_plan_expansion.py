@@ -20,6 +20,19 @@ from forge.core.plan_expansion import (
     DecompositionConvergenceValidator,
     PlanExpansionBuilder,
 )
+from forge.core.profile_assignment import DefaultProfileAssigner
+
+
+class FakeProfileAssigner:
+    """Test double that records assigned requests and returns a fixed profile."""
+
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
+        self.requests: list[AgentRequest] = []
+
+    def assign(self, request: AgentRequest) -> str:
+        self.requests.append(request)
+        return self.profile
 
 
 def _plan_request() -> AgentRequest:
@@ -83,6 +96,48 @@ def test_work_decision_expands_to_one_work_node() -> None:
     assert requests[0].source == RequestSource.PLANNER
     assert requests[0].spec == work_spec
     assert requests[0].dependencies == frozenset()
+
+
+def test_default_profile_assigner_returns_default() -> None:
+    """DefaultProfileAssigner always returns the default model profile."""
+    assert DefaultProfileAssigner().assign(_plan_request()) == "default"
+
+
+def test_work_decision_uses_default_profile_assigner_when_none_provided() -> None:
+    """PlanExpansionBuilder preserves default profile behavior without injection."""
+    work_spec = WorkSpec(
+        objective="implement parser",
+        success_condition="parser passes tests",
+        adapter="coding",
+        artifact="codebase",
+    )
+    decision = WorkDecision(task=work_spec)
+
+    requests = PlanExpansionBuilder(_plan_request()).build_from_decision(decision)
+
+    assert requests[0].model_profile == "default"
+
+
+def test_work_decision_uses_injected_profile_assigner_for_work_requests() -> None:
+    """Injected profile assigners set model_profile on generated WORK requests."""
+    assigner = FakeProfileAssigner("fast")
+    decision = WorkDecision(
+        task=WorkSpec(
+            objective="implement parser",
+            success_condition="parser passes tests",
+            adapter="coding",
+            artifact="codebase",
+        )
+    )
+
+    requests = PlanExpansionBuilder(_plan_request(), profile_assigner=assigner).build_from_decision(
+        decision
+    )
+
+    assert len(assigner.requests) == 1
+    assert assigner.requests[0].agent_type == AgentType.WORK
+    assert assigner.requests[0].model_profile == "default"
+    assert requests[0].model_profile == "fast"
 
 
 # --- GraphSplitDecision expansion ---
@@ -282,6 +337,29 @@ def test_graph_split_no_edges_mixed_children_creates_no_sibling_dependencies() -
     assert requests[0].agent_type == AgentType.WORK
     assert requests[1].agent_type == AgentType.PLAN
     assert all(r.dependencies == frozenset() for r in requests)
+
+
+def test_graph_split_assigns_profiles_to_work_children_only() -> None:
+    """Injected profile assignment is applied to WORK children, not PLAN children."""
+    assigner = FakeProfileAssigner("fast")
+    decision = GraphSplitDecision(
+        nodes=[
+            _make_graph_node("work-a", "work-a"),
+            _make_decomp_graph_node("plan-b", "plan-b"),
+        ]
+    )
+
+    requests = PlanExpansionBuilder(_plan_request(), profile_assigner=assigner).build_from_decision(
+        decision
+    )
+    work_request, plan_request = requests
+
+    assert work_request.agent_type == AgentType.WORK
+    assert work_request.model_profile == "fast"
+    assert plan_request.agent_type == AgentType.PLAN
+    assert plan_request.model_profile == "default"
+    assert len(assigner.requests) == 1
+    assert assigner.requests[0].agent_type == AgentType.WORK
 
 
 def test_graph_split_chain_all_work_produces_only_work_nodes() -> None:

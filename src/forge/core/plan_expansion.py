@@ -15,6 +15,7 @@ from forge.core.models import (
     WorkDecision,
     WorkSpec,
 )
+from forge.core.profile_assignment import DefaultProfileAssigner, ProfileAssigner
 
 
 class DecompositionConvergenceError(ValueError):
@@ -77,11 +78,17 @@ class DecompositionConvergenceValidator:
 class PlanExpansionBuilder:
     """Build scheduler work requests from an accepted planner response."""
 
-    def __init__(self, request: AgentRequest) -> None:
+    def __init__(
+        self, request: AgentRequest, profile_assigner: ProfileAssigner | None = None
+    ) -> None:
         self.request = request
+        self.profile_assigner = profile_assigner or DefaultProfileAssigner()
+
+    def _assign_work_profile(self, request: AgentRequest) -> AgentRequest:
+        return request.model_copy(update={"model_profile": self.profile_assigner.assign(request)})
 
     def _task_spec_to_request(self, task: TaskSpec) -> AgentRequest:
-        return AgentRequest(
+        request = AgentRequest(
             agent_type=AgentType.WORK,
             source=RequestSource.PLANNER,
             spec=WorkSpec(
@@ -99,6 +106,7 @@ class PlanExpansionBuilder:
                 language=task.language,
             ),
         )
+        return self._assign_work_profile(request)
 
     def _decomposition_task_to_request(self, task: DecompositionTask) -> AgentRequest:
         return AgentRequest(
@@ -123,13 +131,12 @@ class PlanExpansionBuilder:
         parent_objective = self.request.spec.contract.objective
         DecompositionConvergenceValidator().validate(parent_objective, decision)
         if isinstance(decision, WorkDecision):
-            return [
-                AgentRequest(
-                    agent_type=AgentType.WORK,
-                    source=RequestSource.PLANNER,
-                    spec=decision.task,
-                )
-            ]
+            request = AgentRequest(
+                agent_type=AgentType.WORK,
+                source=RequestSource.PLANNER,
+                spec=decision.task,
+            )
+            return [self._assign_work_profile(request)]
         assert isinstance(decision, GraphSplitDecision)
         return self._build_from_graph_split(decision)
 
