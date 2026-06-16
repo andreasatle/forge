@@ -1,6 +1,5 @@
 """Worker agent that executes a task using an adapter and tool registry."""
 
-import subprocess
 from pathlib import Path
 
 from forge.adapters.registry import AdapterRegistry
@@ -77,6 +76,7 @@ class WorkTaskExecutor:
         telemetry_sink: TelemetrySink | None = None,
         state_service: StateService | None = None,
     ) -> None:
+        _ = state_service
         self.registry = registry
         self.workspace = workspace
         self.language_registry = language_registry
@@ -87,7 +87,6 @@ class WorkTaskExecutor:
         self.referee_provider = referee_provider
         self.max_attempts = max_attempts
         self.telemetry_sink = telemetry_sink
-        self.state_service = state_service
 
     async def run(
         self,
@@ -116,6 +115,7 @@ class WorkTaskExecutor:
             )
         node_id = str(request.id)
         worktree_path = self.workspace.create_worktree(spec.artifact, node_id)
+        preserve_worktree_for_integration = False
         full_registry = build_worktree_registry(
             str(worktree_path),
             plugin.test_command if plugin else None,
@@ -219,33 +219,9 @@ class WorkTaskExecutor:
 
             if response.status == ResponseStatus.COMPLETED:
                 if _worktree_has_changes(worktree_path):
-                    if self.state_service is not None:
-                        work_output = (
-                            response.output if isinstance(response.output, WorkOutput) else None
-                        )
-                        if work_output is None:
-                            return AgentResponse(
-                                request_id=request.id,
-                                status=ResponseStatus.FAILED,
-                                error="completed without WorkOutput completion metadata",
-                            )
-                        if not work_output.summary.strip():
-                            return AgentResponse(
-                                request_id=request.id,
-                                status=ResponseStatus.FAILED,
-                                error="completed with empty WorkOutput completion metadata",
-                            )
-                        try:
-                            await self.state_service.apply_work_output(
-                                work_output, node_id, dispatch_sha=state_view.version_sha
-                            )
-                        except (RuntimeError, subprocess.CalledProcessError) as e:
-                            return AgentResponse(
-                                request_id=request.id,
-                                status=ResponseStatus.FAILED,
-                                failure_kind=FailureKind.INTEGRATION_FAILED,
-                                error=f"integration failed: {e}",
-                            )
+                    preserve_worktree_for_integration = True
+                    if state_view.version_sha and not response.dispatch_sha:
+                        return response.model_copy(update={"dispatch_sha": state_view.version_sha})
                     return response
                 if adapter.requires_nonempty_output:
                     return AgentResponse(
@@ -266,7 +242,8 @@ class WorkTaskExecutor:
             return response
 
         finally:
-            self.workspace.remove_worktree(spec.artifact, node_id)
+            if not preserve_worktree_for_integration:
+                self.workspace.remove_worktree(spec.artifact, node_id)
 
 
 async def work_agent(

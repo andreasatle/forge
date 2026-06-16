@@ -85,7 +85,6 @@ def make_work_handler(
             telemetry_sink=telemetry_sink,
             max_attempts=max_attempts,
             integration_revision=request.integration_revision,
-            state_service=ss,
         )
 
     return work_handler

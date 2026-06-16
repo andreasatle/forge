@@ -228,6 +228,7 @@ async def test_runtime_seeds_root_node_into_empty_dag(
             callbacks: object = None,
             telemetry_sink: object = None,
             run_id: object = None,
+            state_services: object = None,
         ) -> None:
             pass
 
@@ -272,6 +273,7 @@ async def test_runtime_does_not_seed_root_node_when_resuming(
             callbacks: object = None,
             telemetry_sink: object = None,
             run_id: object = None,
+            state_services: object = None,
         ) -> None:
             pass
 

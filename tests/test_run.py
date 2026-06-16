@@ -141,6 +141,7 @@ async def test_start_wires_nested_planner_and_worker_models(
             callbacks: SchedulerCallbacks | None = None,
             telemetry_sink: TelemetrySink | None = None,
             run_id: object | None = None,
+            state_services: object | None = None,
         ) -> None:
             self.runner = runner
 

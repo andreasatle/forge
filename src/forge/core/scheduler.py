@@ -23,9 +23,11 @@ from forge.core.models import (
     ResponseStatus,
     SchedulerState,
     WorkDecision,
+    WorkOutput,
     WorkSpec,
 )
 from forge.core.plan_expansion import DecompositionConvergenceError, PlanExpansionBuilder
+from forge.core.state_service import StateService
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
 AgentRunner = Callable[[AgentRequest], Awaitable[AgentResponse]]
@@ -103,10 +105,12 @@ class SchedulerConsequenceHandler:
         callbacks: SchedulerCallbacks | None = None,
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
+        state_services: dict[str, StateService] | None = None,
     ) -> None:
         self._callbacks = callbacks or SchedulerCallbacks()
         self._telemetry_sink = telemetry_sink
         self._run_id = run_id or getattr(telemetry_sink, "run_id", None)
+        self._state_services = state_services or {}
 
     async def apply(
         self,
@@ -143,7 +147,7 @@ class SchedulerConsequenceHandler:
                 )
             return self._handle_accepted_plan(state, updated, plan_expansion)
         if outcome.kind == TerminalOutcomeKind.ACCEPTED_WORK:
-            return self._handle_accepted_work(state, updated)
+            return await self._handle_accepted_work(state, updated)
         if outcome.kind == TerminalOutcomeKind.DECOMPOSITION_REQUEST:
             return self._handle_decompose(state, updated)
 
@@ -177,13 +181,115 @@ class SchedulerConsequenceHandler:
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
 
-    def _handle_accepted_work(
+    async def _handle_accepted_work(
         self,
         state: SchedulerState,
         updated: DAGNode,
     ) -> SchedulerState:
+        response = updated.response
+        if response is None or response.status == ResponseStatus.ALREADY_DONE:
+            self._fire_node(self._callbacks.on_node_completed, updated)
+            return state
+
+        spec = updated.request.spec
+        if not isinstance(spec, WorkSpec):
+            failed = self._integration_failed_node(
+                updated,
+                FailureKind.INTEGRATION_FAILED,
+                f"expected WorkSpec, got {type(spec).__name__}",
+            )
+            state = state.update_node(failed)
+            return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
+
+        state_service = self._state_services.get(spec.artifact)
+        if state_service is None:
+            self._fire_node(self._callbacks.on_node_completed, updated)
+            return state
+
+        work_output = response.output if isinstance(response.output, WorkOutput) else None
+        if work_output is None:
+            failed = self._integration_failed_node(
+                updated,
+                FailureKind.INTEGRATION_FAILED,
+                "completed without WorkOutput completion metadata",
+            )
+            self._remove_integrated_worktree(state_service, spec.artifact, str(updated.request.id))
+            state = state.update_node(failed)
+            return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
+        if not work_output.summary.strip():
+            failed = self._integration_failed_node(
+                updated,
+                FailureKind.INTEGRATION_FAILED,
+                "completed with empty WorkOutput completion metadata",
+            )
+            self._remove_integrated_worktree(state_service, spec.artifact, str(updated.request.id))
+            state = state.update_node(failed)
+            return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
+
+        try:
+            await state_service.apply_work_output(
+                work_output,
+                str(updated.request.id),
+                dispatch_sha=response.dispatch_sha,
+            )
+        except RuntimeError as exc:
+            failed = self._integration_failed_node(
+                updated,
+                self._classify_integration_error(exc),
+                f"integration failed: {exc}",
+            )
+            state = state.update_node(failed)
+            return self._handle_failed(state, failed, TerminalOutcomeKind.INTEGRATION_FAILURE)
+        finally:
+            self._remove_integrated_worktree(state_service, spec.artifact, str(updated.request.id))
+
         self._fire_node(self._callbacks.on_node_completed, updated)
         return state
+
+    @staticmethod
+    def _integration_failed_node(
+        node: DAGNode,
+        failure_kind: FailureKind,
+        error: str,
+    ) -> DAGNode:
+        response = node.response
+        failed_response = AgentResponse(
+            request_id=node.request.id,
+            status=ResponseStatus.FAILED,
+            output=response.output if response else None,
+            error=error,
+            failure_kind=failure_kind,
+            ran_tests_and_passed=response.ran_tests_and_passed if response else False,
+            diagnostics=response.diagnostics if response else [],
+            revision=response.revision if response else None,
+            dispatch_sha=response.dispatch_sha if response else "",
+        )
+        return node.with_response(failed_response)
+
+    @staticmethod
+    def _classify_integration_error(error: RuntimeError) -> FailureKind:
+        message = str(error).lower()
+        if "stale base_version" in message:
+            return FailureKind.STALE_WORK_OUTPUT
+        if "tests failed after work output" in message:
+            return FailureKind.TEST_FAILED
+        if "no worktree changes produced" in message:
+            return FailureKind.VALIDATION_REJECTED
+        return FailureKind.INTEGRATION_FAILED
+
+    @staticmethod
+    def _remove_integrated_worktree(
+        state_service: StateService,
+        artifact: str,
+        node_id: str,
+    ) -> None:
+        workspace = getattr(state_service, "_workspace", None)
+        if workspace is None:
+            return
+        try:
+            workspace.remove_worktree(artifact, node_id)
+        except Exception:
+            logger.exception("failed to remove worktree for integrated node %s", node_id)
 
     @staticmethod
     def _normalize_objective(text: str) -> str:
@@ -419,6 +525,7 @@ class Scheduler:
         callbacks: SchedulerCallbacks | None = None,
         telemetry_sink: TelemetrySink | None = None,
         run_id: UUID | None = None,
+        state_services: dict[str, StateService] | None = None,
     ) -> None:
         self._runner = runner
         self._callbacks = callbacks or SchedulerCallbacks()
@@ -426,6 +533,7 @@ class Scheduler:
             callbacks=self._callbacks,
             telemetry_sink=telemetry_sink,
             run_id=run_id,
+            state_services=state_services,
         )
 
     async def run(

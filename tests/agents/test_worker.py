@@ -195,7 +195,7 @@ async def test_work_task_executor_accepts_write_file_then_metadata_only_work_out
         kind=AgentMessageKind.WORK_OUTPUT,
         summary="Wrote src/main.py in the worktree.",
     )
-    ss.apply_work_output.assert_called_once()
+    ss.apply_work_output.assert_not_called()
 
 
 async def test_work_task_executor_enforces_adapter_tools(tmp_path: Path) -> None:
@@ -1157,7 +1157,7 @@ async def test_document_adapter_writes_file_then_returns_metadata_only_work_outp
     output = response.output
     assert isinstance(output, WorkOutput)
     assert output.summary == "Created README.md with API documentation."
-    ss.apply_work_output.assert_called_once()
+    ss.apply_work_output.assert_not_called()
     assert "# API Docs" not in output.summary
 
 
@@ -1347,8 +1347,8 @@ async def test_worker_uses_work_output_as_final_response_type(tmp_path: Path) ->
 # --- Worktree ownership tests ---
 
 
-async def test_worktree_removed_after_successful_integration(tmp_path: Path) -> None:
-    """WorkTaskExecutor removes the worktree after successful integration."""
+async def test_worktree_preserved_after_accepted_changed_work(tmp_path: Path) -> None:
+    """WorkTaskExecutor leaves changed accepted worktrees for scheduler integration."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -1384,12 +1384,14 @@ async def test_worktree_removed_after_successful_integration(tmp_path: Path) -> 
         )
         await executor.run(request, _state_view())
 
-    assert len(removed) == 1
-    assert removed[0][0] == "codebase"
+    assert removed == []
+    ss.apply_work_output.assert_not_called()
 
 
-async def test_worktree_removed_after_integration_failure(tmp_path: Path) -> None:
-    """WorkTaskExecutor removes the worktree even when integration raises."""
+async def test_worker_returns_accepted_work_output_without_state_service_integration(
+    tmp_path: Path,
+) -> None:
+    """WorkTaskExecutor returns accepted WorkOutput without invoking StateService."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -1425,9 +1427,10 @@ async def test_worktree_removed_after_integration_failure(tmp_path: Path) -> Non
         )
         response = await executor.run(request, _state_view())
 
-    assert response.status == ResponseStatus.FAILED
-    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
-    assert len(removed) == 1
+    assert response.status == ResponseStatus.COMPLETED
+    assert response.output == WorkOutput(summary="done")
+    ss.apply_work_output.assert_not_called()
+    assert removed == []
 
 
 async def test_worktree_removed_after_engine_exception(tmp_path: Path) -> None:
@@ -1519,8 +1522,10 @@ async def test_worktree_removed_when_no_changes_produced(tmp_path: Path) -> None
     assert len(removed) == 1
 
 
-async def test_state_service_never_removes_worktree(tmp_path: Path) -> None:
-    """StateService.apply_work_output does not call workspace.remove_worktree."""
+async def test_worker_does_not_cleanup_scheduler_owned_changed_worktree(
+    tmp_path: Path,
+) -> None:
+    """Changed accepted worktrees remain available for scheduler-owned integration."""
     workspace = Workspace(tmp_path / "ws")
     workspace.init()
     workspace.init_artifact("codebase")
@@ -1556,8 +1561,8 @@ async def test_state_service_never_removes_worktree(tmp_path: Path) -> None:
         )
         await executor.run(request, _state_view())
 
-    ss.apply_work_output.assert_called_once()
-    assert len(removed) == 1
+    ss.apply_work_output.assert_not_called()
+    assert removed == []
 
 
 # --- Adapter/tool semantic mismatch tests ---

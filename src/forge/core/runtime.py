@@ -196,6 +196,7 @@ class ForgeRuntime:
             callbacks=callbacks,
             telemetry_sink=telemetry_sink,
             run_id=run_id,
+            state_services=state_services,
         ).run(state)
 
         save_path = save_run(final, workspace)

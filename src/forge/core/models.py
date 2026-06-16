@@ -511,6 +511,7 @@ class AgentResponse(BaseModel):
     ran_tests_and_passed: bool = False
     diagnostics: list[AgentDiagnostic] = Field(default_factory=_empty_agent_diagnostics)
     revision: RevisionRequest | None = None
+    dispatch_sha: str = ""
 
 
 class ToolCallResponse(BaseModel, frozen=True):

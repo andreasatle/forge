@@ -553,8 +553,10 @@ async def test_make_work_handler_passes_none_providers_when_omitted(tmp_path: Pa
     assert captured["referee_provider"] is None
 
 
-async def test_work_handler_calls_state_service_apply_work_output(tmp_path: Path) -> None:
-    """make_work_handler calls state_service.apply_work_output when a work node completes."""
+async def test_scheduler_calls_state_service_apply_work_output_for_work_handler(
+    tmp_path: Path,
+) -> None:
+    """Scheduler integrates completed work returned by make_work_handler."""
     provider = _mock_provider()
     provider.chat = AsyncMock(side_effect=_write_then_complete())
 
@@ -574,7 +576,7 @@ async def test_work_handler_calls_state_service_apply_work_output(tmp_path: Path
         ),
     )
 
-    await Scheduler(runner=runner).run(state)
+    await Scheduler(runner=runner, state_services={"codebase": ss}).run(state)
 
     ss.apply_work_output.assert_called_once()
 

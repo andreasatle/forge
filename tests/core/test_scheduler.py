@@ -41,6 +41,21 @@ class _MemoryTelemetrySink:
         self.events.append(event)
 
 
+class _FakeStateService:
+    """Minimal async fake for scheduler-owned integration tests."""
+
+    def __init__(self, error: RuntimeError | None = None) -> None:
+        self.error = error
+        self.calls: list[tuple[WorkOutput, str, str]] = []
+
+    async def apply_work_output(
+        self, output: WorkOutput, node_id: str, dispatch_sha: str = ""
+    ) -> None:
+        self.calls.append((output, node_id, dispatch_sha))
+        if self.error is not None:
+            raise self.error
+
+
 # --- Helpers ---
 
 
@@ -542,16 +557,86 @@ async def test_validation_failed_work_does_not_apply_work_output() -> None:
 
 
 async def test_integration_success_marks_node_integrated() -> None:
-    """Node is marked INTEGRATED when the runner returns COMPLETED."""
+    """Scheduler calls StateService and marks node INTEGRATED after integration succeeds."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService()
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        response = _ok(request)
+        return response.model_copy(update={"dispatch_sha": "abc123"})
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+    ).run(state)
+
+    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    assert state_service.calls == [
+        (WorkOutput(summary="Completed worktree changes."), str(work.id), "abc123")
+    ]
+
+
+async def test_scheduler_classifies_test_failure_from_integration() -> None:
+    """StateService test failure becomes TEST_FAILED at the scheduler boundary."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService(
+        RuntimeError("tests failed after work output: assertion failed")
+    )
 
     async def runner(request: AgentRequest) -> AgentResponse:
         return _ok(request)
 
-    final = await Scheduler(runner=runner).run(state)
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+    ).run(state)
 
-    assert final.dag[work.id].node_state == NodeState.INTEGRATED
+    response = final.dag[work.id].response
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    assert response is not None
+    assert response.failure_kind == FailureKind.TEST_FAILED
+
+
+async def test_scheduler_classifies_stale_work_output_from_integration() -> None:
+    """StateService stale-base rejection becomes STALE_WORK_OUTPUT."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService(RuntimeError("stale base_version: output based on old"))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+    ).run(state)
+
+    response = final.dag[work.id].response
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    assert response is not None
+    assert response.failure_kind == FailureKind.STALE_WORK_OUTPUT
+
+
+async def test_scheduler_classifies_integration_failure_from_integration() -> None:
+    """StateService merge or git failures remain INTEGRATION_FAILED."""
+    work = _work_request()
+    state = _base_state().add_nodes([DAGNode(request=work)])
+    state_service = _FakeStateService(RuntimeError("git command failed with exit code 1"))
+
+    async def runner(request: AgentRequest) -> AgentResponse:
+        return _ok(request)
+
+    final = await Scheduler(
+        runner=runner,
+        state_services={"codebase": state_service},  # type: ignore[dict-item]
+    ).run(state)
+
+    response = final.dag[work.id].response
+    assert final.dag[work.id].node_state == NodeState.FAILED
+    assert response is not None
+    assert response.failure_kind == FailureKind.INTEGRATION_FAILED
 
 
 async def test_stale_work_output_requeues_not_failed() -> None:
