@@ -131,6 +131,7 @@ def _engine(
     max_attempts: int = 3,
     work_noun: str = "implementation",
     requires_nonempty: bool = True,
+    worktree_path: Path | None = None,
 ) -> AttemptLifecycle[WorkOutput]:
     req = request or _work_request()
     sv = _state_view()
@@ -146,7 +147,9 @@ def _engine(
         request=req,
         state_view=sv,
         validator=WorkOutputValidator(
-            _adapter_spec(work_noun=work_noun, requires_nonempty=requires_nonempty), sv
+            _adapter_spec(work_noun=work_noun, requires_nonempty=requires_nonempty),
+            sv,
+            worktree_path=worktree_path,
         ),
         run_fn=run_fn,
         registry=_registry_with(),
@@ -550,6 +553,298 @@ async def test_rejected_validation_returns_failed_without_output() -> None:
     assert result.output is None
     assert "reject" in (result.error or "")
     assert len(_) == 1
+
+
+async def test_no_worktree_change_reject_retries_when_attempts_remain(
+    git_worktree: Path,
+) -> None:
+    """Referee REJECT for claimed work with no file changes becomes a retry."""
+    request = _work_request()
+    attempts = 0
+    prompts: list[str] = []
+
+    async def run_fn(prompt: str) -> AgentResponse:
+        nonlocal attempts
+        attempts += 1
+        prompts.append(prompt)
+        if attempts == 2:
+            (git_worktree / "scraper.py").write_text("class WebScraper:\n    pass\n")
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="Implemented scraper files."),
+        )
+
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=2,
+        worktree_path=git_worktree,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REJECT,
+                rationale="Worker claimed implementation, but no files changed.",
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="files changed"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REJECT,
+                rationale="Summary claimed files were implemented, but no worktree changes exist.",
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert attempts == 2
+    assert len(prompts) == 2
+
+
+async def test_no_worktree_change_retry_prompt_requires_actual_file_changes(
+    git_worktree: Path,
+) -> None:
+    """No-change retry prompt tells the producer to modify the assigned worktree."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkOutput(summary="Implemented scraper files."),
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkOutput(summary="Implemented scraper files."),
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=2,
+        worktree_path=git_worktree,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REJECT,
+                rationale="The git diff is empty; no files were changed.",
+            ),
+            CriticFinding(
+                disposition=CriticDisposition.REJECT,
+                rationale="The git diff is empty; no files were changed.",
+            ),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REJECT,
+                rationale="Empty git diff: no actual file changes support the summary.",
+                override=False,
+            ),
+            RefereeDecision(
+                disposition=CriticDisposition.REJECT,
+                rationale="Empty git diff: no actual file changes support the summary.",
+                override=False,
+            ),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert len(prompts) == 2
+    assert "REQUIRED REVISION" in prompts[1]
+    assert (
+        "Actually modify the assigned worktree to satisfy the task; the previous attempt "
+        "returned WorkOutput metadata but produced no file changes."
+    ) in prompts[1]
+    assert "Rationale: Empty git diff: no actual file changes support the summary." in prompts[1]
+
+
+async def test_no_worktree_change_retry_can_accept_after_file_changes(
+    git_worktree: Path,
+) -> None:
+    """A no-change retry can complete once the producer actually changes the worktree."""
+    request = _work_request()
+    attempts = 0
+
+    async def run_fn(prompt: str) -> AgentResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            (git_worktree / "scraper.py").write_text("class WebScraper:\n    pass\n")
+        return AgentResponse(
+            request_id=request.id,
+            status=ResponseStatus.COMPLETED,
+            output=WorkOutput(summary="Implemented scraper files."),
+        )
+
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        worktree_path=git_worktree,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REJECT,
+                rationale="No files changed despite the summary.",
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="new file present"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REJECT,
+                rationale="No worktree changes are present.",
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert attempts == 2
+
+
+async def test_no_worktree_change_reject_on_final_attempt_returns_failed(
+    git_worktree: Path,
+) -> None:
+    """No-change REJECT remains terminal when no attempts remain."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkOutput(summary="Implemented scraper files."),
+            )
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=1,
+        worktree_path=git_worktree,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REJECT,
+            rationale="No files changed.",
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REJECT,
+            rationale="No worktree changes support the claimed implementation.",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert len(prompts) == 1
+
+
+async def test_unrelated_referee_reject_remains_terminal(
+    git_worktree: Path,
+) -> None:
+    """Referee REJECT unrelated to no-change evidence remains terminal."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=WorkOutput(summary="Implemented scraper files."),
+            )
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        worktree_path=git_worktree,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REJECT,
+            rationale="The output violates an explicit non-goal.",
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REJECT,
+            rationale="Unsafe out-of-scope work violates the contract.",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert len(prompts) == 1
+
+
+async def test_no_worktree_change_rule_does_not_override_already_done(
+    git_worktree: Path,
+) -> None:
+    """ALREADY_DONE handling remains unchanged when the success condition is already met."""
+    request = _work_request()
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                output=WorkOutput(),
+                error="empty output",
+            )
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        worktree_path=git_worktree,
+    )
+
+    with patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic:
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ALREADY_DONE,
+            rationale="success condition already met",
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.ALREADY_DONE
+    assert len(prompts) == 1
 
 
 async def test_repeated_revise_until_max_attempts_returns_failed_without_output() -> None:

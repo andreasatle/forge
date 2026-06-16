@@ -37,7 +37,8 @@ models:
     complexity_to_profile:
       easy: fast
       medium: default
-      hard: strongartifacts:
+      hard: strong
+artifacts:
   - name: codebase
     type: coding
     language: python

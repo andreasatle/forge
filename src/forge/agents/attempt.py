@@ -42,6 +42,28 @@ _logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 _MAX_UNTRACKED_BYTES = 64 * 1024
+_NO_WORKTREE_CHANGE_REQUIRED_CHANGE = (
+    "Actually modify the assigned worktree to satisfy the task; the previous attempt "
+    "returned WorkOutput metadata but produced no file changes."
+)
+_NO_WORKTREE_CHANGE_PHRASES = (
+    "no actual file changes",
+    "no file changes",
+    "no files changed",
+    "no files were changed",
+    "no worktree changes",
+    "no worktree change",
+    "empty git diff",
+    "git diff is empty",
+    "git diff was empty",
+    "worktree was empty",
+    "worktree is empty",
+    "no evidence of changes",
+    "no evidence of file changes",
+    "produced no file changes",
+    "did not change any files",
+    "didn't change any files",
+)
 
 
 @runtime_checkable
@@ -115,6 +137,14 @@ class WorkOutputValidator:
             for fv in self._state_view.files:
                 lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
         return "\n".join(lines)
+
+    def has_worktree_changes(self) -> bool:
+        """Return True when git evidence shows tracked or relevant untracked changes."""
+        if self._worktree_path is None:
+            return False
+        status = self._git_output("status", "--short")
+        diff = self._git_output("diff", "--", ".")
+        return status != "(none)" or diff != "(none)" or bool(self._untracked_paths())
 
     def _git_output(self, *args: str) -> str:
         if self._worktree_path is None:
@@ -304,6 +334,37 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
         status=ResponseStatus.FAILED,
         error=f"validation response could not be parsed: {error}",
         failure_kind=FailureKind.INVALID_JSON,
+    )
+
+
+def _mentions_no_worktree_changes(*texts: str | None) -> bool:
+    haystack = " ".join(text or "" for text in texts).lower()
+    return any(phrase in haystack for phrase in _NO_WORKTREE_CHANGE_PHRASES)
+
+
+def _no_worktree_change_revision(
+    *,
+    rationale: str,
+    prior_attempts: int,
+) -> RevisionRequest:
+    return RevisionRequest(
+        rationale=rationale,
+        prior_attempts=prior_attempts,
+        items=[
+            RevisionItem(
+                required_change=_NO_WORKTREE_CHANGE_REQUIRED_CHANGE,
+                rationale=rationale,
+            )
+        ],
+    )
+
+
+def _claimed_work_has_no_worktree_changes(output: object, validator: object) -> bool:
+    return (
+        isinstance(output, WorkOutput)
+        and bool(output.summary.strip())
+        and isinstance(validator, WorkOutputValidator)
+        and not validator.has_worktree_changes()
     )
 
 
@@ -531,6 +592,23 @@ class AttemptLifecycle[T]:
             if decision.disposition == CriticDisposition.ACCEPT:
                 return response
             if decision.disposition == CriticDisposition.REJECT:
+                if (
+                    attempt < self._max_attempts - 1
+                    and _claimed_work_has_no_worktree_changes(output, self._validator)
+                    and _mentions_no_worktree_changes(finding.rationale, decision.rationale)
+                ):
+                    _logger.info(
+                        "attempt %d/%d: no worktree changes despite WorkOutput — retrying",
+                        attempt_number,
+                        self._max_attempts,
+                    )
+                    revision_request = _no_worktree_change_revision(
+                        rationale=decision.rationale or finding.rationale,
+                        prior_attempts=attempt_number,
+                    )
+                    history = history.append(revision_request)
+                    self._telemetry.revision_appended(attempt_number, revision_request)
+                    continue
                 return _validation_rejected_response(
                     self._request,
                     decision.disposition,
