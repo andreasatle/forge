@@ -52,6 +52,49 @@ def test_integrate_spec_no_longer_exists():
     assert not hasattr(AgentType, "INTEGRATE")
 
 
+# --- integration_revision removed ---
+
+
+def test_agent_request_has_no_integration_revision_field():
+    """AgentRequest no longer exposes integration_revision after cleanup."""
+    req = _make_request()
+    assert not hasattr(req, "integration_revision")
+
+
+def test_dag_node_has_no_integration_revision_field():
+    """DAGNode no longer exposes integration_revision after cleanup."""
+    node = _make_node()
+    assert not hasattr(node, "integration_revision")
+
+
+def test_agent_request_tolerates_extra_integration_revision_in_json():
+    """Old persisted JSON with integration_revision is accepted — Pydantic ignores extra fields."""
+    req = _make_request()
+    data = req.model_dump()
+    data["integration_revision"] = {
+        "disposition": "revise",
+        "rationale": "old",
+        "items": [],
+        "prior_attempts": 1,
+    }
+    restored = AgentRequest.model_validate(data)
+    assert not hasattr(restored, "integration_revision")
+
+
+def test_dag_node_tolerates_extra_integration_revision_in_json():
+    """Old persisted JSON with integration_revision in DAGNode is accepted — extra field ignored."""
+    node = _make_node()
+    data = node.model_dump()
+    data["integration_revision"] = {
+        "disposition": "revise",
+        "rationale": "old",
+        "items": [],
+        "prior_attempts": 1,
+    }
+    restored = DAGNode.model_validate(data)
+    assert not hasattr(restored, "integration_revision")
+
+
 def _make_request(
     *,
     dependencies: frozenset[UUID] | None = None,

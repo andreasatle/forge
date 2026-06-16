@@ -901,7 +901,7 @@ async def test_integration_failure_without_revision_marks_failed() -> None:
     assert final.dag[work.id].node_state == NodeState.FAILED
 
 
-async def test_integration_revision_exhaustion_marks_failed() -> None:
+async def test_integration_failed_response_marks_node_failed() -> None:
     """Integration failure from the runner produces FAILED node with INTEGRATION_FAILED kind."""
     work = _work_request()
     state = _base_state().add_nodes([DAGNode(request=work)])
@@ -926,7 +926,7 @@ def _decompose(request: AgentRequest) -> AgentResponse:
     return AgentResponse(request_id=request.id, status=ResponseStatus.DECOMPOSE)
 
 
-async def test_dependents_not_cancelled_on_integration_revision_requeue() -> None:
+async def test_dependents_cancelled_when_dependency_integration_fails() -> None:
     """Integration failure on node A cancels dependent nodes."""
     work_a = _work_request()
     work_b = _work_request(deps=frozenset({work_a.id}))
