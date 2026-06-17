@@ -101,9 +101,13 @@ def test_critic_evidence_excluded_dirs_includes_tool_caches() -> None:
     assert "node_modules" in CRITIC_EVIDENCE_EXCLUDED_DIRS
 
 
-def test_critic_evidence_excluded_suffixes_excludes_compiled_and_lock() -> None:
-    """CRITIC_EVIDENCE_EXCLUDED_SUFFIXES covers compiled Python and lock file extensions."""
+def test_critic_evidence_excluded_suffixes_excludes_compiled_python() -> None:
+    """CRITIC_EVIDENCE_EXCLUDED_SUFFIXES covers compiled Python extensions but not lockfiles."""
     assert ".pyc" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
     assert ".pyo" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
     assert ".pyd" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
-    assert ".lock" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
+
+
+def test_critic_evidence_excluded_suffixes_does_not_exclude_lock_files() -> None:
+    """.lock is NOT in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES — lockfiles are review-relevant evidence."""
+    assert ".lock" not in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES

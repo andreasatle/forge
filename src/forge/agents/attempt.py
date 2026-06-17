@@ -710,6 +710,7 @@ class AttemptLifecycle[T]:
 
             try:
                 output_text = self._validator.render_for_critic(output)
+                self._telemetry.evidence_snapshot(attempt_number, output_text)
                 finding = await critic_agent(
                     self._request,
                     self._state_view,

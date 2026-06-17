@@ -16,6 +16,8 @@ from forge.core.models import (
 )
 from forge.core.telemetry import TelemetryEvent, TelemetrySink, safe_append_telemetry
 
+_EVIDENCE_EXCERPT_LIMIT = 2000
+
 
 def _preview(text: str | None, limit: int = 500) -> str | None:
     if text is None:
@@ -172,6 +174,21 @@ class AttemptTelemetryReporter:
             status="revise",
             summary="revision request appended",
             data={"revision_request": _model_data(request)},
+        )
+
+    def evidence_snapshot(self, attempt_number: int, evidence: str) -> None:
+        """Emit pwc.evidence.snapshot with a bounded excerpt of critic input evidence."""
+        self._emit(
+            attempt_number=attempt_number,
+            role="critic",
+            phase="critic",
+            event_type="pwc.evidence.snapshot",
+            status="ready",
+            summary=f"evidence snapshot ({len(evidence)} chars)",
+            data={
+                "evidence_length": len(evidence),
+                "evidence_excerpt": evidence[:_EVIDENCE_EXCERPT_LIMIT],
+            },
         )
 
     def exhausted(self, attempts: int, reason: str) -> None:

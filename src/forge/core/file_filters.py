@@ -33,4 +33,8 @@ GENERATED_ARTIFACT_SUFFIXES: frozenset[str] = frozenset({".pyc", ".pyo", ".pyd"}
 CRITIC_EVIDENCE_EXCLUDED_DIRS: frozenset[str] = frozenset(
     {".git", "__pycache__", "node_modules", ".pytest_cache", ".ruff_cache", ".venv"}
 )
-CRITIC_EVIDENCE_EXCLUDED_SUFFIXES: frozenset[str] = frozenset({".pyc", ".pyo", ".pyd", ".lock"})
+# Lockfiles (uv.lock, Cargo.lock, etc.) are intentionally NOT excluded here:
+# they are review-relevant dependency evidence for the critic. Untracked
+# lockfile content is still bounded by the _MAX_UNTRACKED_BYTES cap in
+# WorkOutputValidator, so inclusion is safe.
+CRITIC_EVIDENCE_EXCLUDED_SUFFIXES: frozenset[str] = frozenset({".pyc", ".pyo", ".pyd"})

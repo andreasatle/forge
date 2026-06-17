@@ -2262,3 +2262,114 @@ async def test_render_for_critic_excludes_venv_untracked_files(
 
     assert "New file: .venv/pyvenv.cfg" not in text
     assert "New file: real.py" in text
+
+
+async def test_render_for_critic_includes_new_untracked_lock_file(
+    git_worktree: Path,
+) -> None:
+    """A new untracked uv.lock within the byte cap appears in critic evidence."""
+    (git_worktree / "uv.lock").write_text('version = 1\n[[package]]\nname = "httpx"\n')
+
+    sv = _state_view()
+    validator = WorkOutputValidator(_adapter_spec(), sv, worktree_path=git_worktree)
+    text = validator.render_for_critic(WorkOutput(summary="Added dependency."))
+
+    assert "New file: uv.lock" in text
+    assert "httpx" in text
+
+
+async def test_render_for_critic_excludes_pyc_and_pyd_still() -> None:
+    """Compiled Python extensions remain excluded from critic evidence after lockfile change."""
+    from forge.core.file_filters import CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
+
+    assert ".pyc" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
+    assert ".pyo" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
+    assert ".pyd" in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
+    assert ".lock" not in CRITIC_EVIDENCE_EXCLUDED_SUFFIXES
+
+
+async def test_evidence_snapshot_telemetry_emitted_before_critic() -> None:
+    """pwc.evidence.snapshot is emitted before critic.finding.parsed in each attempt."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, _ = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
+    )
+    sink = _MemoryTelemetrySink()
+    engine = AttemptLifecycle[WorkOutput](
+        request=request,
+        state_view=_state_view(),
+        validator=WorkOutputValidator(_adapter_spec(), _state_view()),
+        run_fn=run_fn,
+        registry=_registry_with(),
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=1,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT, rationale="good"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    event_types = [e.event_type for e in sink.events]
+    assert "pwc.evidence.snapshot" in event_types
+    snapshot_idx = event_types.index("pwc.evidence.snapshot")
+    critic_idx = event_types.index("critic.finding.parsed")
+    assert snapshot_idx < critic_idx
+
+
+async def test_evidence_snapshot_excerpt_is_bounded() -> None:
+    """Evidence snapshot excerpt in telemetry is at most 2000 chars even for large evidence."""
+    from unittest.mock import patch as _patch
+
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, _ = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
+    )
+    sink = _MemoryTelemetrySink()
+    validator = WorkOutputValidator(_adapter_spec(), _state_view())
+    engine = AttemptLifecycle[WorkOutput](
+        request=request,
+        state_view=_state_view(),
+        validator=validator,
+        run_fn=run_fn,
+        registry=_registry_with(),
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=1,
+        telemetry_sink=sink,
+        run_id=sink.run_id,
+    )
+
+    large_evidence = "evidence line\n" * 500  # ~7000 chars
+
+    with (
+        _patch.object(validator, "render_for_critic", return_value=large_evidence),
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.ACCEPT, rationale="good"
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+        )
+        await engine.run("base prompt")
+
+    snapshot_events = [e for e in sink.events if e.event_type == "pwc.evidence.snapshot"]
+    assert snapshot_events
+    ev = snapshot_events[0]
+    assert ev.data["evidence_length"] == len(large_evidence)
+    assert len(str(ev.data["evidence_excerpt"])) <= 2000
