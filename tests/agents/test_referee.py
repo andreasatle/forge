@@ -458,6 +458,77 @@ async def test_referee_prompt_includes_split_graph_topology_rules() -> None:
     assert "information flow" in prompt
 
 
+async def test_referee_prompt_requires_addressing_evidence_grounded_critic_objections() -> None:
+    """Referee prompt instructs the model to address each evidence-grounded critic objection."""
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+
+    await referee_agent(
+        _rich_request(),
+        _state_view(),
+        _rendered_output(),
+        _critic_reject(),
+        provider,
+        _registry(),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "reject or revise" in prompt
+    assert "directly address each evidence-grounded objection" in prompt
+    assert "cite specific evidence" in prompt
+    assert "cannot refute the evidence" in prompt
+    assert "not a tie-breaker by vibes" in prompt
+
+
+async def test_referee_prompt_forbids_vibe_override_of_evidence_grounded_rejection() -> None:
+    """Referee prompt forbids accepting when critic evidence cannot be refuted."""
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+
+    await referee_agent(
+        _request(),
+        _state_view(),
+        _rendered_output(),
+        _critic_reject(),
+        provider,
+        _registry(),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "choose revise or reject" in prompt
+    assert "not accept" in prompt
+
+
+async def test_referee_prompt_specifies_coding_and_document_evidence_types() -> None:
+    """Referee prompt enumerates concrete evidence types for coding and document tasks."""
+    decision_json = json.dumps(
+        {"disposition": "accept", "rationale": "I agree.", "override": False}
+    )
+    provider = _provider(decision_json)
+
+    await referee_agent(
+        _rich_request(),
+        _state_view(),
+        _rendered_output(),
+        _critic_reject(),
+        provider,
+        _registry(),
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    assert "git diff" in prompt
+    assert "missing dependencies" in prompt
+    assert "test-related evidence" in prompt
+    assert "missing documentation" in prompt
+
+
 async def test_referee_agent_retries_on_invalid_json() -> None:
     """referee_agent retries when the provider returns invalid JSON, then succeeds."""
     good_json = json.dumps(

@@ -15,6 +15,24 @@ prompt_template: |
   tests, diffs, worktree evidence, or contract criteria. For document work, revision_items
   must reference the requested documentation requirements.
 
+  Evidence-grounded critic objections:
+  When the critic disposition is reject or revise and the critic rationale cites concrete
+  evidence — files, diffs, git status, missing files, missing dependencies, tests, or
+  contract criteria — you must directly address each evidence-grounded objection before
+  overriding it.
+  You may override the critic only if you cite specific evidence from the supplied review
+  context showing why the critic is wrong or too strict.
+  Do not dismiss an evidence-grounded critic finding as minor, stylistic, or out-of-scope
+  unless you identify the exact contract text or worktree evidence proving that.
+
+  The referee is not a tie-breaker by vibes. The referee judges contract + evidence.
+  If the critic rejection is evidence-grounded and you cannot refute the evidence with
+  contrary contract text or worktree evidence, choose revise or reject — not accept.
+  For coding tasks, evidence includes: git diff, git status, files changed, missing files,
+  missing dependencies, and test-related evidence.
+  For document tasks, evidence includes: requested sections, examples, missing documentation
+  content, and contract criteria.
+
   Override the critic when:
   - The critic is too harsh: the {output_noun} satisfies the contract despite minor gaps
   - The critic is too lenient: the {output_noun} has serious contract violations the critic overlooked
