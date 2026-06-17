@@ -1,6 +1,7 @@
 """AttemptLifecycle for work and plan PWC execution."""
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Protocol, TypeVar, assert_never, cast, runtime_checkable
@@ -65,15 +66,76 @@ _NO_WORKTREE_CHANGE_PHRASES = (
     "did not change any files",
     "didn't change any files",
 )
-_GENERIC_UNGROUNDED_FEEDBACK_PHRASES = (
-    "argument needs more supporting evidence",
-    "needs more supporting evidence",
-    "generated text is too verbose",
-    "text is too verbose",
-    "too verbose",
-    "focus on requested information",
-    "code lacks proper error handling",
-    "lacks proper error handling",
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "that",
+        "this",
+        "with",
+        "from",
+        "have",
+        "will",
+        "been",
+        "were",
+        "they",
+        "them",
+        "then",
+        "when",
+        "what",
+        "which",
+        "your",
+        "each",
+        "more",
+        "some",
+        "into",
+        "also",
+        "only",
+        "very",
+        "most",
+        "both",
+        "such",
+        "than",
+        "just",
+        "make",
+        "does",
+        "must",
+        "should",
+        "would",
+        "could",
+        "need",
+        "like",
+        "over",
+        "much",
+        "even",
+        "back",
+        "come",
+        "used",
+        "want",
+        "give",
+        "long",
+        "look",
+        "work",
+        "time",
+        "year",
+        "their",
+        "there",
+        "where",
+        "these",
+        "those",
+        "being",
+        "after",
+        "other",
+        "about",
+        "above",
+        "every",
+        "under",
+        "while",
+        "using",
+        "given",
+        "since",
+        "still",
+        "first",
+        "well",
+    }
 )
 _GROUNDING_TERMS = (
     "acceptance criterion",
@@ -460,8 +522,43 @@ def _review_feedback_text(
     return " ".join(value for value in values if value).lower()
 
 
-def _feedback_has_grounding(feedback: str) -> bool:
-    return any(term in feedback for term in _GROUNDING_TERMS)
+def _has_criterion_id_reference(finding: object, decision: object) -> bool:
+    for review in (finding, decision):
+        revision_items = getattr(review, "revision_items", None)
+        if not isinstance(revision_items, list):
+            continue
+        for item in cast("list[object]", revision_items):
+            criterion_id = getattr(item, "criterion_id", None)
+            if isinstance(criterion_id, str) and criterion_id.strip():
+                return True
+    return False
+
+
+def _contract_vocabulary(request: AgentRequest) -> frozenset[str]:
+    contract = request.spec.contract
+    parts: list[str] = [
+        contract.objective,
+        contract.success_condition,
+        *(criterion.text for criterion in contract.acceptance_criteria),
+        *(criterion.id for criterion in contract.acceptance_criteria),
+        *contract.constraints,
+        *contract.non_goals,
+    ]
+    if isinstance(request.spec, WorkSpec):
+        parts.append(request.spec.artifact)
+        parts.append(request.spec.adapter)
+        if request.spec.language:
+            parts.append(request.spec.language)
+    text = " ".join(parts).lower()
+    return frozenset(t for t in re.findall(r"[a-z]{4,}", text) if t not in _STOPWORDS)
+
+
+def _feedback_has_grounding(feedback: str, request: AgentRequest) -> bool:
+    if any(term in feedback for term in _GROUNDING_TERMS):
+        return True
+    vocab = _contract_vocabulary(request)
+    feedback_tokens = frozenset(re.findall(r"[a-z]{4,}", feedback))
+    return bool(vocab & feedback_tokens)
 
 
 def _contract_allows_generic_feedback(request: AgentRequest, feedback: str) -> bool:
@@ -480,9 +577,11 @@ def _is_ungrounded_generic_feedback(
     if not isinstance(request.spec, WorkSpec):
         return False
     feedback = _review_feedback_text(finding, decision)
-    if not any(phrase in feedback for phrase in _GENERIC_UNGROUNDED_FEEDBACK_PHRASES):
+    if not feedback.strip():
         return False
-    if _feedback_has_grounding(feedback):
+    if _has_criterion_id_reference(finding, decision):
+        return False
+    if _feedback_has_grounding(feedback, request):
         return False
     return not _contract_allows_generic_feedback(request, feedback)
 

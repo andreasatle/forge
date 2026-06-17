@@ -17,6 +17,7 @@ from forge.agents.attempt import (
 )
 from forge.agents.attempt_telemetry import AttemptTelemetryReporter
 from forge.core.models import (
+    AcceptanceCriterion,
     AgentContract,
     AgentDiagnostic,
     AgentRequest,
@@ -342,7 +343,7 @@ async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
             ),
             CriticFinding(
                 disposition=CriticDisposition.REVISE,
-                rationale="missing error handling",
+                rationale="error handling missing from the file",
                 hints=["handle failures"],
             ),
             CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
@@ -353,7 +354,7 @@ async def test_multiple_revise_rounds_accumulate_required_changes() -> None:
             ),
             RefereeDecision(
                 disposition=CriticDisposition.REVISE,
-                rationale="error handling missing",
+                rationale="error handling missing from the file",
                 override=False,
             ),
             RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
@@ -592,6 +593,394 @@ async def test_missing_file_feedback_remains_valid_revision() -> None:
     assert "1. Required change: Create src/app.py" in prompts[1]
 
 
+async def test_methodology_feedback_is_rejected_as_ungrounded() -> None:
+    """Generic methodology feedback is rejected as ungrounded without phrase matching."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="The text lacks sufficient detail regarding the methodology used.",
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE,
+            rationale="The text lacks sufficient detail regarding the methodology used.",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "ungrounded generic feedback" in (result.error or "")
+    assert len(prompts) == 1
+
+
+async def test_complex_language_feedback_is_rejected_as_ungrounded() -> None:
+    """Generic 'complex language / core message' feedback is rejected as ungrounded."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="The use of overly complex language obscures the core message.",
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE,
+            rationale="The use of overly complex language obscures the core message.",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "ungrounded generic feedback" in (result.error or "")
+    assert len(prompts) == 1
+
+
+async def test_criterion_id_reference_is_not_rejected_as_ungrounded() -> None:
+    """Feedback with a non-empty criterion_id is not rejected as ungrounded."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="Criterion not satisfied.",
+                revision_items=[
+                    RevisionItem(
+                        criterion_id="AC1",
+                        required_change="Satisfy the criterion.",
+                        rationale="Criterion AC1 is unmet.",
+                    )
+                ],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="done"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale="agreed", override=False
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 2
+
+
+async def test_document_feedback_grounded_in_contract_section_is_not_rejected() -> None:
+    """Feedback referencing contract vocabulary is not rejected as ungrounded."""
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write authentication documentation",
+            success_condition="documentation covers authentication flow",
+            contract=AgentContract(
+                objective="write authentication documentation",
+                success_condition="documentation covers authentication flow",
+            ),
+            adapter="coding",
+            artifact="codebase",
+        ),
+    )
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="The authentication section lacks detail on the token refresh flow.",
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="done"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE, rationale="agreed", override=False
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 2
+
+
+async def test_style_feedback_allowed_when_contract_requests_style() -> None:
+    """Style/verbosity feedback is allowed when the contract explicitly asks for it."""
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="write concise release notes",
+            success_condition="release notes are concise and clear",
+            contract=AgentContract(
+                objective="write concise release notes",
+                success_condition="release notes are concise and clear",
+                constraints=["Output must be concise."],
+            ),
+            adapter="coding",
+            artifact="codebase",
+        ),
+    )
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REVISE,
+                rationale="The output is not concise enough.",
+                hints=["Shorten to key points only."],
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="concise now"),
+        ]
+        mock_referee.side_effect = [
+            RefereeDecision(
+                disposition=CriticDisposition.REVISE,
+                rationale="Needs to be more concise.",
+                override=False,
+            ),
+            RefereeDecision(disposition=CriticDisposition.ACCEPT, rationale="done", override=False),
+        ]
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 2
+
+
+async def test_style_feedback_rejected_when_contract_does_not_request_style() -> None:
+    """Style/verbosity feedback without a matching contract term is rejected as ungrounded."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.COMPLETED,
+                output=work_output,
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REVISE,
+            rationale="The style of the output is inappropriate.",
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REVISE,
+            rationale="The style of the output is inappropriate.",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert "ungrounded generic feedback" in (result.error or "")
+    assert len(prompts) == 1
+
+
+def test_contract_vocabulary_excludes_stopwords_and_short_words() -> None:
+    """_contract_vocabulary filters stopwords and words shorter than 4 characters."""
+    from forge.agents.attempt import _contract_vocabulary  # pyright: ignore[reportPrivateUsage]
+
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="parse and validate configuration schema",
+            success_condition="schema validation is complete",
+            adapter="coding",
+            artifact="codebase",
+        ),
+    )
+    vocab = _contract_vocabulary(request)
+
+    assert "and" not in vocab  # too short (3 chars)
+    assert "is" not in vocab  # too short (2 chars)
+    assert "with" not in vocab  # stopword
+    assert "parse" in vocab  # content word (5 chars)
+    assert "validate" in vocab  # content word
+    assert "configuration" in vocab  # content word
+    assert "schema" in vocab  # content word
+    assert "complete" in vocab  # content word
+    assert "coding" in vocab  # adapter
+    assert "codebase" in vocab  # artifact
+
+
+def test_contract_vocabulary_includes_artifact_adapter_language_and_criterion_ids() -> None:
+    """_contract_vocabulary includes artifact, adapter, language, and acceptance criterion ids."""
+    from forge.agents.attempt import _contract_vocabulary  # pyright: ignore[reportPrivateUsage]
+
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="build scraper",
+            success_condition="scraper runs successfully",
+            contract=AgentContract(
+                objective="build scraper",
+                success_condition="scraper runs successfully",
+                acceptance_criteria=[
+                    AcceptanceCriterion(id="PERF", text="scraper must handle timeouts"),
+                    AcceptanceCriterion(id="AUTH", text="authentication headers required"),
+                ],
+            ),
+            adapter="coding",
+            artifact="codebase",
+            language="python",
+        ),
+    )
+    vocab = _contract_vocabulary(request)
+
+    assert "coding" in vocab  # adapter
+    assert "codebase" in vocab  # artifact
+    assert "python" in vocab  # language
+    assert "scraper" in vocab  # from objective/criteria
+    assert "timeouts" in vocab  # from criterion text
+    assert "authentication" in vocab  # from criterion text
+    assert "perf" in vocab  # criterion id (4 chars)
+    assert "auth" in vocab  # criterion id (4 chars)
+
+
+def test_feedback_has_grounding_via_contract_token_overlap() -> None:
+    """_feedback_has_grounding returns True when feedback shares tokens with contract vocabulary."""
+    from forge.agents.attempt import _feedback_has_grounding  # pyright: ignore[reportPrivateUsage]
+
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="implement authentication middleware",
+            success_condition="middleware handles tokens correctly",
+            adapter="coding",
+            artifact="codebase",
+        ),
+    )
+
+    assert _feedback_has_grounding(
+        "the authentication logic is missing from the middleware", request
+    )
+    assert not _feedback_has_grounding("the output lacks sufficient clarity and precision", request)
+
+
 async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> None:
     """Reviewer-quoted invariant contract text is not duplicated in REQUIRED REVISION."""
     plugin_guidance = "Language plugin guidance:\n" + "\n".join(
@@ -769,10 +1158,14 @@ async def test_rejected_validation_returns_failed_without_output() -> None:
         patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
     ):
         mock_critic.return_value = CriticFinding(
-            disposition=CriticDisposition.REJECT, rationale="bad output", hints=["fix everything"]
+            disposition=CriticDisposition.REJECT,
+            rationale="output violates contract",
+            hints=["fix contract violations"],
         )
         mock_referee.return_value = RefereeDecision(
-            disposition=CriticDisposition.REJECT, rationale="still bad", override=False
+            disposition=CriticDisposition.REJECT,
+            rationale="still violates the contract",
+            override=False,
         )
         result = await engine.run("base prompt")
 
@@ -1805,8 +2198,8 @@ async def test_work_noun_comes_from_adapter_spec() -> None:
         mock_critic.side_effect = [
             CriticFinding(
                 disposition=CriticDisposition.REVISE,
-                rationale="needs more detail",
-                hints=["expand section 1"],
+                rationale="the docs need more detail",
+                hints=["expand docs coverage"],
             ),
             CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="good"),
         ]
