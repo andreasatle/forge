@@ -10,6 +10,14 @@ prompt_template: |
   Audit the following: {objective}
   Success condition: {success_condition}
 
-  Read the relevant files, then respond with WorkOutput completion metadata.
-  - If you find issues and the task asks for an artifact, write markdown findings in the worktree.
-  - If there are no issues, summarize that no issues were found.
+  You must read every file required to assess the objective.
+
+  The supplied contract is the only source of truth for what constitutes a finding.
+
+  Do not rely on any standard outside the supplied contract.
+
+  Output rules:
+
+  * If the contract specifies an artifact, you must write findings to the worktree as a markdown file, even if the findings list is empty.
+  * If the contract does not specify an artifact, return WorkOutput with a summary stating whether violations were found.
+  * Every finding must cite the specific contract requirement or file evidence supporting it.

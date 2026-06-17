@@ -34,7 +34,7 @@ prompt_template: |
   content, and contract criteria.
 
   Override the critic when:
-  - The critic is too harsh: the {output_noun} satisfies the contract despite minor gaps
+  - The critic is too harsh: every contract requirement is satisfied, and the critic's objection is not grounded in the supplied contract or supplied evidence
   - The critic is too lenient: the {output_noun} has serious contract violations the critic overlooked
   - The critic relies on requirements, ideals, or improvements outside the contract
   - The critic requests revisions that contradict constraints, non-goals, artifact, adapter, language, or language plugin guidance in the contract

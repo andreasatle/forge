@@ -150,7 +150,7 @@ class WorkTaskExecutor:
                 work_output_example=work_output_example,
             )
             contract_block = render_agent_contract(contract_request)
-            base_prompt += f"\n\n{contract_block}\n\nProduce output satisfying this contract."
+            base_prompt += f"\n\n{contract_block}\n\nYour output must satisfy every requirement in this contract."
             if plugin:
                 base_prompt += f"\n\nLanguage: {spec.language}"
 
@@ -172,7 +172,7 @@ class WorkTaskExecutor:
                 "\n\nModify files directly in the assigned worktree using the available write/edit tools."
                 "\nThe framework will use git status and git diff as the source of truth."
                 "\nDo not include complete file contents in your final response."
-                "\nAfter edits and tests are complete, stop calling tools and return final JSON with kind and summary."
+                "\nAfter all required edits are made and tests pass, stop calling tools and return final JSON with kind and summary. Do not return final JSON while tests are failing."
             )
 
             provider = self.provider

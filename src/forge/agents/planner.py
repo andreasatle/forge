@@ -79,9 +79,8 @@ Decomposition policy:
   Never create dependencies for symmetry, aesthetic balance, or convention.
 - Only add a depends_on edge when one task genuinely produces output that another must consume.
 - Balanced and symmetric trees are not a goal. An uneven tree that
-  exposes more parallel work is better than a balanced tree that forces
-  unnecessary sequencing.
-- Maximize safe concurrency. When in doubt, remove edges.
+  exposes more parallel work is required.
+- Concurrency must be maximized. If a depends_on edge cannot be justified by genuine information flow, that edge must be removed.
 
 Good decomposition:
   Goal: "build scraper with CLI"
@@ -112,7 +111,7 @@ Goal: {northstar}
 
 {contract_block}
 
-Produce output satisfying this contract.
+Your output must satisfy every requirement in this contract.
 """
 
 _DUMMY_STATE_VIEW = StateView(artifact_name="", language=None, files=[])

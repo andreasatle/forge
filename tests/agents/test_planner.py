@@ -241,7 +241,7 @@ async def test_plan_producer_prompt_includes_canonical_contract_block() -> None:
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
     assert render_agent_contract(request) in user_prompt
-    assert "Produce output satisfying this contract." in user_prompt
+    assert "Your output must satisfy every requirement in this contract." in user_prompt
 
 
 async def test_planner_prompt_handles_missing_artifact_description() -> None:
@@ -667,7 +667,7 @@ async def test_planner_prompt_instructs_maximizing_concurrency() -> None:
 
     messages = provider.chat.call_args.args[0]
     user_prompt = messages[1]["content"]
-    assert "Maximize safe concurrency" in user_prompt
+    assert "Concurrency must be maximized" in user_prompt
 
 
 async def test_planner_prompt_includes_good_and_bad_decomposition_examples() -> None:

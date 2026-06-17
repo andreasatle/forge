@@ -344,7 +344,7 @@ async def test_work_producer_prompt_includes_canonical_contract_block(
 
     user_prompt = mock_run_agent.call_args.args[3]
     assert render_agent_contract(request) in user_prompt
-    assert "Produce output satisfying this contract." in user_prompt
+    assert "Your output must satisfy every requirement in this contract." in user_prompt
 
 
 async def test_work_task_executor_prompts_for_worktree_mutation(tmp_path: Path) -> None:
@@ -1228,7 +1228,7 @@ async def test_document_adapter_prompt_instructs_write_file_and_json_only_respon
     assert "final WorkOutput is completion metadata only" in user_prompt
     assert "do not include markdown documentation in the final response" in user_prompt
     assert "JSON only" in user_prompt
-    assert "summary should briefly describe" in user_prompt
+    assert "summary must describe" in user_prompt
 
 
 async def test_document_adapter_prompt_includes_concrete_work_output_example(

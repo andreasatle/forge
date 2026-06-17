@@ -1003,7 +1003,7 @@ async def test_revise_prompt_omits_repeated_contract_and_plugin_guidance() -> No
         ),
     )
     contract_block = render_agent_contract(request)
-    base_prompt = f"base prompt\n\n{contract_block}\n\nProduce output satisfying this contract."
+    base_prompt = f"base prompt\n\n{contract_block}\n\nYour output must satisfy every requirement in this contract."
     quoted_contract = (
         f"The output missed a rule.\n\n{contract_block}\n\nAfter applying the contract, add tests."
     )

@@ -272,7 +272,7 @@ class PromptBuilder:
                     "",
                     "Rules for your final response:",
                     "  - Modify files directly in the assigned worktree before responding.",
-                    '  - After edits and tests are complete, stop calling tools and return final JSON with kind="final" and output containing kind and summary.',
+                    '  - After all required edits are made and tests pass, stop calling tools and return final JSON with kind="final" and output containing kind and summary. Do not return final JSON while tests are failing.',
                     "  - The framework uses git status and git diff as the source of truth.",
                     "  - Do not include complete file contents in your final response.",
                     "",
