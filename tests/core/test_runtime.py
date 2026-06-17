@@ -372,7 +372,9 @@ async def test_runtime_wires_adapter_and_language_registries(
 
     await ForgeRuntime(_minimal_config(tmp_path)).start()
 
-    assert len(loaded_adapters) == 1
+    assert len(loaded_adapters) == 2
+    assert any(p.name == "adapters" for p in loaded_adapters)
+    assert any(p.name == "roles" for p in loaded_adapters)
     assert len(loaded_languages) == 1
 
 

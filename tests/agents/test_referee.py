@@ -29,9 +29,9 @@ from forge.core.models import (
 
 
 def _registry() -> AdapterRegistry:
-    adapters_dir = Path(__file__).parents[2] / "adapters"
     registry = AdapterRegistry()
-    registry.load(adapters_dir)
+    registry.load(Path(__file__).parents[2] / "adapters")
+    registry.load(Path(__file__).parents[2] / "roles")
     return registry
 
 

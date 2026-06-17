@@ -7,6 +7,7 @@ import pytest
 from forge.adapters.registry import AdapterRegistry, AdapterSpec
 
 ADAPTERS_DIR = Path(__file__).parents[2] / "adapters"
+ROLES_DIR = Path(__file__).parents[2] / "roles"
 
 
 def _write_yaml(tmp_path: Path, filename: str, content: str) -> None:
@@ -113,7 +114,7 @@ prompt_template: "Complete: {{ objective }}"
 def test_validation_adapters_do_not_duplicate_response_schema_examples() -> None:
     """Pydantic models own critic/referee response schemas, not YAML examples."""
     registry = AdapterRegistry()
-    registry.load(ADAPTERS_DIR)
+    registry.load(ROLES_DIR)
 
     for adapter_name in ("critic", "referee"):
         prompt = registry.get(adapter_name).prompt_template
@@ -224,3 +225,31 @@ def test_coding_adapter_declared_tools_resolve_without_language_plugin(tmp_path:
     full_registry = build_worktree_registry(str(tmp_path))
     for tool_name in coding.tools:
         full_registry.get(tool_name)
+
+
+def test_work_adapters_do_not_include_roles() -> None:
+    """Loading only the adapters directory must not expose critic or referee."""
+    registry = AdapterRegistry()
+    registry.load(ADAPTERS_DIR)
+
+    assert "critic" not in registry.names()
+    assert "referee" not in registry.names()
+
+
+def test_roles_dir_contains_exactly_critic_and_referee() -> None:
+    """The roles directory contains exactly critic and referee — nothing more, nothing less."""
+    registry = AdapterRegistry()
+    registry.load(ROLES_DIR)
+
+    assert set(registry.names()) == {"critic", "referee"}
+
+
+def test_registry_loads_from_multiple_directories() -> None:
+    """Loading adapters and roles directories into one registry exposes all names."""
+    registry = AdapterRegistry()
+    registry.load(ADAPTERS_DIR)
+    registry.load(ROLES_DIR)
+
+    names = set(registry.names())
+    assert {"audit", "coding", "document"} <= names
+    assert {"critic", "referee"} <= names

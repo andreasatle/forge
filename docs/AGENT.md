@@ -67,6 +67,24 @@ Do not:
 * Use `if isinstance` fallthrough or bare `else` for enum dispatch — use `match` + `assert_never`.
 * Compare enum values as strings — use direct enum comparisons.
 
+## Taxonomy
+
+| Category | Members | Directory |
+|---|---|---|
+| **role** | producer, critic, referee | `roles/` |
+| **node type** | plan, work | (enum; no directory) |
+| **adapter** | coding, document, audit | `adapters/` |
+| **language** | python, rust, zig | `languages/` |
+| **model profile** | fast, default, strong | (config; no directory) |
+
+- **Roles** are filled by agents during PWC evaluation of a single DAG node. They are not node types.
+- **Node types** (plan / work) are carried by `AgentType` — they describe *what a node produces*, not who evaluates it.
+- **Adapters** are artifact-type plugins — they supply tool lists, output format rules, and prompts for a category of work (code, document, audit). Always language-agnostic.
+- **Language plugins** own everything language-specific: package managers, test commands, project manifests.
+- **Model profiles** are named capability tiers used by `ProfileAssigner`; they map to concrete LLM configurations at runtime.
+
+`producer.yaml` is not yet implemented. `roles/` currently contains only `critic.yaml` and `referee.yaml`.
+
 ## Current Architecture Direction
 
 Important concepts:

@@ -42,6 +42,7 @@ from forge.llm.factory import make_provider
 logger = logging.getLogger(__name__)
 
 _ADAPTERS_DIR = Path(__file__).parent.parent.parent.parent / "adapters"
+_ROLES_DIR = Path(__file__).parent.parent.parent.parent / "roles"
 _LANGUAGES_DIR = Path(__file__).parent.parent.parent.parent / "languages"
 
 
@@ -124,6 +125,7 @@ class ForgeRuntime:
 
         registry = AdapterRegistry()
         registry.load(_ADAPTERS_DIR)
+        registry.load(_ROLES_DIR)
         logger.info("adapters: %s", registry.names())
 
         planner_provider = make_provider(config.models.planner.producer, config.max_tokens)

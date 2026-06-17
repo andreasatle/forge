@@ -4,12 +4,12 @@ from pathlib import Path
 
 from forge.adapters.registry import AdapterRegistry
 
-ADAPTERS_DIR = Path(__file__).parents[2] / "adapters"
+ROLES_DIR = Path(__file__).parents[2] / "roles"
 
 
 def _load_prompt(adapter_name: str) -> str:
     registry = AdapterRegistry()
-    registry.load(ADAPTERS_DIR)
+    registry.load(ROLES_DIR)
     return registry.get(adapter_name).prompt_template
 
 
