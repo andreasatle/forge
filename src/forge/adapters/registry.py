@@ -41,6 +41,7 @@ class AdapterSpec:
     prompt_template: str
     requires_nonempty_output: bool = True
     work_noun: str = "implementation"
+    review_focus: str = ""
     mutating_tools: list[str] = field(default_factory=_default_mutating_tools)
     verification_tools: list[str] = field(default_factory=_empty_str_list)
     verification_required: bool | None = None
@@ -78,6 +79,7 @@ class AdapterRegistry:
                 prompt_template=str(data["prompt_template"]),
                 requires_nonempty_output=bool(data.get("requires_nonempty_output", True)),
                 work_noun=str(data.get("work_noun", "implementation")),
+                review_focus=str(data.get("review_focus", "")),
                 mutating_tools=_str_list(data.get("mutating_tools", _default_mutating_tools())),
                 verification_tools=_str_list(data.get("verification_tools", [])),
                 verification_required=data.get("verification_required"),

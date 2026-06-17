@@ -2,6 +2,7 @@ name: audit
 description: Audits code or documents for quality
 requires_nonempty_output: false
 work_noun: findings
+review_focus: "whether the audit findings satisfy the AgentRequest contract — ground every finding in coverage, identified issues, and file evidence cited; never apply generic essay or document-review standards"
 tools:
   - read_file
   - list_files

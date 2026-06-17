@@ -295,9 +295,12 @@ class WorkOutputValidator:
 
     def review_context(self) -> ReviewContext:
         """Return worker-output review language."""
+        review_focus = self._adapter.review_focus or (
+            "whether the worktree changes satisfy the AgentRequest contract"
+        )
         return ReviewContext(
             output_noun=self._adapter.work_noun,
-            review_focus="whether the worktree changes satisfy the AgentRequest contract",
+            review_focus=review_focus,
             empty_output_guidance=(
                 "If no worktree changes were made, reject unless the "
                 "success condition is already demonstrably met."

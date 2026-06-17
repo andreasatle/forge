@@ -244,6 +244,49 @@ async def test_critic_prompt_includes_canonical_contract_and_scope_boundary() ->
     assert "For coding work, revision_items must reference files" in prompt
 
 
+async def test_critic_prompt_for_coding_node_uses_coding_specific_review_focus() -> None:
+    """Critic prompt for a coding node frames the review in coding, not document-review, terms."""
+    from forge.agents.attempt import WorkOutputValidator
+
+    finding_json = json.dumps({"disposition": "accept", "rationale": "Good.", "hints": []})
+    provider = _provider(finding_json)
+    request = AgentRequest(
+        agent_type=AgentType.WORK,
+        source=RequestSource.PLANNER,
+        spec=WorkSpec(
+            objective="Initialize Python project structure with pyproject.toml, src/, and tests/ directories",
+            success_condition="pyproject.toml exists, src/ directory exists, tests/ directory exists",
+            adapter="coding",
+            artifact="codebase",
+            language="python",
+        ),
+    )
+    review_ctx = WorkOutputValidator(_registry().get("coding"), _state_view()).review_context()
+
+    await critic_agent(
+        request,
+        _state_view(),
+        _rendered_output(),
+        provider,
+        _registry(),
+        review_context=review_ctx,
+    )
+
+    messages = provider.chat.call_args.args[0]
+    prompt = messages[1]["content"]
+    focus = review_ctx.review_focus.lower()
+
+    # Review focus must name coding-specific evidence types
+    assert any(term in focus for term in ("code", "file", "test", "build"))
+    # Review focus must not frame the review in document-review terms
+    for forbidden in ("methodology", "introduction", "thesis", "claim"):
+        assert forbidden not in focus, (
+            f"document-review term {forbidden!r} must not appear in coding review_focus"
+        )
+    # The coding-specific review focus must be injected into the critic prompt
+    assert review_ctx.review_focus in prompt
+
+
 async def test_critic_prompt_treats_plugin_guidance_as_binding_contract() -> None:
     """Critic prompt includes plugin guidance and forbids revision items that contradict it."""
     finding_json = json.dumps({"disposition": "accept", "rationale": "Good.", "hints": []})

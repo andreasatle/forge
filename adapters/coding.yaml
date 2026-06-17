@@ -2,6 +2,7 @@ name: coding
 description: Writes and edits code
 requires_nonempty_output: true
 work_noun: implementation
+review_focus: "whether the code files, tests, and project structure in the worktree satisfy the AgentRequest contract — ground every finding in files modified, test execution results, imports, APIs, or build configuration; do not apply document-review standards to coding work"
 tools:
   - list_files
   - read_file

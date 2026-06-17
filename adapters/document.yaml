@@ -2,6 +2,7 @@ name: document
 description: Reads and writes documents
 requires_nonempty_output: true
 work_noun: document
+review_focus: "whether the documentation files written to the worktree satisfy the AgentRequest contract — ground every finding in file content, requested sections, completeness, and documentation structure; never apply coding or argument-review standards"
 tools:
   - read_file
   - list_files

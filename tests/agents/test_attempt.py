@@ -2357,6 +2357,22 @@ async def test_work_output_validator_review_context_has_no_topology_rules() -> N
     assert context.topology_rules == ""
 
 
+async def test_coding_adapter_review_context_references_coding_concepts() -> None:
+    """WorkOutputValidator review context for the coding adapter is grounded in coding concepts."""
+    adapters_dir = Path(__file__).parents[2] / "adapters"
+    registry = AdapterRegistry()
+    registry.load(adapters_dir)
+    state_view = StateView(artifact_name="codebase", language=None, files=[])
+    context = WorkOutputValidator(registry.get("coding"), state_view).review_context()
+
+    focus = context.review_focus.lower()
+    assert any(term in focus for term in ("code", "file", "test", "build", "implementation"))
+    for forbidden in ("methodology", "introduction", "thesis", "claim"):
+        assert forbidden not in focus, (
+            f"document-review term {forbidden!r} must not appear in coding review_focus"
+        )
+
+
 async def test_planner_output_validator_extracts_only_typed_output() -> None:
     """PlannerOutputValidator returns None when response has no WorkDecision/GraphSplitDecision."""
     request = _plan_request()
