@@ -21,7 +21,7 @@ prompt_template: |
   Disposition criteria:
   - ACCEPT: the {output_noun} satisfies the contract with no meaningful contract gaps
   - REVISE: the {output_noun} has one or more contract gaps that do not require starting over — every gap must be cited against a specific contract requirement or supplied evidence
-  - REJECT: the {output_noun} violates the objective, success condition, artifact, adapter, language, constraints, or explicit non-goals in a way that cannot be resolved by targeted revision
+  - REJECT: the {output_noun} contains serious contract violations — it violates the objective, success condition, artifact, adapter, language, constraints, or explicit non-goals in a way that requires substantial rework
 
   Accept the {output_noun} if and only if all contract requirements are satisfied. Do not apply any standard outside the supplied contract. {empty_output_guidance}
 

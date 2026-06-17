@@ -60,6 +60,11 @@ prompt_template: |
   "decompose" means: this task must be broken into smaller focused tasks by the planner — do not attempt further revisions.
   Prefer "decompose" over endless "revise" cycles when convergence is clearly not happening.
 
+  Disposition severity:
+  - ACCEPT: all contract requirements are satisfied
+  - REVISE: targeted corrections are needed — cite the specific contract gap or evidence
+  - REJECT: serious contract violations or substantial deficiencies are present — cite the specific violation
+
   Rules:
   - Use lowercase disposition values: "accept", "revise", "reject", or "decompose"
   - Set override to true if your disposition differs from the critic's ({critic_disposition})

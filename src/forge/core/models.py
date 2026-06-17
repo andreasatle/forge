@@ -101,7 +101,7 @@ def _empty_revision_items() -> list[RevisionItem]:
 class RevisionRequest(BaseModel, frozen=True):
     """Typed request for a producer to revise output against the same AgentRequest contract."""
 
-    disposition: Literal["revise"] = "revise"
+    disposition: Literal["revise", "reject"] = "revise"
     rationale: str
     items: list[RevisionItem]
     prior_attempts: int

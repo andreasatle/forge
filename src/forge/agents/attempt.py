@@ -48,24 +48,6 @@ _NO_WORKTREE_CHANGE_REQUIRED_CHANGE = (
     "Actually modify the assigned worktree to satisfy the task; the previous attempt "
     "returned WorkOutput metadata but produced no file changes."
 )
-_NO_WORKTREE_CHANGE_PHRASES = (
-    "no actual file changes",
-    "no file changes",
-    "no files changed",
-    "no files were changed",
-    "no worktree changes",
-    "no worktree change",
-    "empty git diff",
-    "git diff is empty",
-    "git diff was empty",
-    "worktree was empty",
-    "worktree is empty",
-    "no evidence of changes",
-    "no evidence of file changes",
-    "produced no file changes",
-    "did not change any files",
-    "didn't change any files",
-)
 _STOPWORDS: frozenset[str] = frozenset(
     {
         "that",
@@ -242,6 +224,10 @@ class WorkOutputValidator:
             for fv in self._state_view.files:
                 lines += [f"\nFile: {fv.path}", "```", fv.content, "```"]
         return "\n".join(lines)
+
+    def has_worktree(self) -> bool:
+        """Return True when a worktree path has been configured."""
+        return self._worktree_path is not None
 
     def has_worktree_changes(self) -> bool:
         """Return True when git evidence shows tracked or relevant untracked changes."""
@@ -448,11 +434,6 @@ def _validation_parse_failed_response(request: AgentRequest, error: ValueError) 
     )
 
 
-def _mentions_no_worktree_changes(*texts: str | None) -> bool:
-    haystack = " ".join(text or "" for text in texts).lower()
-    return any(phrase in haystack for phrase in _NO_WORKTREE_CHANGE_PHRASES)
-
-
 def _no_worktree_change_revision(
     *,
     rationale: str,
@@ -475,6 +456,7 @@ def _claimed_work_has_no_worktree_changes(output: object, validator: object) -> 
         isinstance(output, WorkOutput)
         and bool(output.summary.strip())
         and isinstance(validator, WorkOutputValidator)
+        and validator.has_worktree()
         and not validator.has_worktree_changes()
     )
 
@@ -754,16 +736,19 @@ class AttemptLifecycle[T]:
                         )
                     case CriticDisposition.REJECT:
                         _logger.info(
-                            "attempt %d/%d: critic rejected empty output",
+                            "attempt %d/%d: critic=%s on empty output — retrying",
                             attempt_number,
                             self._max_attempts,
+                            finding.disposition.value,
                         )
-                        return _validation_rejected_response(
-                            self._request,
-                            finding.disposition,
-                            finding.rationale,
-                            self._validator.work_noun(),
+                        history = history.append_from_review(
+                            rationale=finding.rationale,
+                            prior_attempts=attempt_number,
+                            critic_finding=finding,
+                            disposition="reject",
                         )
+                        self._telemetry.revision_appended(attempt_number, history.requests[-1])
+                        continue
                     case CriticDisposition.ACCEPT:
                         _logger.info(
                             "attempt %d/%d: critic accepted empty output — ALREADY_DONE",
@@ -850,23 +835,6 @@ class AttemptLifecycle[T]:
                 case CriticDisposition.ACCEPT:
                     return response
                 case CriticDisposition.REJECT:
-                    if (
-                        attempt < self._max_attempts - 1
-                        and _claimed_work_has_no_worktree_changes(output, self._validator)
-                        and _mentions_no_worktree_changes(finding.rationale, decision.rationale)
-                    ):
-                        _logger.info(
-                            "attempt %d/%d: no worktree changes despite WorkOutput — retrying",
-                            attempt_number,
-                            self._max_attempts,
-                        )
-                        revision_request = _no_worktree_change_revision(
-                            rationale=decision.rationale or finding.rationale,
-                            prior_attempts=attempt_number,
-                        )
-                        history = history.append(revision_request)
-                        self._telemetry.revision_appended(attempt_number, revision_request)
-                        continue
                     if _is_ungrounded_generic_feedback(
                         self._request, self._validator, finding, decision
                     ):
@@ -879,12 +847,32 @@ class AttemptLifecycle[T]:
                             self._request,
                             self._validator.work_noun(),
                         )
-                    return _validation_rejected_response(
-                        self._request,
-                        decision.disposition,
-                        decision.rationale,
-                        self._validator.work_noun(),
-                    )
+                    if _claimed_work_has_no_worktree_changes(output, self._validator):
+                        _logger.info(
+                            "attempt %d/%d: no worktree changes despite WorkOutput — retrying",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        revision_request = _no_worktree_change_revision(
+                            rationale=decision.rationale or finding.rationale,
+                            prior_attempts=attempt_number,
+                        )
+                        history = history.append(revision_request)
+                        self._telemetry.revision_appended(attempt_number, revision_request)
+                    else:
+                        _logger.info(
+                            "attempt %d/%d: critic/referee REJECT — retrying with severity signal",
+                            attempt_number,
+                            self._max_attempts,
+                        )
+                        history = history.append_from_review(
+                            rationale=decision.rationale,
+                            prior_attempts=attempt_number,
+                            critic_finding=finding,
+                            referee_decision=decision,
+                            disposition="reject",
+                        )
+                        self._telemetry.revision_appended(attempt_number, history.requests[-1])
                 case CriticDisposition.DECOMPOSE:
                     _logger.info(
                         "attempt %d/%d: referee requested decomposition",

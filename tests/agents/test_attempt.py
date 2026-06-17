@@ -1142,15 +1142,19 @@ async def test_revise_prompt_growth_excludes_repeated_contract_blocks() -> None:
     assert len(prompts[2]) - len(prompts[1]) < len(contract_block)
 
 
-async def test_rejected_validation_returns_failed_without_output() -> None:
-    """Engine fails immediately when validation rejects a worker output."""
+async def test_reject_disposition_retries_with_severity_signal() -> None:
+    """Engine retries on REJECT and injects a reject-disposition revision block."""
     request = _work_request()
     work_output = WorkOutput(summary="Completed worktree changes.")
-    run_fn, _ = _make_run_fn(
+    run_fn, prompts = _make_run_fn(
         [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
     )
     engine = _engine(
-        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=2,
     )
 
     with (
@@ -1172,7 +1176,45 @@ async def test_rejected_validation_returns_failed_without_output() -> None:
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.VALIDATION_REJECTED
     assert result.output is None
-    assert "reject" in (result.error or "")
+    assert len(prompts) == 2
+    assert "Previous disposition: reject" in prompts[1]
+    assert "REQUIRED REVISION" in prompts[1]
+
+
+async def test_reject_exhausted_returns_failed_without_output() -> None:
+    """Engine returns FAILED with no output when all attempts are exhausted after REJECT."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, _ = _make_run_fn(
+        [AgentResponse(request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output)]
+    )
+    engine = _engine(
+        request=request,
+        run_fn=run_fn,
+        critic_provider=MagicMock(),
+        referee_provider=MagicMock(),
+        max_attempts=1,
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.return_value = CriticFinding(
+            disposition=CriticDisposition.REJECT,
+            rationale="output violates contract",
+            hints=["fix contract violations"],
+        )
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.REJECT,
+            rationale="still violates the contract",
+            override=False,
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.FAILED
+    assert result.failure_kind == FailureKind.VALIDATION_REJECTED
+    assert result.output is None
     assert len(_) == 1
 
 
@@ -1391,10 +1433,8 @@ async def test_no_worktree_change_reject_on_final_attempt_returns_failed(
     assert len(prompts) == 1
 
 
-async def test_unrelated_referee_reject_remains_terminal(
-    git_worktree: Path,
-) -> None:
-    """Referee REJECT unrelated to no-change evidence remains terminal."""
+async def test_reject_without_worktree_retries_with_reject_severity() -> None:
+    """REJECT without a worktree routes through the generic REJECT revision path and retries."""
     request = _work_request()
     run_fn, prompts = _make_run_fn(
         [
@@ -1410,7 +1450,7 @@ async def test_unrelated_referee_reject_remains_terminal(
         run_fn=run_fn,
         critic_provider=MagicMock(),
         referee_provider=MagicMock(),
-        worktree_path=git_worktree,
+        max_attempts=2,
     )
 
     with (
@@ -1430,7 +1470,8 @@ async def test_unrelated_referee_reject_remains_terminal(
 
     assert result.status == ResponseStatus.FAILED
     assert result.failure_kind == FailureKind.VALIDATION_REJECTED
-    assert len(prompts) == 1
+    assert len(prompts) == 2
+    assert "Previous disposition: reject" in prompts[1]
 
 
 async def test_no_worktree_change_rule_does_not_override_already_done(
@@ -2063,6 +2104,49 @@ async def test_empty_work_output_critic_revise_triggers_retry_with_feedback() ->
     assert "REQUIRED REVISION" in prompts[1]
     assert "Revise your implementation now." in prompts[1]
     assert "1. Required change: add some code" in prompts[1]
+
+
+async def test_empty_work_output_critic_reject_retries_with_severity_signal() -> None:
+    """Critic REJECT on empty output retries with a reject-disposition revision, not immediate FAILED."""
+    request = _work_request()
+    work_output = WorkOutput(summary="Completed worktree changes.")
+    run_fn, prompts = _make_run_fn(
+        [
+            AgentResponse(
+                request_id=request.id,
+                status=ResponseStatus.FAILED,
+                failure_kind=FailureKind.VALIDATION_REJECTED,
+                output=WorkOutput(),
+                error="empty output",
+            ),
+            AgentResponse(
+                request_id=request.id, status=ResponseStatus.COMPLETED, output=work_output
+            ),
+        ]
+    )
+    engine = _engine(
+        request=request, run_fn=run_fn, critic_provider=MagicMock(), referee_provider=MagicMock()
+    )
+
+    with (
+        patch("forge.agents.attempt.critic_agent", new_callable=AsyncMock) as mock_critic,
+        patch("forge.agents.attempt.referee_agent", new_callable=AsyncMock) as mock_referee,
+    ):
+        mock_critic.side_effect = [
+            CriticFinding(
+                disposition=CriticDisposition.REJECT,
+                rationale="no meaningful implementation was produced",
+            ),
+            CriticFinding(disposition=CriticDisposition.ACCEPT, rationale="done"),
+        ]
+        mock_referee.return_value = RefereeDecision(
+            disposition=CriticDisposition.ACCEPT, rationale="approved", override=False
+        )
+        result = await engine.run("base prompt")
+
+    assert result.status == ResponseStatus.COMPLETED
+    assert len(prompts) == 2
+    assert "Previous disposition: reject" in prompts[1]
 
 
 async def test_empty_work_output_critic_accept_returns_already_done() -> None:

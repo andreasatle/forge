@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Sequence
+from typing import Literal
 
 from forge.core.models import CriticFinding, RefereeDecision, RevisionItem, RevisionRequest
 
@@ -68,11 +69,12 @@ def _build_revision_request(
     rationale: str,
     prior_attempts: int,
     items: list[RevisionItem],
+    disposition: Literal["revise", "reject"] = "revise",
 ) -> RevisionRequest:
     if not items:
         items = [RevisionItem(required_change=rationale, rationale=rationale)]
     return RevisionRequest(
-        disposition="revise",
+        disposition=disposition,
         rationale=rationale,
         items=items,
         prior_attempts=prior_attempts,
@@ -146,6 +148,7 @@ class RevisionHistory:
         prior_attempts: int,
         critic_finding: CriticFinding | None = None,
         referee_decision: RefereeDecision | None = None,
+        disposition: Literal["revise", "reject"] = "revise",
     ) -> "RevisionHistory":
         """Return new history with a RevisionRequest derived from critic/referee output.
 
@@ -158,7 +161,12 @@ class RevisionHistory:
         else:
             items = []
         return self.append(
-            _build_revision_request(rationale=rationale, prior_attempts=prior_attempts, items=items)
+            _build_revision_request(
+                rationale=rationale,
+                prior_attempts=prior_attempts,
+                items=items,
+                disposition=disposition,
+            )
         )
 
     def render(self, output_noun: str, final_output_reminder: str) -> str:
